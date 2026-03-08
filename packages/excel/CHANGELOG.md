@@ -4,10 +4,9 @@
 
 ## [0.2.5] - 2026-03-08
 
-### Chores
+### Features
 
-- Migrated to pnpm monorepo with `@office-agents/sdk`, `@office-agents/core`, and `@office-agents/excel` packages.
-- Extracted shared SDK (agent runtime, VFS, storage, tools) and core UI layer into separate packages.
+- Pre-load Office.js API documentation (`.d.ts`) into the VFS on every new session so the agent always has type references available.
 
 ## [0.2.4] - 2026-02-22
 
