@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-03-15
+
 ### Features
 
 - **PDF eager-load helper** — New `loadPdfDocument()` export consolidates PDF.js initialization (worker import, eval-safe config) into a single reusable function. Custom commands now use this instead of inline dynamic imports.
