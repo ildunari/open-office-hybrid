@@ -26,6 +26,8 @@ export interface ProviderConfig {
   apiType?: string;
   customBaseUrl?: string;
   authMethod?: "apikey" | "oauth";
+  customContextWindow?: number;
+  customMaxTokens?: number;
 }
 
 function storageKey(): string {
@@ -111,6 +113,9 @@ export function loadSavedConfig(): ProviderConfig | null {
       if (config.apiType === undefined) config.apiType = "";
       if (config.customBaseUrl === undefined) config.customBaseUrl = "";
       if (config.authMethod === undefined) config.authMethod = "apikey";
+      if (config.customContextWindow === undefined)
+        config.customContextWindow = 0;
+      if (config.customMaxTokens === undefined) config.customMaxTokens = 0;
       if (config.authMethod === "oauth") {
         const creds = loadOAuthCredentials(config.provider);
         if (creds) config.apiKey = creds.access;
@@ -138,8 +143,14 @@ export function buildCustomModel(config: ProviderConfig): Model<Api> | null {
     reasoning: true,
     input: ["text", "image"] as ("text" | "image")[],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 750000,
-    maxTokens: 100000,
+    contextWindow:
+      config.customContextWindow && config.customContextWindow > 0
+        ? config.customContextWindow
+        : 128000,
+    maxTokens:
+      config.customMaxTokens && config.customMaxTokens > 0
+        ? config.customMaxTokens
+        : 32000,
   };
 }
 

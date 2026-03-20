@@ -12,9 +12,9 @@
     onLinkClick?: (context: LinkClickContext) => MaybePromise<LinkClickResult>;
   }
 
-  const STREAMING_RENDER_DELAY_MS = 48;
+  const STREAMING_RENDER_DELAY_MS = 100;
   const HIGHLIGHT_DELAY_MS = 160;
-  const LARGE_STREAMING_TEXT_THRESHOLD = 4_000;
+  const LARGE_STREAMING_TEXT_THRESHOLD = 1_000;
 
   let { text, isStreaming = false, onLinkClick }: Props = $props();
 

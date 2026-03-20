@@ -65,10 +65,27 @@
   const ToolExtras = $derived(chat.adapter.ToolExtras);
   const split = $derived(splitArgs(part.args));
   const hasRestArgs = $derived(Object.keys(split.rest).length > 0);
-  const resultText = $derived(part.result ? cleanResult(part.result) : undefined);
+  let cachedResultRaw: string | undefined;
+  let cachedResultClean: string | undefined;
+  const resultText = $derived.by(() => {
+    const raw = part.result;
+    if (raw === undefined) return undefined;
+    if (raw === cachedResultRaw) return cachedResultClean;
+    cachedResultRaw = raw;
+    cachedResultClean = cleanResult(raw);
+    return cachedResultClean;
+  });
   const isStreaming = $derived(
     part.status === "pending" || part.status === "running",
   );
+  const RESULT_TRUNCATE_THRESHOLD = 2000;
+  let showFullResult = $state(false);
+  const displayResultText = $derived.by(() => {
+    if (!resultText) return undefined;
+    if (showFullResult || part.status === "error") return resultText;
+    if (resultText.length <= RESULT_TRUNCATE_THRESHOLD) return resultText;
+    return `${resultText.slice(0, 1000)}\n... (truncated)`;
+  });
 
   $effect(() => {
     const nextDefault = $runtimeState.providerConfig?.expandToolCalls ?? false;
@@ -101,9 +118,9 @@
     {/if}
     <span class="shrink-0">
       {#if part.status === "pending"}
-        <Loader2 size={10} class="animate-spin text-(--chat-text-muted)" />
+        <Loader2 size={10} class="animate-spin text-(--chat-text-muted)" style="will-change: transform;" />
       {:else if part.status === "running"}
-        <Loader2 size={10} class="animate-spin text-(--chat-accent)" />
+        <Loader2 size={10} class="animate-spin text-(--chat-accent)" style="will-change: transform;" />
       {:else if part.status === "complete"}
         <CheckCircle2 size={10} class="text-green-500" />
       {:else}
@@ -162,17 +179,26 @@
         </div>
       {/if}
 
-      {#if resultText}
+      {#if displayResultText}
         <div class="px-2 py-1.5 text-xs border-t border-(--chat-border)">
           <div class="text-(--chat-text-muted) text-[10px] uppercase mb-1">
             {part.status === "error" ? "error" : "result"}
           </div>
           <div class={`max-h-40 overflow-y-auto ${part.status === "error" ? "[&_code]:text-red-400!" : ""}`}>
             <MarkdownContent
-              text={`\`\`\`json\n${resultText}\n\`\`\``}
+              text={`\`\`\`json\n${displayResultText}\n\`\`\``}
               isStreaming={isStreaming}
             />
           </div>
+          {#if resultText && resultText.length > RESULT_TRUNCATE_THRESHOLD && part.status !== "error"}
+            <button
+              type="button"
+              onclick={() => (showFullResult = !showFullResult)}
+              class="text-[10px] text-(--chat-accent) hover:underline mt-1"
+            >
+              {showFullResult ? "Show less" : "Show more"}
+            </button>
+          {/if}
         </div>
       {/if}
     </div>

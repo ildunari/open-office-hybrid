@@ -10,9 +10,8 @@
 
   let { runtimeState, initiallyExpanded = false }: Props = $props();
   let expanded = $state(false);
-  if (initiallyExpanded) {
-    expanded = true;
-  }
+  let hasToggled = $state(false);
+  const isExpanded = $derived(hasToggled ? expanded : initiallyExpanded);
 
   const model = $derived(buildDiagnosticsModel(runtimeState));
 
@@ -30,7 +29,10 @@
   <button
     type="button"
     class="w-full flex items-center justify-between gap-2 text-left"
-    onclick={() => (expanded = !expanded)}
+    onclick={() => {
+      hasToggled = true;
+      expanded = !isExpanded;
+    }}
   >
     <div class="min-w-0">
       <div class="text-[10px] uppercase tracking-widest text-(--chat-text-muted)">
@@ -42,11 +44,11 @@
     </div>
     <ChevronDown
       size={12}
-      class={`transition-transform shrink-0 ${expanded ? "rotate-180" : ""}`}
+      class={`transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}
     />
   </button>
 
-  {#if expanded}
+  {#if isExpanded}
     <div class="mt-3 grid gap-3 text-[11px]">
       <section class="grid gap-1">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">policy</div>

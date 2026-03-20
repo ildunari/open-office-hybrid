@@ -249,9 +249,10 @@ export function detectImageMimeType(
 }
 
 export function toBase64(data: Uint8Array): string {
+  const CHUNK = 8192;
   let binary = "";
-  for (let i = 0; i < data.length; i++) {
-    binary += String.fromCharCode(data[i]);
+  for (let i = 0; i < data.length; i += CHUNK) {
+    binary += String.fromCharCode(...data.subarray(i, i + CHUNK));
   }
   return btoa(binary);
 }

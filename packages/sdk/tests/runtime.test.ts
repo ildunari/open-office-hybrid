@@ -121,7 +121,7 @@ describe("AgentRuntime", () => {
     const state = runtime.getState();
     expect(state.providerConfig).not.toBeNull();
     expect(state.providerConfig!.provider).toBe("custom");
-    expect(state.sessionStats.contextWindow).toBe(750000);
+    expect(state.sessionStats.contextWindow).toBe(128000);
     runtime.dispose();
   });
 
@@ -152,6 +152,7 @@ describe("AgentRuntime", () => {
     expect(state.messages).toEqual([]);
     expect(state.error).toBeNull();
     expect(state.uploads).toEqual([]);
+    expect(state.sessionStats.contextWindow).toBeGreaterThan(0);
     runtime.dispose();
   });
 
@@ -428,6 +429,19 @@ describe("AgentRuntime", () => {
   it("newSession creates a fresh session", async () => {
     const runtime = new AgentRuntime(createAdapter());
     await runtime.init();
+    runtime.applyConfig({
+      provider: "custom",
+      apiKey: "test-key",
+      model: "llama3",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+      apiType: "openai-completions",
+      customBaseUrl: "http://localhost:11434",
+      customContextWindow: 256000,
+    });
 
     const firstSession = runtime.getState().currentSession!.id;
     await runtime.newSession();
@@ -435,6 +449,7 @@ describe("AgentRuntime", () => {
 
     expect(firstSession).not.toBe(secondSession);
     expect(runtime.getState().messages).toEqual([]);
+    expect(runtime.getState().sessionStats.contextWindow).toBe(256000);
     runtime.dispose();
   });
 

@@ -323,9 +323,13 @@ function summarizeJson(value: unknown): string {
 
 export class AgentRuntime {
   private agent: Agent | null = null;
+  private unsubscribeAgent: (() => void) | null = null;
   private config: ProviderConfig | null = null;
   private pendingConfig: ProviderConfig | null = null;
   private streamingMessageId: string | null = null;
+  private streamingBuffer: AgentEvent | null = null;
+  private flushScheduled = false;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private isStreaming = false;
   private documentId: string | null = null;
   private currentSessionId: string | null = null;
@@ -441,6 +445,37 @@ export class AgentRuntime {
       ...extra,
     });
     this.emit();
+  }
+
+  private scheduleFlush() {
+    if (this.flushScheduled) return;
+    this.flushScheduled = true;
+    this.flushTimer = setTimeout(() => this.flushStreamingBuffer(), 80);
+  }
+
+  private flushStreamingBuffer() {
+    this.flushScheduled = false;
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    const event = this.streamingBuffer;
+    if (!event || event.type !== "message_update") return;
+    this.streamingBuffer = null;
+    const streamId = this.streamingMessageId;
+    if (!streamId) return;
+    this.updateMessages((msgs) => {
+      const messages = [...msgs];
+      const idx = messages.findIndex((message) => message.id === streamId);
+      if (idx !== -1) {
+        const parts = extractPartsFromAssistantMessage(
+          event.message,
+          messages[idx].parts,
+        );
+        messages[idx] = { ...messages[idx], parts };
+      }
+      return messages;
+    });
   }
 
   private syncHybridState(next: RuntimeState): RuntimeState {
@@ -860,23 +895,13 @@ export class AgentRuntime {
       }
       case "message_update": {
         if (event.message.role === "assistant" && this.streamingMessageId) {
-          const streamId = this.streamingMessageId;
-          this.updateMessages((msgs) => {
-            const messages = [...msgs];
-            const idx = messages.findIndex((m) => m.id === streamId);
-            if (idx !== -1) {
-              const parts = extractPartsFromAssistantMessage(
-                event.message,
-                messages[idx].parts,
-              );
-              messages[idx] = { ...messages[idx], parts };
-            }
-            return messages;
-          });
+          this.streamingBuffer = event;
+          this.scheduleFlush();
         }
         break;
       }
       case "message_end": {
+        this.flushStreamingBuffer();
         if (event.message.role === "assistant") {
           const assistantMsg = event.message as AssistantMessage;
           const isError =
@@ -919,6 +944,7 @@ export class AgentRuntime {
         break;
       }
       case "tool_execution_start": {
+        this.flushStreamingBuffer();
         this.taskTracker.recordToolCall(event.toolCallId);
         this.updateMessages((msgs) => {
           const messages = [...msgs];
@@ -978,6 +1004,7 @@ export class AgentRuntime {
         break;
       }
       case "tool_execution_end": {
+        this.flushStreamingBuffer();
         let resultText: string;
         let resultImages: { data: string; mimeType: string }[] | undefined;
         if (typeof event.result === "string") {
@@ -1039,6 +1066,7 @@ export class AgentRuntime {
         break;
       }
       case "agent_end": {
+        this.flushStreamingBuffer();
         this.isStreaming = false;
         this.streamingMessageId = null;
         this.update({ isStreaming: false });
@@ -1090,6 +1118,8 @@ export class AgentRuntime {
 
     if (this.agent) {
       this.agent.abort();
+      this.unsubscribeAgent?.();
+      this.unsubscribeAgent = null;
     }
 
     const systemPrompt = this.adapter.buildSystemPrompt(this.skills);
@@ -1115,7 +1145,7 @@ export class AgentRuntime {
       },
     });
     this.agent = agent;
-    agent.subscribe(this.handleAgentEvent);
+    this.unsubscribeAgent = agent.subscribe(this.handleAgentEvent);
     this.pendingConfig = null;
     this.followMode = normalizedConfig.followMode ?? true;
 
@@ -1469,7 +1499,10 @@ export class AgentRuntime {
     this.update({
       messages: [],
       error: null,
-      sessionStats: INITIAL_STATS,
+      sessionStats: {
+        ...INITIAL_STATS,
+        contextWindow: this.state.sessionStats.contextWindow,
+      },
       uploads: [],
       mode: "discuss",
       approvalRequest: null,
@@ -1521,7 +1554,10 @@ export class AgentRuntime {
         messages: [],
         currentSession: session,
         error: null,
-        sessionStats: INITIAL_STATS,
+        sessionStats: {
+          ...INITIAL_STATS,
+          contextWindow: this.state.sessionStats.contextWindow,
+        },
         uploads: [],
         mode: "discuss",
         approvalRequest: null,
@@ -1777,7 +1813,10 @@ export class AgentRuntime {
       await this.refreshInstructionSources();
       this.bumpVfs();
     } catch (e) {
-      console.error(e);
+      console.error("[Runtime] Failed to save session:", e);
+      this.update({
+        error: "Session save failed — your last changes may not persist.",
+      });
     }
   }
 
@@ -1941,6 +1980,9 @@ export class AgentRuntime {
       await this.refreshSkillsAndRebuildAgent();
     } catch (err) {
       console.error("[Runtime] Failed to uninstall skill:", err);
+      this.update({
+        error: err instanceof Error ? err.message : "Failed to uninstall skill",
+      });
     }
   }
 
@@ -1988,6 +2030,12 @@ export class AgentRuntime {
 
   dispose() {
     this.agent?.abort();
+    this.unsubscribeAgent?.();
+    this.unsubscribeAgent = null;
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
     this.clearAdapterHooks();
     this.patternRegistry.deactivateAll();
     this.listeners.clear();

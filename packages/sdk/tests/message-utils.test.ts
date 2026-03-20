@@ -373,4 +373,33 @@ describe("deriveStats", () => {
     const stats = deriveStats(messages);
     expect(stats.inputTokens).toBe(0);
   });
+
+  it("treats missing cache and cost fields as zero", () => {
+    const messages = [
+      {
+        role: "assistant" as const,
+        content: [{ type: "text" as const, text: "partial usage" }],
+        timestamp: 1,
+        stopReason: "stop" as const,
+        api: "openai-completions" as const,
+        provider: "openai",
+        model: "gpt-4",
+        usage: {
+          input: 40,
+          output: 20,
+          totalTokens: 60,
+        },
+      },
+    ];
+
+    const stats = deriveStats(messages);
+    expect(stats).toEqual({
+      inputTokens: 40,
+      outputTokens: 20,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalCost: 0,
+      lastInputTokens: 40,
+    });
+  });
 });

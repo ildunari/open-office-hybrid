@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   applyProxyToModel,
   buildCustomModel,
+  loadSavedConfig,
   saveConfig,
   type ProviderConfig,
 } from "../src/provider-config";
@@ -73,6 +74,42 @@ describe("buildCustomModel", () => {
     expect(model).not.toBeNull();
     expect(model!.api).toBe("openai-completions");
     expect(model!.baseUrl).toBe("http://localhost:11434");
+    expect(model!.contextWindow).toBe(128000);
+    expect(model!.maxTokens).toBe(32000);
+  });
+
+  it("uses explicit custom context window and max tokens when provided", () => {
+    const model = buildCustomModel(
+      makeConfig({
+        provider: "custom",
+        apiType: "openai-completions",
+        customBaseUrl: "http://localhost:11434",
+        model: "llama3",
+        customContextWindow: 256000,
+        customMaxTokens: 64000,
+      }),
+    );
+
+    expect(model).not.toBeNull();
+    expect(model!.contextWindow).toBe(256000);
+    expect(model!.maxTokens).toBe(64000);
+  });
+
+  it("treats zero custom limits as fallback to defaults", () => {
+    const model = buildCustomModel(
+      makeConfig({
+        provider: "custom",
+        apiType: "openai-completions",
+        customBaseUrl: "http://localhost:11434",
+        model: "llama3",
+        customContextWindow: 0,
+        customMaxTokens: 0,
+      }),
+    );
+
+    expect(model).not.toBeNull();
+    expect(model!.contextWindow).toBe(128000);
+    expect(model!.maxTokens).toBe(32000);
   });
 });
 
@@ -133,5 +170,34 @@ describe("saveConfig", () => {
     });
 
     expect(() => saveConfig(makeConfig())).not.toThrow();
+  });
+});
+
+describe("loadSavedConfig", () => {
+  it("initializes missing custom endpoint limits to zero", () => {
+    Object.defineProperty(globalThis, "localStorage", {
+      value: {
+        getItem: () =>
+          JSON.stringify({
+            provider: "custom",
+            apiKey: "sk-test",
+            model: "llama3",
+            useProxy: false,
+            proxyUrl: "",
+            thinking: "none",
+            followMode: true,
+            expandToolCalls: false,
+            apiType: "openai-completions",
+            customBaseUrl: "http://localhost:11434",
+          }),
+        setItem: () => undefined,
+      },
+      configurable: true,
+      writable: true,
+    });
+
+    const config = loadSavedConfig();
+    expect(config?.customContextWindow).toBe(0);
+    expect(config?.customMaxTokens).toBe(0);
   });
 });

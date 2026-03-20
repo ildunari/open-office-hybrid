@@ -52,6 +52,8 @@
   let thinking = $state<ThinkingLevel>(saved?.thinking || "none");
   let apiType = $state(saved?.apiType || "openai-completions");
   let customBaseUrl = $state(saved?.customBaseUrl || "");
+  let customContextWindow = $state(saved?.customContextWindow ?? 0);
+  let customMaxTokens = $state(saved?.customMaxTokens ?? 0);
   let authMethod = $state<"apikey" | "oauth">(saved?.authMethod || "apikey");
 
   const savedWeb = loadWebConfig();
@@ -135,6 +137,8 @@
       thinking: ThinkingLevel;
       apiType: string;
       customBaseUrl: string;
+      customContextWindow: number;
+      customMaxTokens: number;
       authMethod: "apikey" | "oauth";
     }>,
   ) {
@@ -146,6 +150,9 @@
     const nextThinking = updates.thinking ?? thinking;
     const nextApiType = updates.apiType ?? apiType;
     const nextCustomBaseUrl = updates.customBaseUrl ?? customBaseUrl;
+    const nextCustomContextWindow =
+      updates.customContextWindow ?? customContextWindow;
+    const nextCustomMaxTokens = updates.customMaxTokens ?? customMaxTokens;
     const nextAuthMethod = updates.authMethod ?? authMethod;
 
     provider = nextProvider;
@@ -156,6 +163,8 @@
     thinking = nextThinking;
     apiType = nextApiType;
     customBaseUrl = nextCustomBaseUrl;
+    customContextWindow = nextCustomContextWindow;
+    customMaxTokens = nextCustomMaxTokens;
     authMethod = nextAuthMethod;
 
     const isValid =
@@ -185,6 +194,8 @@
       approvalPolicyMode: $runtimeState.approvalPolicy.mode,
       apiType: nextApiType,
       customBaseUrl: nextCustomBaseUrl,
+      customContextWindow: nextCustomContextWindow,
+      customMaxTokens: nextCustomMaxTokens,
       authMethod: nextAuthMethod,
     };
 
@@ -435,6 +446,46 @@
             The API endpoint URL for your provider
           </p>
         </label>
+
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="block text-xs text-(--chat-text-secondary) mb-1.5">
+              Context Window
+            </span>
+            <input
+              type="number"
+              bind:value={customContextWindow}
+              oninput={() => updateAndSync({ customContextWindow })}
+              placeholder="128000"
+              min="0"
+              step="1000"
+              class="w-full bg-(--chat-input-bg) text-(--chat-text-primary) text-sm px-3 py-2 border border-(--chat-border) placeholder:text-(--chat-text-muted) focus:outline-none focus:border-(--chat-border-active)"
+              style={inputStyle}
+            />
+            <p class="text-[10px] text-(--chat-text-muted) mt-1">
+              0 = default (128k)
+            </p>
+          </label>
+
+          <label class="block">
+            <span class="block text-xs text-(--chat-text-secondary) mb-1.5">
+              Max Output Tokens
+            </span>
+            <input
+              type="number"
+              bind:value={customMaxTokens}
+              oninput={() => updateAndSync({ customMaxTokens })}
+              placeholder="32000"
+              min="0"
+              step="1000"
+              class="w-full bg-(--chat-input-bg) text-(--chat-text-primary) text-sm px-3 py-2 border border-(--chat-border) placeholder:text-(--chat-text-muted) focus:outline-none focus:border-(--chat-border-active)"
+              style={inputStyle}
+            />
+            <p class="text-[10px] text-(--chat-text-muted) mt-1">
+              0 = default (32k)
+            </p>
+          </label>
+        </div>
 
         <label class="block">
           <span class="block text-xs text-(--chat-text-secondary) mb-1.5">

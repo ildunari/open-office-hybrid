@@ -170,12 +170,13 @@ export function deriveStats(
     if (msg.role === "assistant") {
       const u = (msg as AssistantMessage).usage;
       if (u) {
-        inputTokens += u.input;
-        outputTokens += u.output;
-        cacheRead += u.cacheRead;
-        cacheWrite += u.cacheWrite;
-        totalCost += u.cost.total;
-        lastInputTokens = u.input + u.cacheRead + u.cacheWrite;
+        inputTokens += u.input ?? 0;
+        outputTokens += u.output ?? 0;
+        cacheRead += u.cacheRead ?? 0;
+        cacheWrite += u.cacheWrite ?? 0;
+        totalCost += u.cost?.total ?? 0;
+        lastInputTokens =
+          (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
       }
     }
   }

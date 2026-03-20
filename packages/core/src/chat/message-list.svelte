@@ -70,7 +70,29 @@
     shouldAutoScroll = distanceFromBottom < 100;
   }
 
-  const groups = $derived(groupMessages($runtimeState.messages));
+  let cachedGroups: MessageGroup[] = [];
+  let cachedMsgCount = -1;
+  let cachedFirstId = "";
+  let cachedLastId = "";
+
+  const groups = $derived.by(() => {
+    const msgs = $runtimeState.messages;
+    const count = msgs.length;
+    const firstId = msgs[0]?.id ?? "";
+    const lastId = msgs[count - 1]?.id ?? "";
+    if (
+      count === cachedMsgCount &&
+      firstId === cachedFirstId &&
+      lastId === cachedLastId
+    ) {
+      return cachedGroups;
+    }
+    cachedMsgCount = count;
+    cachedFirstId = firstId;
+    cachedLastId = lastId;
+    cachedGroups = groupMessages(msgs);
+    return cachedGroups;
+  });
   const lastMessage = $derived(
     $runtimeState.messages[$runtimeState.messages.length - 1],
   );
@@ -82,14 +104,38 @@
     $runtimeState.isStreaming && lastGroup?.type === "assistant",
   );
 
+  let scrollRaf: number | null = null;
+  let prevMessageCount = 0;
+
   $effect(() => {
-    $runtimeState.messages;
-    $runtimeState.isStreaming;
-    void tick().then(() => {
-      if (container && shouldAutoScroll) {
-        container.scrollTop = container.scrollHeight;
-      }
-    });
+    const msgs = $runtimeState.messages;
+    const streaming = $runtimeState.isStreaming;
+    const count = msgs.length;
+    const isNewMessage = count !== prevMessageCount;
+    prevMessageCount = count;
+
+    if (!container || !shouldAutoScroll) return;
+
+    if (isNewMessage || !streaming) {
+      void tick().then(() => {
+        if (container && shouldAutoScroll) {
+          container.scrollTo({
+            top: container.scrollHeight,
+            behavior: "instant",
+          });
+        }
+      });
+    } else if (scrollRaf === null) {
+      scrollRaf = requestAnimationFrame(() => {
+        scrollRaf = null;
+        if (container && shouldAutoScroll) {
+          container.scrollTo({
+            top: container.scrollHeight,
+            behavior: "instant",
+          });
+        }
+      });
+    }
   });
 </script>
 
@@ -124,7 +170,7 @@
     bind:this={container}
     onscroll={handleScroll}
     class="flex-1 overflow-y-auto p-3 space-y-3"
-    style="scrollbar-width: thin; scrollbar-color: var(--chat-scrollbar) transparent;"
+    style="scrollbar-width: thin; scrollbar-color: var(--chat-scrollbar) transparent; scrollbar-gutter: stable;"
   >
     {#each groups as group, index (group.type === "user" ? group.message.id : group.messages[0].id)}
       {#if group.type === "user"}
@@ -144,7 +190,7 @@
           {/each}
 
           {#if isStreamingAssistant && allParts.length === 0}
-            <span class="animate-pulse">▊</span>
+            <span class="animate-pulse" style="will-change: opacity;">▊</span>
           {/if}
         </div>
       {/if}
@@ -155,7 +201,7 @@
         class="flex items-center gap-2 text-(--chat-text-muted) text-sm"
         style="font-family: var(--chat-font-mono)"
       >
-        <Loader2 size={14} class="animate-spin" />
+        <Loader2 size={14} class="animate-spin" style="will-change: transform;" />
         <span>thinking...</span>
       </div>
     {/if}

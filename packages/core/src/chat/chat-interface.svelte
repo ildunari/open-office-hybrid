@@ -73,12 +73,14 @@
   }
 
   function formatTokens(value: number): string {
+    if (!Number.isFinite(value) || value < 0) return "0";
     if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
     if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
     return value.toString();
   }
 
   function formatCost(value: number): string {
+    if (!Number.isFinite(value) || value < 0) return "$0.0000";
     if (value < 0.01) return `$${value.toFixed(4)}`;
     return `$${value.toFixed(3)}`;
   }
@@ -236,7 +238,7 @@
                   type="button"
                   onclick={handleNewSession}
                   disabled={$runtimeState.isStreaming}
-                  class={`w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors border-b border-(--chat-border) ${$runtimeState.isStreaming ? "text-(--chat-text-muted) cursor-not-allowed" : "text-(--chat-accent) hover:bg-(--chat-bg-secondary)"}`}
+                  class={`w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors border-b border-(--chat-border) ${$runtimeState.isStreaming ? "text-(--chat-text-muted) pointer-events-none" : "text-(--chat-accent) hover:bg-(--chat-bg-secondary)"}`}
                 >
                   <Plus size={14} />
                   New Chat
@@ -251,7 +253,7 @@
                     <button
                       type="button"
                       disabled={isDisabled}
-                      class={`flex items-center justify-between px-3 py-2 text-xs transition-colors w-full text-left ${isCurrent ? "bg-(--chat-bg-secondary)" : ""} ${isDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-(--chat-bg-secondary)"}`}
+                      class={`flex items-center justify-between px-3 py-2 text-xs transition-colors w-full text-left ${isCurrent ? "bg-(--chat-bg-secondary)" : ""} ${isDisabled ? "pointer-events-none opacity-50" : "cursor-pointer hover:bg-(--chat-bg-secondary)"}`}
                       onclick={() => handleSwitchSession(session.id)}
                     >
                       <div class="flex items-center gap-2 min-w-0 flex-1">
@@ -285,7 +287,7 @@
                       await controller.deleteCurrentSession();
                       sessionDropdownOpen = false;
                     }}
-                    class={`w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors border-t border-(--chat-border) ${$runtimeState.isStreaming ? "text-(--chat-text-muted) cursor-not-allowed" : "text-(--chat-error) hover:bg-(--chat-bg-secondary)"}`}
+                    class={`w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors border-t border-(--chat-border) ${$runtimeState.isStreaming ? "text-(--chat-text-muted) pointer-events-none" : "text-(--chat-error) hover:bg-(--chat-bg-secondary)"}`}
                   >
                     <Trash2 size={14} />
                     Delete Current Session
@@ -429,11 +431,9 @@
           </span>
           {#if $runtimeState.sessionStats.contextWindow > 0}
             <span title="Context usage">
-              {(
-                (($runtimeState.sessionStats.lastInputTokens || 0) /
-                  $runtimeState.sessionStats.contextWindow) *
-                100
-              ).toFixed(1)}%/{formatTokens(
+              {formatTokens(
+                $runtimeState.sessionStats.lastInputTokens || 0,
+              )}/{formatTokens(
                 $runtimeState.sessionStats.contextWindow,
               )}
             </span>
