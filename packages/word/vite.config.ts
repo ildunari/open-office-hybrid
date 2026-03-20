@@ -118,6 +118,14 @@ export default defineConfig(async ({ mode }) => {
       headers: {
         "Access-Control-Allow-Origin": "*",
       },
+      proxy: {
+        "/llm-proxy": {
+          target: "http://localhost:8318",
+          changeOrigin: true,
+          rewrite: (path: string) => path.replace(/^\/llm-proxy/, ""),
+          secure: false,
+        },
+      },
     },
   };
 });

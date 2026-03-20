@@ -100,8 +100,8 @@ export function buildCustomModel(config: ProviderConfig): Model<Api> | null {
     reasoning: true,
     input: ["text", "image"] as ("text" | "image")[],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 32000,
+    contextWindow: 750000,
+    maxTokens: 100000,
   };
 }
 
