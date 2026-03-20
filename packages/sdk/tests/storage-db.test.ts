@@ -1,13 +1,17 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  createCompletionArtifact,
   createSession,
   getSession,
+  listCompletionArtifacts,
   listSessions,
   listSkillNames,
+  listThreadSummaries,
   loadSkillFiles,
   loadVfsFiles,
   renameSession,
+  saveThreadSummary,
   saveSession,
   saveSkillFiles,
   saveVfsFiles,
@@ -199,5 +203,58 @@ describe("storage/db", () => {
     expect(budgetFiles).toHaveLength(1);
     expect(budgetFiles[0].path).toBe("SKILL.md");
     expect(new TextDecoder().decode(budgetFiles[0].data)).toContain("v2");
+  });
+
+  it("persists thread summaries and completion artifacts by session", async () => {
+    const session = await createSession("doc-threads");
+
+    await saveThreadSummary(session.id, {
+      id: "thread-root",
+      title: "Main workflow",
+      status: "active",
+      rootTaskId: "task-root",
+      currentTaskId: "task-root",
+      forkedFromThreadId: null,
+      compactedSummary: null,
+      milestoneIds: ["milestone-inspect"],
+      updatedAt: 100,
+    });
+    await saveThreadSummary(session.id, {
+      id: "thread-alt",
+      title: "Alternative approach",
+      status: "compacted",
+      rootTaskId: "task-alt",
+      currentTaskId: "task-alt",
+      forkedFromThreadId: "thread-root",
+      compactedSummary: "Archived alternative path",
+      milestoneIds: [],
+      updatedAt: 200,
+    });
+
+    await createCompletionArtifact(session.id, {
+      id: "artifact-1",
+      threadId: "thread-root",
+      taskId: "task-root",
+      summary: "Updated workbook safely",
+      verificationStatus: "passed",
+      changedScopes: ["worksheet range"],
+      createdAt: 300,
+    });
+
+    const threads = await listThreadSummaries(session.id);
+    const artifacts = await listCompletionArtifacts(session.id);
+
+    expect(threads.map((thread) => thread.id)).toEqual([
+      "thread-alt",
+      "thread-root",
+    ]);
+    expect(threads[0].compactedSummary).toBe("Archived alternative path");
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]).toEqual(
+      expect.objectContaining({
+        threadId: "thread-root",
+        verificationStatus: "passed",
+      }),
+    );
   });
 });

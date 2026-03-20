@@ -2,14 +2,21 @@ import type { AppAdapter } from "@office-agents/core";
 import { getOrCreateDocumentId } from "@office-agents/core";
 import SelectionIndicator from "./components/selection-indicator.svelte";
 import pptApiDts from "./docs/powerpoint-officejs-api.d.ts?raw";
+import { getPowerPointReasoningPatterns } from "./patterns";
 import { buildPowerPointSystemPrompt } from "./system-prompt";
 import { PPT_TOOLS } from "./tools";
+import {
+  buildPowerPointHandoffSummary,
+  estimatePowerPointScopeRisk,
+  getPowerPointVerificationSuites,
+} from "./verifiers";
 import { getCustomCommands } from "./vfs/custom-commands";
 
 /* global PowerPoint, Office */
 
 export function createPowerPointAdapter(): AppAdapter {
   return {
+    hostApp: "powerpoint",
     tools: PPT_TOOLS,
     customCommands: getCustomCommands,
     hasImageSearch: true,
@@ -31,6 +38,10 @@ export function createPowerPointAdapter(): AppAdapter {
       "Start a conversation to create or edit your presentation",
     SelectionIndicator,
     buildSystemPrompt: buildPowerPointSystemPrompt,
+    getReasoningPatterns: getPowerPointReasoningPatterns,
+    getVerificationSuites: getPowerPointVerificationSuites,
+    buildHandoffSummary: buildPowerPointHandoffSummary,
+    estimateScopeRisk: estimatePowerPointScopeRisk,
 
     getDocumentId: async () => {
       return getOrCreateDocumentId();

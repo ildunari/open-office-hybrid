@@ -2,7 +2,13 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { UserMessage } from "@mariozechner/pi-ai";
 import { type DBSchema, type IDBPDatabase, openDB } from "idb";
 import { stripEnrichment } from "../message-utils";
-import type { ExecutionPlan, TaskRecord } from "../planning";
+import type {
+  CompactionArtifact,
+  CompletionArtifact,
+  ExecutionPlan,
+  TaskRecord,
+  TaskThreadSummary,
+} from "../planning";
 import type { ReflectionResult } from "../reflection/types";
 import { getNamespace } from "./namespace";
 
@@ -52,6 +58,27 @@ export interface ReflectionEntry {
   createdAt: number;
 }
 
+export interface ThreadSummaryRecord {
+  id: string;
+  sessionId: string;
+  thread: TaskThreadSummary;
+  updatedAt: number;
+}
+
+export interface CompletionArtifactRecord {
+  id: string;
+  sessionId: string;
+  artifact: CompletionArtifact;
+  createdAt: number;
+}
+
+export interface CompactionArtifactRecord {
+  id: string;
+  sessionId: string;
+  artifact: CompactionArtifact;
+  createdAt: number;
+}
+
 interface OfficeAgentsSchema extends DBSchema {
   sessions: {
     key: string;
@@ -82,6 +109,21 @@ interface OfficeAgentsSchema extends DBSchema {
     key: string;
     value: ReflectionEntry;
     indexes: { sessionId: string };
+  };
+  threadSummaries: {
+    key: string;
+    value: ThreadSummaryRecord;
+    indexes: { sessionId: string; updatedAt: number };
+  };
+  completionArtifacts: {
+    key: string;
+    value: CompletionArtifactRecord;
+    indexes: { sessionId: string; createdAt: number };
+  };
+  compactionArtifacts: {
+    key: string;
+    value: CompactionArtifactRecord;
+    indexes: { sessionId: string; createdAt: number };
   };
 }
 
@@ -124,6 +166,33 @@ function getDb(): Promise<IDBPDatabase<OfficeAgentsSchema>> {
           keyPath: "id",
         });
         reflections.createIndex("sessionId", "sessionId");
+      }
+      if (!db.objectStoreNames.contains("threadSummaries")) {
+        const threadSummaries = db.createObjectStore("threadSummaries", {
+          keyPath: "id",
+        });
+        threadSummaries.createIndex("sessionId", "sessionId");
+        threadSummaries.createIndex("updatedAt", "updatedAt");
+      }
+      if (!db.objectStoreNames.contains("completionArtifacts")) {
+        const completionArtifacts = db.createObjectStore(
+          "completionArtifacts",
+          {
+            keyPath: "id",
+          },
+        );
+        completionArtifacts.createIndex("sessionId", "sessionId");
+        completionArtifacts.createIndex("createdAt", "createdAt");
+      }
+      if (!db.objectStoreNames.contains("compactionArtifacts")) {
+        const compactionArtifacts = db.createObjectStore(
+          "compactionArtifacts",
+          {
+            keyPath: "id",
+          },
+        );
+        compactionArtifacts.createIndex("sessionId", "sessionId");
+        compactionArtifacts.createIndex("createdAt", "createdAt");
       }
     },
   });
@@ -370,6 +439,122 @@ export async function listReflectionEntries(
 ): Promise<ReflectionEntry[]> {
   const db = await getDb();
   return db.getAllFromIndex("reflections", "sessionId", sessionId);
+}
+
+export async function saveThreadSummary(
+  sessionId: string,
+  thread: TaskThreadSummary,
+): Promise<void> {
+  const db = await getDb();
+  await db.put("threadSummaries", {
+    id: thread.id,
+    sessionId,
+    thread,
+    updatedAt: thread.updatedAt,
+  });
+}
+
+export async function listThreadSummaries(
+  sessionId: string,
+): Promise<TaskThreadSummary[]> {
+  const db = await getDb();
+  const rows = await db.getAllFromIndex(
+    "threadSummaries",
+    "sessionId",
+    sessionId,
+  );
+  rows.sort((a, b) => b.updatedAt - a.updatedAt);
+  return rows.map((row) => row.thread);
+}
+
+export async function deleteThreadSummaries(sessionId: string): Promise<void> {
+  const db = await getDb();
+  const rows = await db.getAllFromIndex(
+    "threadSummaries",
+    "sessionId",
+    sessionId,
+  );
+  await Promise.all(rows.map((row) => db.delete("threadSummaries", row.id)));
+}
+
+export async function createCompletionArtifact(
+  sessionId: string,
+  artifact: CompletionArtifact,
+): Promise<void> {
+  const db = await getDb();
+  await db.put("completionArtifacts", {
+    id: artifact.id,
+    sessionId,
+    artifact,
+    createdAt: artifact.createdAt,
+  });
+}
+
+export async function listCompletionArtifacts(
+  sessionId: string,
+): Promise<CompletionArtifact[]> {
+  const db = await getDb();
+  const rows = await db.getAllFromIndex(
+    "completionArtifacts",
+    "sessionId",
+    sessionId,
+  );
+  rows.sort((a, b) => b.createdAt - a.createdAt);
+  return rows.map((row) => row.artifact);
+}
+
+export async function deleteCompletionArtifacts(
+  sessionId: string,
+): Promise<void> {
+  const db = await getDb();
+  const rows = await db.getAllFromIndex(
+    "completionArtifacts",
+    "sessionId",
+    sessionId,
+  );
+  await Promise.all(
+    rows.map((row) => db.delete("completionArtifacts", row.id)),
+  );
+}
+
+export async function createCompactionArtifact(
+  sessionId: string,
+  artifact: CompactionArtifact,
+): Promise<void> {
+  const db = await getDb();
+  await db.put("compactionArtifacts", {
+    id: artifact.id,
+    sessionId,
+    artifact,
+    createdAt: artifact.createdAt,
+  });
+}
+
+export async function listCompactionArtifacts(
+  sessionId: string,
+): Promise<CompactionArtifact[]> {
+  const db = await getDb();
+  const rows = await db.getAllFromIndex(
+    "compactionArtifacts",
+    "sessionId",
+    sessionId,
+  );
+  rows.sort((a, b) => b.createdAt - a.createdAt);
+  return rows.map((row) => row.artifact);
+}
+
+export async function deleteCompactionArtifacts(
+  sessionId: string,
+): Promise<void> {
+  const db = await getDb();
+  const rows = await db.getAllFromIndex(
+    "compactionArtifacts",
+    "sessionId",
+    sessionId,
+  );
+  await Promise.all(
+    rows.map((row) => db.delete("compactionArtifacts", row.id)),
+  );
 }
 
 export async function deleteReflectionEntries(

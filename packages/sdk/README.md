@@ -199,7 +199,7 @@ const promptSection = buildSkillsPromptSection(skills);
 
 - **`AgentRuntime`** — Main class. Manages agent lifecycle, streaming, config, sessions, file uploads, and skills.
 - **`RuntimeAdapter`** — Interface your app implements to provide tools, system prompt, document ID, and metadata.
-- **`RuntimeState`** — Observable state object (messages, streaming status, sessions, uploads, etc.).
+- **`RuntimeState`** — Observable state object (messages, streaming status, sessions, uploads, instruction sources, policy traces, threads, compaction state, and completion artifacts).
 
 ### Tools
 
@@ -229,6 +229,13 @@ const promptSection = buildSkillsPromptSection(skills);
 - **`loadSavedConfig()`** / **`saveConfig(config)`** — Read/write provider settings from localStorage.
 - **`buildCustomModel(config)`** — Build a model instance from a custom base URL config.
 - **`applyProxyToModel(model, config)`** — Apply proxy URL to a model.
+
+Provider config keeps the compact legacy `permissionMode` plus split framework controls:
+
+- `capabilityBoundaryMode` — `read_only | standard | full_host_access`
+- `approvalPolicyMode` — `confirm_writes | confirm_risky | auto`
+
+When only `permissionMode` is present, the SDK derives the split fields automatically for backward compatibility.
 
 ### OAuth
 

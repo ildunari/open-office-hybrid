@@ -1,6 +1,12 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { loadOAuthCredentials } from "./oauth";
-import type { PermissionMode } from "./orchestration/types";
+import {
+  type ApprovalPolicyMode,
+  approvalPolicyForPermissionMode,
+  type CapabilityBoundaryMode,
+  capabilityBoundaryForPermissionMode,
+  type PermissionMode,
+} from "./orchestration/types";
 import { getNamespace } from "./storage/namespace";
 
 export type ThinkingLevel = "none" | "low" | "medium" | "high";
@@ -15,6 +21,8 @@ export interface ProviderConfig {
   followMode: boolean;
   expandToolCalls: boolean;
   permissionMode?: PermissionMode;
+  capabilityBoundaryMode?: CapabilityBoundaryMode;
+  approvalPolicyMode?: ApprovalPolicyMode;
   apiType?: string;
   customBaseUrl?: string;
   authMethod?: "apikey" | "oauth";
@@ -90,6 +98,16 @@ export function loadSavedConfig(): ProviderConfig | null {
       if (config.expandToolCalls === undefined) config.expandToolCalls = false;
       if (config.permissionMode === undefined)
         config.permissionMode = "confirm_risky";
+      if (config.capabilityBoundaryMode === undefined) {
+        config.capabilityBoundaryMode = capabilityBoundaryForPermissionMode(
+          config.permissionMode,
+        );
+      }
+      if (config.approvalPolicyMode === undefined) {
+        config.approvalPolicyMode = approvalPolicyForPermissionMode(
+          config.permissionMode,
+        );
+      }
       if (config.apiType === undefined) config.apiType = "";
       if (config.customBaseUrl === undefined) config.customBaseUrl = "";
       if (config.authMethod === undefined) config.authMethod = "apikey";

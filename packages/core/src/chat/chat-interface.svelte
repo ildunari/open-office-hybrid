@@ -18,6 +18,7 @@
   import type { AppAdapter } from "./app-adapter";
   import ApprovalDrawer from "./approval-drawer.svelte";
   import { ChatController } from "./chat-controller";
+  import DiagnosticsPanel from "./diagnostics-panel.svelte";
   import { setChatContext } from "./chat-runtime-context";
   import ChatInput from "./chat-input.svelte";
   import FilesPanel from "./files-panel.svelte";
@@ -393,6 +394,8 @@
       plan={$runtimeState.planState}
       approvalMessage={$runtimeState.approvalRequest?.uiMessage ?? null}
     />
+
+    <DiagnosticsPanel runtimeState={$runtimeState} />
 
     <MessageList />
     {#if SelectionIndicator}

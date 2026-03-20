@@ -35,19 +35,32 @@ import {
   saveOAuthCredentials,
 } from "./oauth";
 import type {
+  ApprovalPolicy,
+  ApprovalPolicyMode,
+  CapabilityBoundary,
+  CapabilityBoundaryMode,
   HostApp,
   PermissionMode,
+  PolicyTraceEntry,
   TaskPhase,
   WaitingState,
+} from "./orchestration/types";
+import {
+  approvalPolicyForPermissionMode,
+  capabilityBoundaryForPermissionMode,
+  permissionModeFromPolicy,
 } from "./orchestration/types";
 import { PatternRegistry } from "./patterns/registry";
 import type { ReasoningPattern } from "./patterns/types";
 import {
+  type CompactionArtifact,
+  type CompletionArtifact,
   createUpdatePlanTool,
   type ExecutionPlan,
   PlanManager,
   TaskClassifier,
   type TaskRecord,
+  type TaskThreadSummary,
 } from "./planning";
 import {
   applyProxyToModel,
@@ -68,13 +81,22 @@ import {
 import { TaskTracker } from "./state/tracker";
 import {
   type ChatSession,
+  createCompactionArtifact,
+  createCompletionArtifact,
   createSession,
+  deleteCompactionArtifacts,
+  deleteCompletionArtifacts,
   deleteSession,
+  deleteThreadSummaries,
   getOrCreateCurrentSession,
   getSession,
+  listCompactionArtifacts,
+  listCompletionArtifacts,
   listSessions,
+  listThreadSummaries,
   loadVfsFiles,
   saveSession,
+  saveThreadSummary,
   saveVfsFiles,
 } from "./storage";
 import {
@@ -162,6 +184,26 @@ export interface RuntimeState {
   taskPhase: TaskPhase;
   permissionMode: PermissionMode;
   waitingState: WaitingState | null;
+  capabilityBoundary: CapabilityBoundary;
+  approvalPolicy: ApprovalPolicy;
+  policyTrace: PolicyTraceEntry[];
+  instructionSources: Array<{
+    id: string;
+    kind: "app_global" | "host_specific" | "document_memory" | "session_memory";
+    label: string;
+    precedence: number;
+    summary: string;
+    updatedAt?: number;
+  }>;
+  threads: TaskThreadSummary[];
+  activeThreadId: string | null;
+  compactionState: {
+    artifactCount: number;
+    lastCompactedThreadId: string | null;
+    updatedAt: number;
+  } | null;
+  completionArtifacts: CompletionArtifact[];
+  activeVerifierIds: string[];
 }
 
 type StateListener = (state: RuntimeState) => void;
@@ -213,6 +255,72 @@ function buildWaitingState(
   };
 }
 
+const MAX_POLICY_TRACE_ENTRIES = 25;
+
+function createCapabilityBoundary(
+  mode: CapabilityBoundaryMode,
+): CapabilityBoundary {
+  switch (mode) {
+    case "read_only":
+      return {
+        mode,
+        blockedActionClasses: [
+          "benign_write",
+          "structural_write",
+          "destructive_write",
+          "external_io",
+          "unsafe_eval",
+        ],
+        description:
+          "Blocks all mutation-capable work until the boundary changes.",
+      };
+    case "full_host_access":
+      return {
+        mode,
+        blockedActionClasses: [],
+        description:
+          "Allows unrestricted host access, including risky mutations.",
+      };
+    default:
+      return {
+        mode,
+        blockedActionClasses: [],
+        description:
+          "Allows normal host work while deferring high-risk actions to approval policy.",
+      };
+  }
+}
+
+function createApprovalPolicy(mode: ApprovalPolicyMode): ApprovalPolicy {
+  switch (mode) {
+    case "confirm_writes":
+      return {
+        mode,
+        description:
+          "Requests approval before any write-capable task continues.",
+      };
+    case "auto":
+      return {
+        mode,
+        description: "Allows write-capable tasks to continue automatically.",
+      };
+    default:
+      return {
+        mode,
+        description:
+          "Allows low-risk work automatically and pauses for riskier mutations.",
+      };
+  }
+}
+
+function summarizeJson(value: unknown): string {
+  const serialized = JSON.stringify(value);
+  if (!serialized) return "No details available.";
+  return serialized.length > 180
+    ? `${serialized.slice(0, 177)}...`
+    : serialized;
+}
+
 export class AgentRuntime {
   private agent: Agent | null = null;
   private config: ProviderConfig | null = null;
@@ -235,6 +343,8 @@ export class AgentRuntime {
   private patternRegistry = new PatternRegistry();
   private verificationEngine = new VerificationEngine();
   private listeners: Set<StateListener> = new Set();
+  private lastDocumentMetadata: object | null = null;
+  private lastDocumentMetadataUpdatedAt: number | null = null;
   private state: RuntimeState;
 
   constructor(adapter: RuntimeAdapter) {
@@ -249,6 +359,12 @@ export class AgentRuntime {
     const validConfig =
       saved?.provider && saved?.apiKey && saved?.model ? saved : null;
     this.followMode = validConfig?.followMode ?? true;
+    const capabilityMode =
+      validConfig?.capabilityBoundaryMode ??
+      capabilityBoundaryForPermissionMode(validConfig?.permissionMode);
+    const approvalMode =
+      validConfig?.approvalPolicyMode ??
+      approvalPolicyForPermissionMode(validConfig?.permissionMode);
     this.state = {
       messages: [],
       isStreaming: false,
@@ -275,8 +391,19 @@ export class AgentRuntime {
       activeTask: null,
       planState: null,
       taskPhase: "discuss",
-      permissionMode: validConfig?.permissionMode ?? "confirm_risky",
+      permissionMode: permissionModeFromPolicy(capabilityMode, approvalMode),
       waitingState: null,
+      capabilityBoundary: createCapabilityBoundary(capabilityMode),
+      approvalPolicy: createApprovalPolicy(approvalMode),
+      policyTrace: [],
+      instructionSources: [],
+      threads: [],
+      activeThreadId: null,
+      compactionState: null,
+      completionArtifacts: [],
+      activeVerifierIds: this.verificationEngine
+        .getSuites()
+        .map((suite) => suite.id),
     };
   }
 
@@ -317,8 +444,13 @@ export class AgentRuntime {
   }
 
   private syncHybridState(next: RuntimeState): RuntimeState {
+    const permissionMode = permissionModeFromPolicy(
+      next.capabilityBoundary.mode,
+      next.approvalPolicy.mode,
+    );
     return {
       ...next,
+      permissionMode,
       planState: next.activePlan,
       taskPhase: toTaskPhase(
         next.mode,
@@ -338,23 +470,307 @@ export class AgentRuntime {
     if (this.state.providerConfig && !this.isStreaming) {
       this.applyConfig(this.state.providerConfig);
     }
+    void this.refreshInstructionSources();
   }
 
   setPermissionMode(mode: PermissionMode) {
+    const capabilityMode = capabilityBoundaryForPermissionMode(mode);
+    const approvalMode = approvalPolicyForPermissionMode(mode);
     const nextConfig = this.state.providerConfig
-      ? { ...this.state.providerConfig, permissionMode: mode }
+      ? {
+          ...this.state.providerConfig,
+          permissionMode: mode,
+          capabilityBoundaryMode: capabilityMode,
+          approvalPolicyMode: approvalMode,
+        }
       : null;
     if (nextConfig) {
       saveConfig(nextConfig);
     }
-    this.update({ permissionMode: mode, providerConfig: nextConfig });
+    this.update({
+      providerConfig: nextConfig,
+      capabilityBoundary: createCapabilityBoundary(capabilityMode),
+      approvalPolicy: createApprovalPolicy(approvalMode),
+    });
+  }
+
+  setCapabilityBoundary(mode: CapabilityBoundaryMode) {
+    const approvalMode = this.state.approvalPolicy.mode;
+    const permissionMode = permissionModeFromPolicy(mode, approvalMode);
+    const nextConfig = this.state.providerConfig
+      ? {
+          ...this.state.providerConfig,
+          permissionMode,
+          capabilityBoundaryMode: mode,
+          approvalPolicyMode: approvalMode,
+        }
+      : null;
+    if (nextConfig) {
+      saveConfig(nextConfig);
+    }
+    this.update({
+      providerConfig: nextConfig,
+      capabilityBoundary: createCapabilityBoundary(mode),
+    });
+  }
+
+  setApprovalPolicy(mode: ApprovalPolicyMode) {
+    const capabilityMode = this.state.capabilityBoundary.mode;
+    const permissionMode = permissionModeFromPolicy(capabilityMode, mode);
+    const nextConfig = this.state.providerConfig
+      ? {
+          ...this.state.providerConfig,
+          permissionMode,
+          capabilityBoundaryMode: capabilityMode,
+          approvalPolicyMode: mode,
+        }
+      : null;
+    if (nextConfig) {
+      saveConfig(nextConfig);
+    }
+    this.update({
+      providerConfig: nextConfig,
+      approvalPolicy: createApprovalPolicy(mode),
+    });
+  }
+
+  private buildInstructionSources(): RuntimeState["instructionSources"] {
+    const documentSummary = this.lastDocumentMetadata
+      ? summarizeJson(this.lastDocumentMetadata)
+      : "No document metadata loaded yet.";
+    const sessionSummary = this.state.activeTask
+      ? `Task: ${this.state.activeTask.userRequest}`
+      : this.state.completionArtifacts[0]
+        ? `Last completion: ${this.state.completionArtifacts[0].summary}`
+        : "No active task or completion artifacts.";
+    return [
+      {
+        id: "instructions:app-global",
+        kind: "app_global",
+        label: "App-global",
+        precedence: 0,
+        summary: `Shared runtime rules for ${this.adapter.hostApp ?? "office"} agent runtime.`,
+      },
+      {
+        id: `instructions:host:${this.adapter.hostApp ?? "generic"}`,
+        kind: "host_specific",
+        label: "Host-specific",
+        precedence: 1,
+        summary: `${this.adapter.hostApp ?? "generic"} host with ${this.state.activeHookNames.length} hooks, ${this.state.activePatternMetadata.length} patterns, and ${this.state.activeVerifierIds.length} verifiers.`,
+      },
+      {
+        id: `instructions:document:${this.documentId ?? "pending"}`,
+        kind: "document_memory",
+        label: "Document memory",
+        precedence: 2,
+        summary: documentSummary,
+        updatedAt: this.lastDocumentMetadataUpdatedAt ?? undefined,
+      },
+      {
+        id: `instructions:session:${this.currentSessionId ?? "pending"}`,
+        kind: "session_memory",
+        label: "Session-local memory",
+        precedence: 3,
+        summary: sessionSummary,
+        updatedAt: Date.now(),
+      },
+    ];
+  }
+
+  private async refreshInstructionSources(
+    metadata?: { metadata: object; nameMap?: Record<number, string> } | null,
+  ) {
+    if (metadata?.metadata) {
+      this.lastDocumentMetadata = metadata.metadata;
+      this.lastDocumentMetadataUpdatedAt = Date.now();
+    }
+    this.update({
+      instructionSources: this.buildInstructionSources(),
+    });
+  }
+
+  private appendPolicyTrace(
+    entry: Omit<
+      PolicyTraceEntry,
+      "id" | "at" | "capabilityMode" | "approvalMode"
+    >,
+  ) {
+    const nextTrace = [
+      ...this.state.policyTrace,
+      {
+        ...entry,
+        id: crypto.randomUUID(),
+        capabilityMode: this.state.capabilityBoundary.mode,
+        approvalMode: this.state.approvalPolicy.mode,
+        at: Date.now(),
+      },
+    ].slice(-MAX_POLICY_TRACE_ENTRIES);
+    this.update({ policyTrace: nextTrace });
+  }
+
+  private buildRootThread(
+    activeTask: TaskRecord | null = this.state.activeTask,
+    activePlan: ExecutionPlan | null = this.state.activePlan,
+  ): TaskThreadSummary {
+    return {
+      id: `thread-root:${this.currentSessionId ?? "pending"}`,
+      title: `${this.adapter.hostApp ?? "office"} main thread`,
+      status: "active",
+      rootTaskId: activeTask?.id ?? null,
+      currentTaskId: activeTask?.id ?? null,
+      forkedFromThreadId: null,
+      compactedSummary: null,
+      milestoneIds: activePlan?.milestones.map((item) => item.id) ?? [],
+      updatedAt: Date.now(),
+    };
+  }
+
+  private async ensureThreadsLoaded(
+    sessionId: string,
+    activeTask: TaskRecord | null = this.state.activeTask,
+    activePlan: ExecutionPlan | null = this.state.activePlan,
+  ): Promise<TaskThreadSummary[]> {
+    const existing = await listThreadSummaries(sessionId);
+    if (existing.length > 0) {
+      return existing;
+    }
+    const rootThread = this.buildRootThread(activeTask, activePlan);
+    await saveThreadSummary(sessionId, rootThread);
+    return [rootThread];
+  }
+
+  private async loadThreadState(
+    sessionId: string,
+    activeTask: TaskRecord | null = this.state.activeTask,
+    activePlan: ExecutionPlan | null = this.state.activePlan,
+  ) {
+    const [threads, completionArtifacts, compactionArtifacts] =
+      await Promise.all([
+        this.ensureThreadsLoaded(sessionId, activeTask, activePlan),
+        listCompletionArtifacts(sessionId),
+        listCompactionArtifacts(sessionId),
+      ]);
+    const activeThread =
+      threads.find((thread) => thread.status === "active") ??
+      threads[0] ??
+      null;
+    const latestCompaction = compactionArtifacts[0] ?? null;
+    this.update({
+      threads,
+      activeThreadId: activeThread?.id ?? null,
+      completionArtifacts,
+      compactionState: latestCompaction
+        ? {
+            artifactCount: compactionArtifacts.length,
+            lastCompactedThreadId: latestCompaction.threadId,
+            updatedAt: latestCompaction.createdAt,
+          }
+        : {
+            artifactCount: 0,
+            lastCompactedThreadId: null,
+            updatedAt: Date.now(),
+          },
+    });
+  }
+
+  private async saveThread(thread: TaskThreadSummary) {
+    if (!this.currentSessionId) return;
+    await saveThreadSummary(this.currentSessionId, thread);
+    const threads = await listThreadSummaries(this.currentSessionId);
+    this.update({ threads });
+  }
+
+  forkActiveThread(title: string): TaskThreadSummary | null {
+    const currentThread =
+      this.state.threads.find(
+        (thread) => thread.id === this.state.activeThreadId,
+      ) ?? this.state.threads[0];
+    if (!currentThread || !this.currentSessionId) return null;
+    const forked: TaskThreadSummary = {
+      id: crypto.randomUUID(),
+      title,
+      status: "active",
+      rootTaskId: currentThread.rootTaskId,
+      currentTaskId: this.state.activeTask?.id ?? currentThread.currentTaskId,
+      forkedFromThreadId: currentThread.id,
+      compactedSummary: null,
+      milestoneIds:
+        this.state.activePlan?.milestones.map((item) => item.id) ?? [],
+      updatedAt: Date.now(),
+    };
+    void this.saveThread(forked);
+    this.update({
+      threads: [forked, ...this.state.threads],
+      activeThreadId: forked.id,
+    });
+    return forked;
+  }
+
+  resumeThread(threadId: string): TaskThreadSummary | null {
+    const thread = this.state.threads.find((item) => item.id === threadId);
+    if (!thread) return null;
+    const resumed = {
+      ...thread,
+      status: "active" as const,
+      currentTaskId: this.state.activeTask?.id ?? thread.currentTaskId,
+      updatedAt: Date.now(),
+    };
+    void this.saveThread(resumed);
+    this.update({
+      threads: this.state.threads.map((item) =>
+        item.id === threadId ? resumed : item,
+      ),
+      activeThreadId: threadId,
+    });
+    return resumed;
+  }
+
+  compactThread(threadId: string): TaskThreadSummary | null {
+    const thread = this.state.threads.find((item) => item.id === threadId);
+    if (!thread || !this.currentSessionId) return null;
+    const compacted = {
+      ...thread,
+      status: "compacted" as const,
+      compactedSummary:
+        this.state.activeTask?.userRequest ??
+        this.state.completionArtifacts[0]?.summary ??
+        "Compacted thread summary",
+      updatedAt: Date.now(),
+    };
+    const artifact: CompactionArtifact = {
+      id: crypto.randomUUID(),
+      threadId,
+      summary: compacted.compactedSummary ?? "Compacted thread summary",
+      sourceTaskIds: compacted.currentTaskId ? [compacted.currentTaskId] : [],
+      createdAt: Date.now(),
+    };
+    void Promise.all([
+      saveThreadSummary(this.currentSessionId, compacted),
+      createCompactionArtifact(this.currentSessionId, artifact),
+    ]).then(() => this.loadThreadState(this.currentSessionId!));
+    const nextActiveThread =
+      this.state.threads.find(
+        (item) => item.id !== threadId && item.status !== "compacted",
+      )?.id ?? null;
+    this.update({
+      threads: this.state.threads.map((item) =>
+        item.id === threadId ? compacted : item,
+      ),
+      activeThreadId: nextActiveThread,
+      compactionState: {
+        artifactCount: (this.state.compactionState?.artifactCount ?? 0) + 1,
+        lastCompactedThreadId: threadId,
+        updatedAt: artifact.createdAt,
+      },
+    });
+    return compacted;
   }
 
   approvePending() {
     return this.approveActivePlan();
   }
 
-  private applyPermissionMode(
+  private applyApprovalPolicy(
     classification: Awaited<ReturnType<TaskClassifier["classify"]>>,
     riskEstimate: ScopeRiskEstimate,
   ): ScopeRiskEstimate {
@@ -362,31 +778,20 @@ export class AgentRuntime {
       classification.risk !== "none" || riskEstimate.destructive;
     if (!hasMutationRisk) return riskEstimate;
 
-    if (this.state.permissionMode === "full_auto") {
+    if (this.state.approvalPolicy.mode === "auto") {
       return {
         ...riskEstimate,
         requiresApproval: false,
       };
     }
 
-    if (this.state.permissionMode === "confirm_writes") {
+    if (this.state.approvalPolicy.mode === "confirm_writes") {
       return {
         ...riskEstimate,
         requiresApproval: true,
         reasons: [
           ...riskEstimate.reasons,
-          "Permission mode requires approval before writes.",
-        ],
-      };
-    }
-
-    if (this.state.permissionMode === "read_only") {
-      return {
-        ...riskEstimate,
-        requiresApproval: true,
-        reasons: [
-          ...riskEstimate.reasons,
-          "Permission mode is read-only. Change the mode to allow writes.",
+          "Approval policy requires confirmation before writes.",
         ],
       };
     }
@@ -394,12 +799,12 @@ export class AgentRuntime {
     return riskEstimate;
   }
 
-  private isReadOnlyMutationBlocked(
+  private isCapabilityBoundaryBlocked(
     classification: Awaited<ReturnType<TaskClassifier["classify"]>>,
     riskEstimate: ScopeRiskEstimate,
   ) {
     return (
-      this.state.permissionMode === "read_only" &&
+      this.state.capabilityBoundary.mode === "read_only" &&
       (classification.risk !== "none" || riskEstimate.destructive)
     );
   }
@@ -644,26 +1049,43 @@ export class AgentRuntime {
   };
 
   applyConfig(config: ProviderConfig) {
+    const normalizedConfig: ProviderConfig = {
+      ...config,
+      permissionMode:
+        config.permissionMode ??
+        permissionModeFromPolicy(
+          config.capabilityBoundaryMode ??
+            capabilityBoundaryForPermissionMode(config.permissionMode),
+          config.approvalPolicyMode ??
+            approvalPolicyForPermissionMode(config.permissionMode),
+        ),
+      capabilityBoundaryMode:
+        config.capabilityBoundaryMode ??
+        capabilityBoundaryForPermissionMode(config.permissionMode),
+      approvalPolicyMode:
+        config.approvalPolicyMode ??
+        approvalPolicyForPermissionMode(config.permissionMode),
+    };
     let contextWindow = 0;
     let baseModel: Model<Api>;
-    if (config.provider === "custom") {
-      const custom = buildCustomModel(config);
+    if (normalizedConfig.provider === "custom") {
+      const custom = buildCustomModel(normalizedConfig);
       if (!custom) return;
       baseModel = custom;
     } else {
       try {
         baseModel = (getModel as (p: string, m: string) => Model<Api>)(
-          config.provider,
-          config.model,
+          normalizedConfig.provider,
+          normalizedConfig.model,
         );
       } catch {
         return;
       }
     }
     contextWindow = baseModel.contextWindow;
-    this.config = config;
+    this.config = normalizedConfig;
 
-    const proxiedModel = applyProxyToModel(baseModel, config);
+    const proxiedModel = applyProxyToModel(baseModel, normalizedConfig);
     const existingMessages = this.agent?.state.messages ?? [];
 
     if (this.agent) {
@@ -676,7 +1098,7 @@ export class AgentRuntime {
       initialState: {
         model: proxiedModel,
         systemPrompt,
-        thinkingLevel: thinkingLevelToAgent(config.thinking),
+        thinkingLevel: thinkingLevelToAgent(normalizedConfig.thinking),
         tools: [
           createUpdatePlanTool(this.planManager),
           ...this.hookRegistry.wrapTools(this.adapter.tools),
@@ -684,7 +1106,7 @@ export class AgentRuntime {
         messages: existingMessages,
       },
       streamFn: async (model, context, options) => {
-        const cfg = this.config ?? config;
+        const cfg = this.config ?? normalizedConfig;
         const apiKey = await this.getActiveApiKey(cfg);
         return streamSimple(model, context, {
           ...options,
@@ -695,15 +1117,21 @@ export class AgentRuntime {
     this.agent = agent;
     agent.subscribe(this.handleAgentEvent);
     this.pendingConfig = null;
-    this.followMode = config.followMode ?? true;
+    this.followMode = normalizedConfig.followMode ?? true;
 
     this.update({
-      providerConfig: config,
+      providerConfig: normalizedConfig,
       error: null,
       sessionStats: {
         ...this.state.sessionStats,
         contextWindow,
       },
+      capabilityBoundary: createCapabilityBoundary(
+        normalizedConfig.capabilityBoundaryMode!,
+      ),
+      approvalPolicy: createApprovalPolicy(
+        normalizedConfig.approvalPolicyMode!,
+      ),
     });
   }
 
@@ -745,6 +1173,12 @@ export class AgentRuntime {
       isStreaming: true,
       error: null,
     });
+    this.appendPolicyTrace({
+      event: "prompt_submit",
+      outcome: "allowed",
+      reason:
+        "Received a new user request for classification and policy evaluation.",
+    });
 
     try {
       const classification = await this.taskClassifier.classify(content);
@@ -752,14 +1186,33 @@ export class AgentRuntime {
         content,
         classification,
       );
-      const riskEstimate = this.applyPermissionMode(
+      const riskEstimate = this.applyApprovalPolicy(
         classification,
         rawRiskEstimate,
       );
-      const permissionBlocked = this.isReadOnlyMutationBlocked(
+      const permissionBlocked = this.isCapabilityBoundaryBlocked(
         classification,
         rawRiskEstimate,
       );
+      this.appendPolicyTrace({
+        event: "policy_check",
+        outcome: permissionBlocked
+          ? "blocked"
+          : riskEstimate.requiresApproval
+            ? "approval_required"
+            : "allowed",
+        reason: permissionBlocked
+          ? "Capability boundary blocked mutation-capable work."
+          : riskEstimate.requiresApproval
+            ? riskEstimate.reasons.join("; ")
+            : "Policy allowed the task to continue.",
+        actionClass:
+          classification.risk === "none"
+            ? "read"
+            : riskEstimate.destructive
+              ? "destructive_write"
+              : "structural_write",
+      });
       const activePlan = classification.needsPlan
         ? await this.planManager.createPlan(content, classification)
         : this.planManager.hydrate(null);
@@ -852,6 +1305,7 @@ export class AgentRuntime {
         activePlan,
         activeTask,
       });
+      await this.refreshInstructionSources();
 
       const requirementsSnapshot =
         this.contextManager.buildRequirementsSnapshot(
@@ -879,6 +1333,11 @@ export class AgentRuntime {
       );
 
       if (permissionBlocked && activeTask) {
+        this.appendPolicyTrace({
+          event: "task_paused",
+          outcome: "blocked",
+          reason: "Task paused because the capability boundary is read-only.",
+        });
         const handoff = await this.buildHandoff(
           activeTask,
           "Change permission mode to allow document mutation.",
@@ -895,6 +1354,12 @@ export class AgentRuntime {
       }
 
       if (riskEstimate.requiresApproval && activeTask) {
+        this.appendPolicyTrace({
+          event: "approval_emitted",
+          outcome: "approval_required",
+          reason:
+            "Approval policy requires confirmation before this task continues.",
+        });
         const handoff = await this.buildHandoff(
           activeTask,
           "Approve the plan to allow document mutation.",
@@ -929,10 +1394,15 @@ export class AgentRuntime {
 
   async approveActivePlan() {
     if (!this.state.activeTask || !this.agent) return;
-    if (this.state.permissionMode === "read_only") return;
+    if (this.state.capabilityBoundary.mode === "read_only") return;
     this.taskTracker.setApprovalPending(false);
     this.taskTracker.setMode("execute");
     this.taskTracker.setHandoff(null);
+    this.appendPolicyTrace({
+      event: "task_resumed",
+      outcome: "allowed",
+      reason: "User approved the active plan.",
+    });
     this.update({
       approvalRequest: null,
       handoff: null,
@@ -953,6 +1423,11 @@ export class AgentRuntime {
     if (!this.state.activeTask || !this.agent) return;
     this.taskTracker.setMode("execute");
     this.taskTracker.setHandoff(null);
+    this.appendPolicyTrace({
+      event: "task_resumed",
+      outcome: "allowed",
+      reason: "Task resumed from handoff state.",
+    });
     this.update({
       mode: "execute",
       handoff: null,
@@ -977,13 +1452,19 @@ export class AgentRuntime {
     this.taskTracker.reset();
     this.patternRegistry.deactivateAll();
     if (this.currentSessionId) {
+      const rootThread = this.buildRootThread(null, null);
       Promise.all([
         saveSession(this.currentSessionId, []),
         saveVfsFiles(this.currentSessionId, []),
         deletePlanRecords(this.currentSessionId),
         deleteTaskRecords(this.currentSessionId),
         deleteReflectionEntries(this.currentSessionId),
-      ]).catch(console.error);
+        deleteThreadSummaries(this.currentSessionId),
+        deleteCompletionArtifacts(this.currentSessionId),
+        deleteCompactionArtifacts(this.currentSessionId),
+      ])
+        .then(() => saveThreadSummary(this.currentSessionId!, rootThread))
+        .catch(console.error);
     }
     this.update({
       messages: [],
@@ -1001,7 +1482,19 @@ export class AgentRuntime {
       lastPromptNotes: [],
       activePlan: null,
       activeTask: null,
+      threads: this.currentSessionId ? [this.buildRootThread(null, null)] : [],
+      activeThreadId: this.currentSessionId
+        ? this.buildRootThread(null, null).id
+        : null,
+      compactionState: {
+        artifactCount: 0,
+        lastCompactedThreadId: null,
+        updatedAt: Date.now(),
+      },
+      completionArtifacts: [],
+      policyTrace: [],
     });
+    void this.refreshInstructionSources();
   }
 
   private async refreshSessions() {
@@ -1022,6 +1515,7 @@ export class AgentRuntime {
       this.patternRegistry.deactivateAll();
       const session = await createSession(this.documentId);
       this.currentSessionId = session.id;
+      await this.loadThreadState(session.id, null, null);
       await this.refreshSessions();
       this.update({
         messages: [],
@@ -1040,7 +1534,9 @@ export class AgentRuntime {
         lastPromptNotes: [],
         activePlan: null,
         activeTask: null,
+        policyTrace: [],
       });
+      await this.refreshInstructionSources();
     } catch (err) {
       console.error("[Runtime] Failed to create session:", err);
     }
@@ -1070,6 +1566,7 @@ export class AgentRuntime {
         this.agent.replaceMessages(session.agentMessages);
       }
 
+      await this.loadThreadState(session.id, activeTask, activePlan);
       const uploadNames = await listUploads();
       const stats = deriveStats(session.agentMessages);
       this.update({
@@ -1103,8 +1600,10 @@ export class AgentRuntime {
         lastPromptNotes: [],
         activePlan,
         activeTask,
+        policyTrace: [],
       });
       await this.refreshNameMap();
+      await this.refreshInstructionSources();
     } catch (err) {
       console.error("[Runtime] Failed to switch session:", err);
     }
@@ -1125,6 +1624,9 @@ export class AgentRuntime {
       deletePlanRecords(deletedId),
       deleteTaskRecords(deletedId),
       deleteReflectionEntries(deletedId),
+      deleteThreadSummaries(deletedId),
+      deleteCompletionArtifacts(deletedId),
+      deleteCompactionArtifacts(deletedId),
     ]);
     const session = await getOrCreateCurrentSession(this.documentId);
     this.currentSessionId = session.id;
@@ -1142,6 +1644,7 @@ export class AgentRuntime {
       this.agent.replaceMessages(session.agentMessages);
     }
 
+    await this.loadThreadState(session.id, activeTask, activePlan);
     await this.refreshSessions();
     const uploadNames = await listUploads();
     const stats = deriveStats(session.agentMessages);
@@ -1176,7 +1679,9 @@ export class AgentRuntime {
       lastPromptNotes: [],
       activePlan,
       activeTask,
+      policyTrace: [],
     });
+    await this.refreshInstructionSources();
   }
 
   private async onStreamingEnd() {
@@ -1190,13 +1695,33 @@ export class AgentRuntime {
       const activeTask = this.state.error
         ? this.taskTracker.failTask(taskSummary)
         : this.taskTracker.completeTask(taskSummary);
-      await this.runVerificationPhase();
+      const verification = await this.runVerificationPhase();
       if (activeTask) {
         await this.reflectionEngine.taskReflect({
           taskId: activeTask.id,
           summary: taskSummary,
         });
       }
+      const activeThreadId =
+        this.state.activeThreadId ?? this.state.threads[0]?.id ?? null;
+      const completionArtifact =
+        activeTask && activeThreadId
+          ? {
+              id: crypto.randomUUID(),
+              threadId: activeThreadId,
+              taskId: activeTask.id,
+              summary: taskSummary,
+              verificationStatus: (verification?.status === "running"
+                ? "pending"
+                : (verification?.status ??
+                  activeTask.verificationSummary?.status ??
+                  "pending")) as CompletionArtifact["verificationStatus"],
+              changedScopes: activeTask.scopeSummary
+                ? [activeTask.scopeSummary]
+                : [],
+              createdAt: Date.now(),
+            }
+          : null;
       const vfsFiles = await snapshotVfs();
       await Promise.all([
         saveSession(sessionId, agentMessages),
@@ -1204,7 +1729,42 @@ export class AgentRuntime {
         this.planManager.persist(sessionId),
         this.taskTracker.persist(sessionId),
         this.reflectionEngine.persist(sessionId),
+        completionArtifact
+          ? createCompletionArtifact(sessionId, completionArtifact)
+          : Promise.resolve(),
       ]);
+      if (activeThreadId) {
+        await this.saveThread({
+          ...(this.state.threads.find(
+            (thread) => thread.id === activeThreadId,
+          ) ?? this.buildRootThread()),
+          id: activeThreadId,
+          status:
+            verification?.status === "failed" ||
+            verification?.status === "retryable"
+              ? "blocked"
+              : "completed",
+          rootTaskId: activeTask?.id ?? null,
+          currentTaskId: activeTask?.id ?? null,
+          milestoneIds:
+            this.state.activePlan?.milestones.map((item) => item.id) ?? [],
+          updatedAt: Date.now(),
+        });
+      }
+      await this.loadThreadState(sessionId);
+      this.appendPolicyTrace({
+        event: "task_completed",
+        outcome:
+          verification?.status === "failed" ||
+          verification?.status === "retryable"
+            ? "blocked"
+            : "allowed",
+        reason:
+          verification?.status === "failed" ||
+          verification?.status === "retryable"
+            ? "Task completed with verification follow-up required."
+            : "Task completed and persisted successfully.",
+      });
       await this.refreshSessions();
       const updated = await getSession(sessionId);
       if (updated) {
@@ -1214,6 +1774,7 @@ export class AgentRuntime {
           activeTask: this.taskTracker.getCurrentTask(),
         });
       }
+      await this.refreshInstructionSources();
       this.bumpVfs();
     } catch (e) {
       console.error(e);
@@ -1263,6 +1824,7 @@ export class AgentRuntime {
         this.agent.replaceMessages(session.agentMessages);
       }
 
+      await this.loadThreadState(session.id, activeTask, activePlan);
       const uploadNames = await listUploads();
       const stats = deriveStats(session.agentMessages);
       this.update({
@@ -1297,8 +1859,10 @@ export class AgentRuntime {
         lastPromptNotes: [],
         activePlan,
         activeTask,
+        policyTrace: [],
       });
       await this.refreshNameMap();
+      await this.refreshInstructionSources();
     } catch (err) {
       console.error("[Runtime] Failed to load session:", err);
     }
@@ -1410,6 +1974,10 @@ export class AgentRuntime {
     if (!this.adapter.getDocumentMetadata) return;
     try {
       const meta = await this.adapter.getDocumentMetadata();
+      if (meta?.metadata) {
+        this.lastDocumentMetadata = meta.metadata;
+        this.lastDocumentMetadataUpdatedAt = Date.now();
+      }
       if (meta?.nameMap) {
         this.update({ nameMap: meta.nameMap });
       }
@@ -1437,18 +2005,22 @@ export class AgentRuntime {
 
     const registration = adapter.registerHooks?.(this.hookRegistry);
     if (!registration) {
-      this.update({
-        activeHookNames: this.hookRegistry.getRegisteredHookNames(),
-      });
+      if (this.state) {
+        this.update({
+          activeHookNames: this.hookRegistry.getRegisteredHookNames(),
+        });
+      }
       return;
     }
 
     this.adapterHookDisposables = Array.isArray(registration)
       ? registration
       : [registration];
-    this.update({
-      activeHookNames: this.hookRegistry.getRegisteredHookNames(),
-    });
+    if (this.state) {
+      this.update({
+        activeHookNames: this.hookRegistry.getRegisteredHookNames(),
+      });
+    }
   }
 
   private syncAdapterPatterns(adapter: RuntimeAdapter) {
@@ -1458,11 +2030,20 @@ export class AgentRuntime {
     for (const pattern of adapter.getReasoningPatterns?.() ?? []) {
       this.patternRegistry.register(pattern);
     }
-    this.update({ activePatternMetadata: [] });
+    if (this.state) {
+      this.update({ activePatternMetadata: [] });
+    }
   }
 
   private syncAdapterVerifiers(adapter: RuntimeAdapter) {
     this.verificationEngine.setSuites(adapter.getVerificationSuites?.() ?? []);
+    if (this.state) {
+      this.update({
+        activeVerifierIds: this.verificationEngine
+          .getSuites()
+          .map((suite) => suite.id),
+      });
+    }
   }
 
   private activateRestoredPatterns(plan: ExecutionPlan | null) {
@@ -1490,6 +2071,8 @@ export class AgentRuntime {
       try {
         const meta = await this.adapter.getDocumentMetadata();
         if (meta) {
+          this.lastDocumentMetadata = meta.metadata;
+          this.lastDocumentMetadataUpdatedAt = Date.now();
           const tag = this.adapter.metadataTag || "doc_context";
           promptContent = `<${tag}>\n${JSON.stringify(meta.metadata, null, 2)}\n</${tag}>\n\n${content}`;
           if (meta.nameMap) {
@@ -1619,11 +2202,16 @@ export class AgentRuntime {
 
     const verification = await this.verificationEngine.run({
       app:
+        this.adapter.hostApp === "word" ||
         this.adapter.metadataTag === "doc_context"
           ? "word"
-          : this.adapter.metadataTag === "wb_context"
+          : this.adapter.hostApp === "excel" ||
+              this.adapter.metadataTag === "wb_context"
             ? "excel"
-            : undefined,
+            : this.adapter.hostApp === "powerpoint" ||
+                this.adapter.metadataTag === "ppt_context"
+              ? "powerpoint"
+              : undefined,
       mode: "verify",
       request: task.userRequest,
       plan: this.planManager.getActivePlan(),

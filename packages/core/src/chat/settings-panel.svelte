@@ -181,6 +181,8 @@
       followMode,
       expandToolCalls,
       permissionMode,
+      capabilityBoundaryMode: $runtimeState.capabilityBoundary.mode,
+      approvalPolicyMode: $runtimeState.approvalPolicy.mode,
       apiType: nextApiType,
       customBaseUrl: nextCustomBaseUrl,
       authMethod: nextAuthMethod,

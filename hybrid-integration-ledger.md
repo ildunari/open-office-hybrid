@@ -17,13 +17,17 @@
 
 - `packages/sdk/src/runtime.ts`
   - Claude runtime core preserved, but now exposes Codex-style alias state: `planState`, `taskPhase`, `permissionMode`, and `waitingState`
-  - Permission mode now adjusts approval behavior without introducing a second orchestrator state model
+  - Permission mode remains the compact operator-facing alias, but now maps onto first-class capability boundary and approval policy state
+  - Runtime now tracks instruction-source hierarchy, policy traces, thread summaries, compaction state, and completion artifacts without introducing a second persistence authority
 - `packages/core/src/chat/app-adapter.ts`
   - Combines Claude adapter safety extension points with the shared host/permission vocabulary needed by the hybrid UI
 - `packages/core/src/chat/chat-interface.svelte` and `packages/core/src/chat/settings-panel.svelte`
   - Uses Codex-style status/approval/plan/resume UI against the Claude-backed runtime state
+  - Adds a collapsed diagnostics surface for instruction sources, policy state, hooks/patterns/verifiers, active thread, compaction state, and completion artifacts
 - `packages/core/src/sdk.ts`
   - Adds a SDK-only subpath so app packages can consume runtime helpers without pulling the Svelte UI surface into tests
+- `packages/powerpoint/src/lib/adapter.ts`, `packages/powerpoint/src/lib/patterns/*`, and `packages/powerpoint/src/lib/verifiers/*`
+  - PowerPoint now participates in the same framework layer as Excel and Word with host registration, reasoning patterns, risk estimation, handoff summaries, and verification suites
 
 ## Rejected And Why
 

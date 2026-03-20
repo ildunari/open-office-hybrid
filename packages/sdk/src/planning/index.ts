@@ -8,8 +8,11 @@ export {
 } from "./manager";
 export { createUpdatePlanTool } from "./plan-tool";
 export type {
+  CompactionArtifact,
+  CompletionArtifact,
   ExecutionPlan,
   ExecutionUnit,
+  PlanMilestone,
   PlanMode,
   PlanRevisionNote,
   PlanStatus,
@@ -22,5 +25,7 @@ export type {
   TaskComplexity,
   TaskRecord,
   TaskStatus,
+  TaskThreadSummary,
+  ThreadStatus,
   VerificationIntent,
 } from "./types";

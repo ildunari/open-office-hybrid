@@ -73,9 +73,14 @@ export {
 } from "./oauth";
 export type {
   ActionClass,
+  ApprovalPolicy,
+  ApprovalPolicyMode,
+  CapabilityBoundary,
+  CapabilityBoundaryMode,
   HostApp,
   HostScopeRef,
   PermissionMode,
+  PolicyTraceEntry,
   TaskPhase,
   WaitingState,
 } from "./orchestration/types";
@@ -84,8 +89,11 @@ export { PatternRegistry } from "./patterns/registry";
 export type { ReasoningPattern } from "./patterns/types";
 export { loadPdfDocument } from "./pdf";
 export type {
+  CompactionArtifact,
+  CompletionArtifact,
   ExecutionPlan,
   ExecutionUnit,
+  PlanMilestone,
   PlanMode,
   PlanRevisionNote,
   PlanStatus,
@@ -97,6 +105,8 @@ export type {
   TaskComplexity,
   TaskRecord,
   TaskStatus,
+  TaskThreadSummary,
+  ThreadStatus,
   VerificationIntent,
 } from "./planning";
 // Planning

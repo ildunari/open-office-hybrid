@@ -1,9 +1,18 @@
+import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  plugins: [svelte()],
   test: {
-    globals: true,
-    passWithNoTests: true,
     include: ["tests/**/*.test.ts"],
+    server: {
+      deps: {
+        inline: ["pdfjs-dist"],
+      },
+    },
+  },
+  define: {
+    DOMMatrix: "Object",
+    __APP_VERSION__: JSON.stringify("test"),
   },
 });

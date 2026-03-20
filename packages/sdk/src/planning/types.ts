@@ -67,6 +67,14 @@ export interface VerificationIntent {
   expectedEffect: string;
 }
 
+export interface PlanMilestone {
+  id: string;
+  title: string;
+  stepIds: string[];
+  status: "pending" | "in_progress" | "completed";
+  summary?: string;
+}
+
 export interface ExecutionPlan {
   id: string;
   userRequest: string;
@@ -78,6 +86,7 @@ export interface ExecutionPlan {
   strategy: string[];
   executionUnits: ExecutionUnit[];
   verification: VerificationIntent[];
+  milestones: PlanMilestone[];
   approvalRequired: boolean;
   expectedEffects: string[];
   steps: PlanStep[];
@@ -89,9 +98,48 @@ export interface ExecutionPlan {
 
 export type TaskStatus = "pending" | "in_progress" | "completed" | "failed";
 
+export type ThreadStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "completed"
+  | "compacted";
+
+export interface TaskThreadSummary {
+  id: string;
+  title: string;
+  status: ThreadStatus;
+  rootTaskId: string | null;
+  currentTaskId: string | null;
+  forkedFromThreadId: string | null;
+  compactedSummary: string | null;
+  milestoneIds: string[];
+  updatedAt: number;
+}
+
+export interface CompletionArtifact {
+  id: string;
+  threadId: string;
+  taskId: string;
+  summary: string;
+  verificationStatus: "pending" | "passed" | "failed" | "retryable" | "skipped";
+  changedScopes: string[];
+  createdAt: number;
+}
+
+export interface CompactionArtifact {
+  id: string;
+  threadId: string;
+  summary: string;
+  sourceTaskIds: string[];
+  createdAt: number;
+}
+
 export interface TaskRecord {
   id: string;
   userRequest: string;
+  threadId?: string;
+  milestoneId?: string;
   mode?: RuntimeMode;
   status: TaskStatus;
   planId?: string;

@@ -1,6 +1,10 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AgentRuntime, type RuntimeAdapter, type RuntimeState } from "../src/runtime";
+import {
+  AgentRuntime,
+  type RuntimeAdapter,
+  type RuntimeState,
+} from "../src/runtime";
 import { configureNamespace } from "../src/storage/namespace";
 import { resetVfs, setStaticFiles } from "../src/vfs";
 
@@ -36,7 +40,9 @@ function freshNamespace() {
   return dbName;
 }
 
-function createAdapter(overrides: Partial<RuntimeAdapter> = {}): RuntimeAdapter {
+function createAdapter(
+  overrides: Partial<RuntimeAdapter> = {},
+): RuntimeAdapter {
   return {
     tools: [],
     buildSystemPrompt: () => "You are a test assistant.",
@@ -213,6 +219,154 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("init exposes instruction sources and a root thread for the active host", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "powerpoint",
+        getDocumentMetadata: async () => ({
+          metadata: { title: "Deck", slideCount: 3 },
+        }),
+      }),
+    );
+
+    await runtime.init();
+
+    const state = runtime.getState();
+    expect(state.instructionSources.map((source) => source.kind)).toEqual(
+      expect.arrayContaining([
+        "app_global",
+        "host_specific",
+        "document_memory",
+        "session_memory",
+      ]),
+    );
+    expect(state.threads).toHaveLength(1);
+    expect(state.activeThreadId).toBe(state.threads[0].id);
+    runtime.dispose();
+  });
+
+  it("separates capability boundary from approval policy and persists both", () => {
+    const runtime = new AgentRuntime(createAdapter());
+
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    runtime.setCapabilityBoundary("full_host_access");
+    runtime.setApprovalPolicy("auto");
+
+    const state = runtime.getState();
+    expect(state.capabilityBoundary.mode).toBe("full_host_access");
+    expect(state.approvalPolicy.mode).toBe("auto");
+    expect(state.providerConfig?.capabilityBoundaryMode).toBe(
+      "full_host_access",
+    );
+    expect(state.providerConfig?.approvalPolicyMode).toBe("auto");
+    runtime.dispose();
+  });
+
+  it("can fork and compact lightweight task threads", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+
+    const originalThreadId = runtime.getState().activeThreadId;
+    const forked = runtime.forkActiveThread("Alternative approach");
+    expect(forked).not.toBeNull();
+    expect(runtime.getState().activeThreadId).toBe(forked?.id);
+
+    const compacted = runtime.compactThread(originalThreadId!);
+    expect(compacted?.status).toBe("compacted");
+    expect(runtime.getState().compactionState?.artifactCount).toBe(1);
+    runtime.dispose();
+  });
+
+  it("clears session-local policy traces when starting a new session", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+
+    (
+      runtime as unknown as {
+        appendPolicyTrace: (entry: {
+          event: "policy_check";
+          outcome: "approval_required";
+          reason: string;
+        }) => void;
+      }
+    ).appendPolicyTrace({
+      event: "policy_check",
+      outcome: "approval_required",
+      reason: "test trace",
+    });
+
+    expect(runtime.getState().policyTrace).toHaveLength(1);
+    await runtime.newSession();
+    expect(runtime.getState().policyTrace).toEqual([]);
+    runtime.dispose();
+  });
+
+  it("does not carry stale task metadata into a brand-new session root thread", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+
+    (
+      runtime as unknown as {
+        update: (partial: Partial<RuntimeState>) => void;
+      }
+    ).update({
+      activeTask: {
+        id: "task-old",
+        userRequest: "Old task",
+        status: "in_progress",
+        toolCallIds: [],
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      activePlan: {
+        id: "plan-old",
+        userRequest: "Old plan",
+        mode: "auto",
+        status: "active",
+        requirements: [],
+        strategy: [],
+        executionUnits: [],
+        verification: [],
+        milestones: [
+          {
+            id: "milestone-old",
+            title: "Old milestone",
+            stepIds: [],
+            status: "pending",
+          },
+        ],
+        approvalRequired: false,
+        expectedEffects: [],
+        steps: [],
+        createdAt: 1,
+        updatedAt: 1,
+        classification: {
+          complexity: "simple",
+          risk: "low",
+          needsPlan: false,
+          rationale: "test",
+        },
+        revisionNotes: [],
+      },
+    });
+
+    await runtime.newSession();
+
+    expect(runtime.getState().threads[0]?.rootTaskId).toBeNull();
+    expect(runtime.getState().threads[0]?.milestoneIds).toEqual([]);
+    runtime.dispose();
+  });
+
   it("uploadFiles adds files and updates state", async () => {
     const runtime = new AgentRuntime(createAdapter());
     await runtime.init();
@@ -304,7 +458,6 @@ describe("AgentRuntime", () => {
     const runtime = new AgentRuntime(createAdapter());
     await runtime.init();
 
-    const firstId = runtime.getState().currentSession!.id;
     await runtime.newSession();
 
     await runtime.deleteCurrentSession();
@@ -352,6 +505,4 @@ describe("AgentRuntime", () => {
     expect(state.uploads[0].size).toBe(20);
     runtime.dispose();
   });
-
-
 });

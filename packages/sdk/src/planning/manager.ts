@@ -1,6 +1,7 @@
 import { type PlanRecord, savePlanRecord } from "../storage/db";
 import type {
   ExecutionPlan,
+  PlanMilestone,
   PlanStep,
   StepStatus,
   TaskClassification,
@@ -72,6 +73,7 @@ export class PlanManager {
     this.activePlan = {
       ...this.activePlan,
       steps,
+      milestones: syncMilestones(this.activePlan.milestones, steps),
       updatedAt: Date.now(),
     };
     return this.activePlan;
@@ -205,6 +207,7 @@ export function buildDefaultPlan(
         expectedEffect: "The final state matches the request.",
       },
     ],
+    milestones: buildDefaultMilestones(steps),
     approvalRequired: classification.risk === "high",
     expectedEffects: ["The final state matches the request."],
     steps,
@@ -227,4 +230,46 @@ export function formatPlanForPrompt(plan: ExecutionPlan): string {
 
 function clonePlan(plan: ExecutionPlan): ExecutionPlan {
   return JSON.parse(JSON.stringify(plan)) as ExecutionPlan;
+}
+
+function buildDefaultMilestones(steps: PlanStep[]): PlanMilestone[] {
+  return [
+    {
+      id: "milestone-discover",
+      title: "Inspect and analyze",
+      stepIds: steps
+        .filter((step) => step.kind === "read" || step.kind === "analyze")
+        .map((step) => step.id),
+      status: "pending",
+    },
+    {
+      id: "milestone-execute",
+      title: "Apply and verify",
+      stepIds: steps
+        .filter((step) => step.kind === "write" || step.kind === "verify")
+        .map((step) => step.id),
+      status: "pending",
+    },
+  ];
+}
+
+function syncMilestones(
+  milestones: PlanMilestone[],
+  steps: PlanStep[],
+): PlanMilestone[] {
+  return milestones.map((milestone) => {
+    const milestoneSteps = steps.filter((step) =>
+      milestone.stepIds.includes(step.id),
+    );
+    const completed = milestoneSteps.every(
+      (step) => step.status === "completed",
+    );
+    const inProgress = milestoneSteps.some(
+      (step) => step.status === "active" || step.status === "completed",
+    );
+    return {
+      ...milestone,
+      status: completed ? "completed" : inProgress ? "in_progress" : "pending",
+    };
+  });
 }
