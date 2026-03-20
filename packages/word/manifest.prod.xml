@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0" xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="TaskPaneApp">
-  <Id>e57a3be7-e0af-4ac3-85a2-f6c7dc36dd09</Id>
+  <Id>a3f1c8e2-7b4d-4e9a-b5c6-d8f2e1a09b4c</Id>
   <Version>1.0.0.0</Version>
   <ProviderName>Office Agents</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="OpenWord Hybrid"/>
-  <Description DefaultValue="Hybrid AI assistant for Word documents."/>
+  <DisplayName DefaultValue="OpenWord"/>
+  <Description DefaultValue="AI assistant for Word documents."/>
   <IconUrl DefaultValue="https://openword.pages.dev/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://openword.pages.dev/assets/icon-64.png"/>
   <SupportUrl DefaultValue="https://www.contoso.com/help"/>
@@ -77,12 +77,12 @@
         <bt:Url id="Taskpane.Url" DefaultValue="https://openword.pages.dev/taskpane.html"/>
       </bt:Urls>
       <bt:ShortStrings>
-        <bt:String id="GetStarted.Title" DefaultValue="Get started with OpenWord Hybrid!"/>
+        <bt:String id="GetStarted.Title" DefaultValue="Get started with OpenWord!"/>
         <bt:String id="CommandsGroup.Label" DefaultValue="Commands Group"/>
-        <bt:String id="TaskpaneButton.Label" DefaultValue="Open OpenWord Hybrid"/>
+        <bt:String id="TaskpaneButton.Label" DefaultValue="Open OpenWord"/>
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="GetStarted.Description" DefaultValue="OpenWord Hybrid loaded successfully. Go to the HOME tab and click the 'Open OpenWord Hybrid' button to get started."/>
+        <bt:String id="GetStarted.Description" DefaultValue="OpenWord loaded successfully. Go to the HOME tab and click the 'Open OpenWord' button to get started."/>
         <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Click to open the AI assistant"/>
       </bt:LongStrings>
     </Resources>
