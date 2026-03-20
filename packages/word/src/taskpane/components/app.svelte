@@ -25,6 +25,7 @@
       const bridge = startOfficeBridge({
         app: "word",
         adapter,
+        serverUrl: "wss://localhost:4018/ws",
         vfs: {
           snapshot: snapshotVfs,
           readFile,

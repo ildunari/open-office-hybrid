@@ -4,7 +4,7 @@
   <Version>1.0.0.0</Version>
   <ProviderName>Office Agents</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="OpenWord Hybrid (Dev)"/>
+  <DisplayName DefaultValue="OpenWord Hybrid"/>
   <Description DefaultValue="Hybrid AI assistant for Word documents."/>
   <IconUrl DefaultValue="https://localhost:3003/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://localhost:3003/assets/icon-64.png"/>

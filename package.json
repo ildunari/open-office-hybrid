@@ -8,6 +8,8 @@
     "bridge": "pnpm --filter @office-agents/bridge build && node packages/bridge/dist/cli.js",
     "bridge:serve": "pnpm --filter @office-agents/bridge start",
     "bridge:stop": "pnpm exec office-bridge stop",
+    "bridge:serve:hybrid": "pnpm exec office-bridge serve --port 4018",
+    "bridge:stop:hybrid": "pnpm exec office-bridge stop --url https://localhost:4018",
     "dev-server:excel": "pnpm --filter @office-agents/excel dev-server",
     "dev-server:ppt": "pnpm --filter @office-agents/powerpoint dev-server",
     "dev-server:word": "pnpm --filter @office-agents/word dev-server",
