@@ -25,7 +25,7 @@ async function getHttpsOptions() {
 
 export default defineConfig(async ({ mode }) => {
   const dev = mode === "development";
-  const urlDev = "https://localhost:3002/";
+  const urlDev = "https://localhost:3003/";
   const urlProd = "https://openword.pages.dev/";
 
   return {
@@ -114,7 +114,7 @@ export default defineConfig(async ({ mode }) => {
 
     server: {
       https: await getHttpsOptions(),
-      port: 3002,
+      port: 3003,
       headers: {
         "Access-Control-Allow-Origin": "*",
       },
