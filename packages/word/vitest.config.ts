@@ -6,4 +6,7 @@ export default defineConfig({
     passWithNoTests: true,
     include: ["tests/**/*.test.ts"],
   },
+  define: {
+    DOMMatrix: "Object",
+  },
 });

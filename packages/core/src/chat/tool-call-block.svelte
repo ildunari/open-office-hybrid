@@ -21,7 +21,8 @@
   let { part }: Props = $props();
   const chat = getChatContext();
   const runtimeState = chat.state;
-  let isExpanded = $state(chat.snapshot.providerConfig?.expandToolCalls ?? false);
+  let lastDefaultExpanded = $state(false);
+  let isExpanded = $state(false);
 
   function splitArgs(args: Record<string, unknown>) {
     const codeBlocks: { field: string; lang: string; value: string }[] = [];
@@ -68,6 +69,14 @@
   const isStreaming = $derived(
     part.status === "pending" || part.status === "running",
   );
+
+  $effect(() => {
+    const nextDefault = $runtimeState.providerConfig?.expandToolCalls ?? false;
+    if (nextDefault !== lastDefaultExpanded) {
+      lastDefaultExpanded = nextDefault;
+      isExpanded = nextDefault;
+    }
+  });
 </script>
 
 {#snippet chevron(expanded: boolean)}

@@ -1,5 +1,6 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { loadOAuthCredentials } from "./oauth";
+import type { PermissionMode } from "./orchestration/types";
 import { getNamespace } from "./storage/namespace";
 
 export type ThinkingLevel = "none" | "low" | "medium" | "high";
@@ -13,6 +14,7 @@ export interface ProviderConfig {
   thinking: ThinkingLevel;
   followMode: boolean;
   expandToolCalls: boolean;
+  permissionMode?: PermissionMode;
   apiType?: string;
   customBaseUrl?: string;
   authMethod?: "apikey" | "oauth";
@@ -20,6 +22,18 @@ export interface ProviderConfig {
 
 function storageKey(): string {
   return `${getNamespace().localStoragePrefix}-provider-config`;
+}
+
+function getStorageLike(): Pick<Storage, "getItem" | "setItem"> | null {
+  const storage = globalThis.localStorage;
+  if (
+    !storage ||
+    typeof storage.getItem !== "function" ||
+    typeof storage.setItem !== "function"
+  ) {
+    return null;
+  }
+  return storage;
 }
 
 export const THINKING_LEVELS: { value: ThinkingLevel; label: string }[] = [
@@ -66,12 +80,16 @@ export const API_TYPES = [
 
 export function loadSavedConfig(): ProviderConfig | null {
   try {
-    const saved = localStorage.getItem(storageKey());
+    const storage = getStorageLike();
+    if (!storage) return null;
+    const saved = storage.getItem(storageKey());
     if (saved) {
       const config = JSON.parse(saved);
       if (config.proxyUrl === undefined) config.proxyUrl = "";
       if (config.followMode === undefined) config.followMode = true;
       if (config.expandToolCalls === undefined) config.expandToolCalls = false;
+      if (config.permissionMode === undefined)
+        config.permissionMode = "confirm_risky";
       if (config.apiType === undefined) config.apiType = "";
       if (config.customBaseUrl === undefined) config.customBaseUrl = "";
       if (config.authMethod === undefined) config.authMethod = "apikey";
@@ -86,7 +104,9 @@ export function loadSavedConfig(): ProviderConfig | null {
 }
 
 export function saveConfig(config: ProviderConfig) {
-  localStorage.setItem(storageKey(), JSON.stringify(config));
+  const storage = getStorageLike();
+  if (!storage) return;
+  storage.setItem(storageKey(), JSON.stringify(config));
 }
 
 export function buildCustomModel(config: ProviderConfig): Model<Api> | null {

@@ -1,11 +1,22 @@
 import type { AppAdapter } from "@office-agents/core";
-import { getOrCreateDocumentId } from "@office-agents/core";
+import {
+  formatFingerprintCheckHook,
+  formatFingerprintPreHook,
+  formatFingerprintRecordHook,
+  getOrCreateDocumentId,
+} from "@office-agents/core/sdk";
 import SelectionIndicator from "./components/selection-indicator.svelte";
 import TrackChangesIndicator from "./components/track-changes-indicator.svelte";
 import wordApiFullDts from "./docs/word-officejs-api.d.ts?raw";
 import wordApiOnlineDts from "./docs/word-officejs-api-online.d.ts?raw";
+import { getWordReasoningPatterns } from "./patterns";
 import { buildWordSystemPrompt } from "./system-prompt";
 import { WORD_TOOLS } from "./tools";
+import {
+  buildWordHandoffSummary,
+  estimateWordScopeRisk,
+  getWordVerificationSuites,
+} from "./verifiers";
 import { getCustomCommands } from "./vfs/custom-commands";
 
 /* global Word */
@@ -14,6 +25,7 @@ const TRACKING_MODE_CHANGED_EVENT = "word-tracking-mode-maybe-changed";
 
 export function createWordAdapter(): AppAdapter {
   return {
+    hostApp: "word",
     tools: WORD_TOOLS,
     customCommands: getCustomCommands,
     hasImageSearch: true,
@@ -37,6 +49,15 @@ export function createWordAdapter(): AppAdapter {
     HeaderExtras: TrackChangesIndicator,
     SelectionIndicator,
     buildSystemPrompt: buildWordSystemPrompt,
+    getReasoningPatterns: getWordReasoningPatterns,
+    getVerificationSuites: getWordVerificationSuites,
+    buildHandoffSummary: buildWordHandoffSummary,
+    estimateScopeRisk: estimateWordScopeRisk,
+    registerHooks: (registry) => [
+      registry.registerPre(formatFingerprintPreHook),
+      registry.registerPost(formatFingerprintRecordHook),
+      registry.registerPost(formatFingerprintCheckHook),
+    ],
 
     getDocumentId: async () => {
       return getOrCreateDocumentId();

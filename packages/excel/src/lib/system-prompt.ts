@@ -1,4 +1,7 @@
-import { buildSkillsPromptSection, type SkillMeta } from "@office-agents/core";
+import {
+  buildSkillsPromptSection,
+  type SkillMeta,
+} from "@office-agents/core/sdk";
 
 export function buildExcelSystemPrompt(skills: SkillMeta[]): string {
   return `You are an AI assistant integrated into Microsoft Excel with full access to read and modify spreadsheet data.

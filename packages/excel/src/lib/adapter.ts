@@ -1,11 +1,17 @@
 import type { AppAdapter } from "@office-agents/core";
-import { getOrCreateDocumentId } from "@office-agents/core";
+import { getOrCreateDocumentId } from "@office-agents/core/sdk";
 import DirtyRangeExtras from "./components/dirty-range-extras.svelte";
 import SelectionIndicator from "./components/selection-indicator.svelte";
 import excelApiDts from "./docs/excel-officejs-api.d.ts?raw";
 import { getWorkbookMetadata, navigateTo } from "./excel/api";
+import { getExcelReasoningPatterns } from "./patterns";
 import { buildExcelSystemPrompt } from "./system-prompt";
 import { EXCEL_TOOLS } from "./tools";
+import {
+  buildExcelHandoffSummary,
+  estimateExcelScopeRisk,
+  getExcelVerificationSuites,
+} from "./verifiers";
 import { getCustomCommands } from "./vfs/custom-commands";
 
 function parseCitationUri(
@@ -25,6 +31,7 @@ function parseCitationUri(
 
 export function createExcelAdapter(): AppAdapter {
   return {
+    hostApp: "excel",
     tools: EXCEL_TOOLS,
     customCommands: getCustomCommands,
     staticFiles: {
@@ -44,6 +51,10 @@ export function createExcelAdapter(): AppAdapter {
     emptyStateMessage: "Start a conversation to interact with your Excel data",
     SelectionIndicator,
     buildSystemPrompt: buildExcelSystemPrompt,
+    getReasoningPatterns: getExcelReasoningPatterns,
+    getVerificationSuites: getExcelVerificationSuites,
+    buildHandoffSummary: buildExcelHandoffSummary,
+    estimateScopeRisk: estimateExcelScopeRisk,
 
     getDocumentId: async () => {
       return getOrCreateDocumentId();

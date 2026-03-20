@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getBash,
   readFile,
@@ -187,18 +187,14 @@ describe("shared custom commands (integration)", () => {
     });
 
     it("fetches a text page and saves to file", async () => {
-      // happy-dom's fetch triggers CORS detection, so configure a proxy
-      const { saveConfig } = await import("../src/provider-config");
-      saveConfig({
-        provider: "openai",
-        apiKey: "",
-        model: "",
-        useProxy: true,
-        proxyUrl: "https://proxy.hewliyang.com",
-        thinking: "none",
-        followMode: false,
-        expandToolCalls: false,
-      });
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(
+          new Response("<html><body>Example Domain</body></html>", {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          }),
+        );
 
       const result = await run(
         "web-fetch https://example.com /home/user/uploads/page.txt",
@@ -208,6 +204,7 @@ describe("shared custom commands (integration)", () => {
 
       const text = await readFile("page.txt");
       expect(text.toLowerCase()).toContain("example");
+      fetchMock.mockRestore();
     });
   });
 });

@@ -16,12 +16,16 @@
   } from "lucide-svelte";
   import { onDestroy } from "svelte";
   import type { AppAdapter } from "./app-adapter";
+  import ApprovalDrawer from "./approval-drawer.svelte";
   import { ChatController } from "./chat-controller";
   import { setChatContext } from "./chat-runtime-context";
   import ChatInput from "./chat-input.svelte";
   import FilesPanel from "./files-panel.svelte";
   import MessageList from "./message-list.svelte";
+  import PlanPanel from "./plan-panel.svelte";
+  import ResumeTaskBanner from "./resume-task-banner.svelte";
   import SettingsPanel from "./settings-panel.svelte";
+  import StatusStrip from "./status-strip.svelte";
   import type { ChatTab } from "./types";
 
   type Theme = "light" | "dark";
@@ -76,6 +80,29 @@
   function formatCost(value: number): string {
     if (value < 0.01) return `$${value.toFixed(4)}`;
     return `$${value.toFixed(3)}`;
+  }
+
+  function getPressure(
+    usagePct: number | null | undefined,
+  ): "low" | "medium" | "high" | "critical" | null {
+    if (usagePct === null || usagePct === undefined) return null;
+    if (usagePct >= 0.9) return "critical";
+    if (usagePct >= 0.75) return "high";
+    if (usagePct >= 0.55) return "medium";
+    return "low";
+  }
+
+  function getResumeMessage(
+    handoff:
+      | {
+          summary: string;
+          nextRecommendedAction: string;
+        }
+      | null,
+    approvalRequest: unknown | null,
+  ) {
+    if (!handoff || approvalRequest) return null;
+    return handoff.summary || handoff.nextRecommendedAction;
   }
 
   async function handleNewSession() {
@@ -160,6 +187,16 @@
   const followMode = $derived($runtimeState.providerConfig?.followMode ?? true);
   const HeaderExtras = $derived(adapter.HeaderExtras);
   const SelectionIndicator = $derived(adapter.SelectionIndicator);
+  const activeTaskTitle = $derived($runtimeState.activeTask?.userRequest ?? null);
+  const contextPressure = $derived(
+    getPressure($runtimeState.contextBudgetState?.usagePct),
+  );
+  const resumeMessage = $derived(
+    getResumeMessage($runtimeState.handoff, $runtimeState.approvalRequest),
+  );
+  const canResume = $derived(
+    Boolean($runtimeState.handoff && !$runtimeState.approvalRequest),
+  );
 </script>
 
 <div
@@ -337,6 +374,26 @@
   </div>
 
   {#if activeTab === "chat"}
+    <StatusStrip
+      phase={$runtimeState.taskPhase}
+      permissionMode={$runtimeState.permissionMode}
+      pressure={contextPressure}
+      taskTitle={activeTaskTitle}
+      waiting={Boolean($runtimeState.waitingState)}
+    />
+
+    <ResumeTaskBanner message={resumeMessage} canResume={canResume} />
+
+    <ApprovalDrawer
+      approval={$runtimeState.approvalRequest}
+      permissionMode={$runtimeState.permissionMode}
+    />
+
+    <PlanPanel
+      plan={$runtimeState.planState}
+      approvalMessage={$runtimeState.approvalRequest?.uiMessage ?? null}
+    />
+
     <MessageList />
     {#if SelectionIndicator}
       <SelectionIndicator />

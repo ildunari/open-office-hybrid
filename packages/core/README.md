@@ -16,6 +16,7 @@ It re-exports the headless SDK plus the generic chat interface used by the Excel
 - `src/chat/app-adapter.ts` — app integration contract for Office-specific tools and UI
 - `src/chat/settings-panel.svelte` — provider, OAuth, web tools, and skill management
 - `src/chat/message-list.svelte` — assistant/user message rendering
+- `src/sdk.ts` — SDK-only re-export surface for app packages and tests that need runtime helpers without importing the Svelte UI bundle
 
 ## AppAdapter
 
@@ -36,3 +37,8 @@ pnpm typecheck
 pnpm lint
 pnpm build
 ```
+
+For package boundaries:
+
+- use `@office-agents/core` when you need UI-facing exports like `ChatInterface`, `FilesPanel`, or adapter types
+- use `@office-agents/core/sdk` when an app package or a test only needs SDK/runtime helpers

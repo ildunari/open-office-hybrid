@@ -2,6 +2,8 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { UserMessage } from "@mariozechner/pi-ai";
 import { type DBSchema, type IDBPDatabase, openDB } from "idb";
 import { stripEnrichment } from "../message-utils";
+import type { ExecutionPlan, TaskRecord } from "../planning";
+import type { ReflectionResult } from "../reflection/types";
 import { getNamespace } from "./namespace";
 
 export interface ChatSession {
@@ -27,6 +29,29 @@ export interface SkillFile {
   data: Uint8Array;
 }
 
+export interface PlanRecord {
+  id: string;
+  sessionId: string;
+  plan: ExecutionPlan;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface TaskRecordEntry {
+  id: string;
+  sessionId: string;
+  task: TaskRecord;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ReflectionEntry {
+  id: string;
+  sessionId: string;
+  reflection: ReflectionResult;
+  createdAt: number;
+}
+
 interface OfficeAgentsSchema extends DBSchema {
   sessions: {
     key: string;
@@ -42,6 +67,21 @@ interface OfficeAgentsSchema extends DBSchema {
     key: string;
     value: SkillFile;
     indexes: { skillName: string };
+  };
+  plans: {
+    key: string;
+    value: PlanRecord;
+    indexes: { sessionId: string };
+  };
+  tasks: {
+    key: string;
+    value: TaskRecordEntry;
+    indexes: { sessionId: string };
+  };
+  reflections: {
+    key: string;
+    value: ReflectionEntry;
+    indexes: { sessionId: string };
   };
 }
 
@@ -70,6 +110,20 @@ function getDb(): Promise<IDBPDatabase<OfficeAgentsSchema>> {
           keyPath: "id",
         });
         skillFiles.createIndex("skillName", "skillName");
+      }
+      if (!db.objectStoreNames.contains("plans")) {
+        const plans = db.createObjectStore("plans", { keyPath: "id" });
+        plans.createIndex("sessionId", "sessionId");
+      }
+      if (!db.objectStoreNames.contains("tasks")) {
+        const tasks = db.createObjectStore("tasks", { keyPath: "id" });
+        tasks.createIndex("sessionId", "sessionId");
+      }
+      if (!db.objectStoreNames.contains("reflections")) {
+        const reflections = db.createObjectStore("reflections", {
+          keyPath: "id",
+        });
+        reflections.createIndex("sessionId", "sessionId");
       }
     },
   });
@@ -210,6 +264,122 @@ export async function renameSession(
 export async function deleteSession(sessionId: string): Promise<void> {
   const db = await getDb();
   await db.delete("sessions", sessionId);
+}
+
+export async function savePlanRecord(
+  sessionId: string,
+  plan: ExecutionPlan,
+): Promise<void> {
+  const db = await getDb();
+  await db.put("plans", {
+    id: plan.id,
+    sessionId,
+    plan,
+    createdAt: plan.createdAt,
+    updatedAt: plan.updatedAt,
+  });
+}
+
+export async function getPlanRecord(
+  planId: string,
+): Promise<PlanRecord | undefined> {
+  const db = await getDb();
+  return db.get("plans", planId);
+}
+
+export async function listPlanRecords(
+  sessionId: string,
+): Promise<PlanRecord[]> {
+  const db = await getDb();
+  const records = await db.getAllFromIndex("plans", "sessionId", sessionId);
+  records.sort((a, b) => b.updatedAt - a.updatedAt);
+  return records;
+}
+
+export async function getLatestPlanRecord(
+  sessionId: string,
+): Promise<PlanRecord | undefined> {
+  const [latest] = await listPlanRecords(sessionId);
+  return latest;
+}
+
+export async function deletePlanRecords(sessionId: string): Promise<void> {
+  const db = await getDb();
+  const records = await listPlanRecords(sessionId);
+  await Promise.all(records.map((record) => db.delete("plans", record.id)));
+}
+
+export async function saveTaskRecord(
+  sessionId: string,
+  task: TaskRecord,
+): Promise<void> {
+  const db = await getDb();
+  await db.put("tasks", {
+    id: task.id,
+    sessionId,
+    task,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+  });
+}
+
+export async function getTaskRecord(
+  taskId: string,
+): Promise<TaskRecordEntry | undefined> {
+  const db = await getDb();
+  return db.get("tasks", taskId);
+}
+
+export async function listTaskRecords(
+  sessionId: string,
+): Promise<TaskRecordEntry[]> {
+  const db = await getDb();
+  const records = await db.getAllFromIndex("tasks", "sessionId", sessionId);
+  records.sort((a, b) => b.updatedAt - a.updatedAt);
+  return records;
+}
+
+export async function getLatestTaskRecord(
+  sessionId: string,
+): Promise<TaskRecordEntry | undefined> {
+  const [latest] = await listTaskRecords(sessionId);
+  return latest;
+}
+
+export async function deleteTaskRecords(sessionId: string): Promise<void> {
+  const db = await getDb();
+  const records = await listTaskRecords(sessionId);
+  await Promise.all(records.map((record) => db.delete("tasks", record.id)));
+}
+
+export async function saveReflectionEntry(
+  sessionId: string,
+  reflection: ReflectionResult,
+): Promise<void> {
+  const db = await getDb();
+  await db.add("reflections", {
+    id: crypto.randomUUID(),
+    sessionId,
+    reflection,
+    createdAt: reflection.timestamp,
+  });
+}
+
+export async function listReflectionEntries(
+  sessionId: string,
+): Promise<ReflectionEntry[]> {
+  const db = await getDb();
+  return db.getAllFromIndex("reflections", "sessionId", sessionId);
+}
+
+export async function deleteReflectionEntries(
+  sessionId: string,
+): Promise<void> {
+  const db = await getDb();
+  const records = await listReflectionEntries(sessionId);
+  await Promise.all(
+    records.map((record) => db.delete("reflections", record.id)),
+  );
 }
 
 export async function getOrCreateCurrentSession(

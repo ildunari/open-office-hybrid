@@ -2,6 +2,7 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 import {
   AgentRuntime,
   configureNamespace,
+  type PermissionMode,
   type ProviderConfig,
   type RuntimeState,
 } from "@office-agents/sdk";
@@ -54,6 +55,22 @@ export class ChatController {
 
   sendMessage(content: string, attachments?: string[]) {
     return this.#runtime.sendMessage(content, attachments);
+  }
+
+  approvePending() {
+    return this.#runtime.approvePending();
+  }
+
+  approveActivePlan() {
+    return this.#runtime.approveActivePlan();
+  }
+
+  resumeFromHandoff() {
+    return this.#runtime.resumeFromHandoff();
+  }
+
+  setPermissionMode(mode: PermissionMode) {
+    this.#runtime.setPermissionMode(mode);
   }
 
   setProviderConfig(config: ProviderConfig) {

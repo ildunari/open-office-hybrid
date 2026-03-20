@@ -1,8 +1,9 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   applyProxyToModel,
   buildCustomModel,
+  saveConfig,
   type ProviderConfig,
 } from "../src/provider-config";
 
@@ -19,6 +20,20 @@ function makeConfig(overrides: Partial<ProviderConfig> = {}): ProviderConfig {
     ...overrides,
   };
 }
+
+const originalLocalStorage = globalThis.localStorage;
+
+afterEach(() => {
+  if (originalLocalStorage === undefined) {
+    delete (globalThis as { localStorage?: Storage }).localStorage;
+    return;
+  }
+  Object.defineProperty(globalThis, "localStorage", {
+    value: originalLocalStorage,
+    configurable: true,
+    writable: true,
+  });
+});
 
 describe("buildCustomModel", () => {
   it("returns null when apiType is missing", () => {
@@ -106,5 +121,17 @@ describe("applyProxyToModel", () => {
     });
     const result = applyProxyToModel(modelWithoutBase, config);
     expect(result.baseUrl).toBeUndefined();
+  });
+});
+
+describe("saveConfig", () => {
+  it("does not throw when localStorage does not expose setItem", () => {
+    Object.defineProperty(globalThis, "localStorage", {
+      value: { getItem: () => null },
+      configurable: true,
+      writable: true,
+    });
+
+    expect(() => saveConfig(makeConfig())).not.toThrow();
   });
 });

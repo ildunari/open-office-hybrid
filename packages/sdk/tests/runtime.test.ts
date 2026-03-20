@@ -115,7 +115,7 @@ describe("AgentRuntime", () => {
     const state = runtime.getState();
     expect(state.providerConfig).not.toBeNull();
     expect(state.providerConfig!.provider).toBe("custom");
-    expect(state.sessionStats.contextWindow).toBe(128000);
+    expect(state.sessionStats.contextWindow).toBe(750000);
     runtime.dispose();
   });
 
@@ -188,6 +188,28 @@ describe("AgentRuntime", () => {
     expect(runtime.getState().providerConfig!.expandToolCalls).toBe(false);
     runtime.toggleExpandToolCalls();
     expect(runtime.getState().providerConfig!.expandToolCalls).toBe(true);
+    runtime.dispose();
+  });
+
+  it("setPermissionMode persists the runtime permission mode into config", () => {
+    const runtime = new AgentRuntime(createAdapter());
+
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    runtime.setPermissionMode("full_auto");
+
+    const state = runtime.getState();
+    expect(state.permissionMode).toBe("full_auto");
+    expect(state.providerConfig?.permissionMode).toBe("full_auto");
     runtime.dispose();
   });
 
