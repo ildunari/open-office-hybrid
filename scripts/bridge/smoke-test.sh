@@ -9,13 +9,15 @@ OUT_DIR="./smoke-results"
 REQUIRE_HYBRID=false
 SCENARIO=""
 FIXTURE=""
+DOCUMENT=""
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [session] [--out-dir DIR] [--bridge-url URL] [--hybrid-word] [--scenario NAME] [--fixture FILE] [--help]
+Usage: $(basename "$0") [session] [--out-dir DIR] [--bridge-url URL] [--document ID] [--hybrid-word] [--scenario NAME] [--fixture FILE] [--help]
 Full integration smoke test for a bridge session.
   --out-dir DIR    Output directory (default: ./smoke-results)
   --bridge-url URL Bridge URL (default: https://localhost:4017)
+  --document ID    Require a documentId substring match
   --hybrid-word    Require OpenWord Hybrid and use https://localhost:4018 by default
   --scenario NAME  Logical scenario label for artifact grouping
   --fixture FILE   Corpus fixture name associated with this run
@@ -29,6 +31,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --out-dir) OUT_DIR="$2"; shift 2 ;;
     --bridge-url) BRIDGE_URL="$2"; shift 2 ;;
+    --document) DOCUMENT="$2"; shift 2 ;;
     --hybrid-word) REQUIRE_HYBRID=true; shift ;;
     --scenario) SCENARIO="$2"; shift 2 ;;
     --fixture) FIXTURE="$2"; shift 2 ;;
@@ -90,6 +93,7 @@ cat > "$OUT_DIR/run-metadata.json" <<EOF
 {
   "bridgeUrl": "$BRIDGE_URL",
   "session": "${SESSION:-}",
+  "document": "${DOCUMENT:-}",
   "scenario": "${SCENARIO:-}",
   "fixture": "${FIXTURE:-}",
   "requiresHybrid": $([[ "$REQUIRE_HYBRID" == "true" ]] && echo true || echo false)
@@ -105,6 +109,9 @@ fi
 # 1. Wait for session
 echo "[1/8] Session availability"
 WAIT_ARGS=(--bridge-url "$BRIDGE_URL" --timeout 10000)
+if [[ -n "$DOCUMENT" ]]; then
+  WAIT_ARGS+=(--document "$DOCUMENT")
+fi
 if [[ -n "$SESSION" ]]; then
   WAIT_ARGS+=("$SESSION")
 fi

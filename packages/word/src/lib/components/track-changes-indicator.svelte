@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Pencil } from "lucide-svelte";
   import { onMount } from "svelte";
+  import { bindOfficeDocumentHandler } from "./office-document-events";
 
   /* global Word, Office */
 
@@ -88,22 +89,24 @@
     const handleFocus = () => {
       void refresh();
     };
+    const handleSelectionChanged = () => {
+      void refresh();
+    };
 
     window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleFocus);
     window.addEventListener(TRACKING_MODE_CHANGED_EVENT, handleFocus);
-
-    Office.context.document.addHandlerAsync(
+    const detachOfficeHandler = bindOfficeDocumentHandler(
+      Office?.context?.document,
       Office.EventType.DocumentSelectionChanged,
-      () => {
-        void refresh();
-      },
+      handleSelectionChanged,
     );
 
     return () => {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleFocus);
       window.removeEventListener(TRACKING_MODE_CHANGED_EVENT, handleFocus);
+      detachOfficeHandler();
     };
   });
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { FileText } from "lucide-svelte";
   import { onMount } from "svelte";
+  import { bindOfficeDocumentHandler } from "./office-document-events";
 
   /* global Word, Office */
 
@@ -36,11 +37,14 @@
   onMount(() => {
     void refresh();
 
-    Office.context.document.addHandlerAsync(
+    const handleSelectionChanged = () => {
+      void refresh();
+    };
+
+    return bindOfficeDocumentHandler(
+      Office?.context?.document,
       Office.EventType.DocumentSelectionChanged,
-      () => {
-        void refresh();
-      },
+      handleSelectionChanged,
     );
   });
 </script>

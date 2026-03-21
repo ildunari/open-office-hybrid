@@ -28,6 +28,33 @@ export interface ToolExtrasProps {
   expanded: boolean;
 }
 
+export interface BridgeRuntimeStateLike {
+  mode: string;
+  taskPhase: string;
+  isStreaming: boolean;
+  permissionMode: string;
+  waitingState: string | null;
+  activePlanSummary: {
+    id: string;
+    status: string;
+    stepCount: number;
+    activeStepIndex: number;
+  } | null;
+  activeTaskSummary: { id: string; status: string; mode: string } | null;
+  contextBudget: { usagePct: number; action: string };
+  lastVerification: { status: string } | null;
+  sessionStats: {
+    inputTokens: number;
+    outputTokens: number;
+    totalCost: number;
+    messageCount: number;
+  };
+  error: string | null;
+  threadCount: number;
+  activeThreadId: string | null;
+  degradedGuardrails: string[];
+}
+
 export interface AppAdapter {
   hostApp?: HostApp;
   tools: AgentTool[];
@@ -57,6 +84,7 @@ export interface AppAdapter {
     request: string,
     classification: import("@office-agents/sdk").TaskClassification,
   ) => MaybePromise<ScopeRiskEstimate>;
+  getRuntimeState?: () => BridgeRuntimeStateLike | null;
   hasImageSearch?: boolean;
   showFollowModeToggle?: boolean;
   handleLinkClick?: (

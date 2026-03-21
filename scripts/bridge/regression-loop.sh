@@ -8,14 +8,16 @@ SESSION=""
 BASELINE_DIR="./baselines"
 SEQUENCE_FILE=""
 REQUIRE_HYBRID=false
+DOCUMENT=""
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") <tool-sequence.json> [session] [--baseline-dir DIR] [--bridge-url URL] [--hybrid-word] [--help]
+Usage: $(basename "$0") <tool-sequence.json> [session] [--baseline-dir DIR] [--bridge-url URL] [--document ID] [--hybrid-word] [--help]
 Run tool calls from a JSON file and compare outputs to baselines.
   tool-sequence.json: [{"tool":"name","args":{},"expectContains":"..."}]
   --baseline-dir DIR  Baseline directory (default: ./baselines)
   --bridge-url URL    Bridge URL (default: https://localhost:4017)
+  --document ID       Require a documentId substring match
   --hybrid-word       Require OpenWord Hybrid and use https://localhost:4018 by default
   BRIDGE_URL env      Bridge URL (default: https://localhost:4017)
   Exit: 0=pass, N=failures (max 125), 2=usage error
@@ -27,6 +29,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --baseline-dir) BASELINE_DIR="$2"; shift 2 ;;
     --bridge-url) BRIDGE_URL="$2"; shift 2 ;;
+    --document) DOCUMENT="$2"; shift 2 ;;
     --hybrid-word) REQUIRE_HYBRID=true; shift ;;
     --help) usage 0 ;;
     --*) echo "Unknown option: $1" >&2; usage 2 ;;
@@ -50,6 +53,9 @@ command -v jq >/dev/null 2>&1 || { echo "Error: jq is required" >&2; exit 1; }
 mkdir -p "$BASELINE_DIR"
 
 WAIT_ARGS=(--app word --timeout 10000 --bridge-url "$BRIDGE_URL")
+if [[ -n "$DOCUMENT" ]]; then
+  WAIT_ARGS+=(--document "$DOCUMENT")
+fi
 if [[ -n "$SESSION" ]]; then
   WAIT_ARGS=("$SESSION" "${WAIT_ARGS[@]}")
 fi

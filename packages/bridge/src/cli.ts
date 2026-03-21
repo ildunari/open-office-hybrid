@@ -22,6 +22,7 @@ import {
   normalizeBridgeUrl,
   serializeForJson,
 } from "./protocol.js";
+import { getScreenshotTimeoutMs } from "./screenshot-timeout.js";
 import {
   type BridgeServerHandle,
   type BridgeSessionRecord,
@@ -29,6 +30,7 @@ import {
   findMatchingSession,
   summarizeExecutionError,
 } from "./server.js";
+import { pickUniqueWaitSession } from "./session-selection.js";
 
 const OPTIONS = {
   help: { type: "boolean" as const },
@@ -522,11 +524,12 @@ async function commandWait(cli: Cli) {
     const matches = selector
       ? findMatchingSession(sessions, selector)
       : sessions;
-    if (matches.length > 0) {
+    const session = pickUniqueWaitSession(matches, selector);
+    if (session) {
       if (flag(cli, "json")) {
-        printJson(matches[0]);
+        printJson(session);
       } else {
-        console.log(describeSession(matches[0]));
+        console.log(describeSession(session));
       }
       return;
     }
@@ -605,13 +608,19 @@ async function commandTool(cli: Cli) {
   }
 
   const payload = await loadJsonPayload(cli);
+
   const response = await requestJson<{ ok: true; result: unknown }>(
     "POST",
-    sessionPath(
-      session.snapshot.sessionId,
-      `/tools/${encodeURIComponent(toolName)}`,
-    ),
-    { args: payload },
+    "/rpc",
+    {
+      sessionId: session.snapshot.sessionId,
+      method: "execute_tool",
+      params: {
+        toolName,
+        args: payload,
+      },
+      timeoutMs: int(cli, "timeout", DEFAULT_REQUEST_TIMEOUT_MS),
+    },
     reqOpts(cli),
   );
   logSavedImages(
@@ -743,14 +752,29 @@ async function commandScreenshot(cli: Cli) {
       );
   }
 
+  const timeoutMs = getScreenshotTimeoutMs(
+    session.snapshot.app,
+    str(cli, "timeout")
+      ? int(cli, "timeout", DEFAULT_REQUEST_TIMEOUT_MS)
+      : undefined,
+  );
+
   const response = await requestJson<{ ok: true; result: unknown }>(
     "POST",
-    sessionPath(
-      session.snapshot.sessionId,
-      `/tools/${encodeURIComponent(toolName)}`,
-    ),
-    { args: payload },
-    reqOpts(cli),
+    "/rpc",
+    {
+      sessionId: session.snapshot.sessionId,
+      method: "execute_tool",
+      params: {
+        toolName,
+        args: payload,
+      },
+      timeoutMs,
+    },
+    {
+      ...reqOpts(cli),
+      timeoutMs,
+    },
   );
 
   const outputPath = str(cli, "out") || defaultOutputBase;

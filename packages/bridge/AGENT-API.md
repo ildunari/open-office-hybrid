@@ -228,7 +228,7 @@ office-bridge stop [--url URL]                      # Stop bridge server
 
 ```bash
 office-bridge list [--json]                                          # List sessions
-office-bridge wait [selector] [--app APP] [--timeout MS] [--json]   # Wait for a session
+office-bridge wait [selector] [--app APP] [--document DOCUMENT] [--timeout MS] [--json]   # Wait for a unique session
 ```
 
 ### Inspection
@@ -418,20 +418,25 @@ Located in `scripts/bridge/`.
 Wait for a bridge session and verify it has tools loaded.
 
 ```bash
-scripts/bridge/wait-and-check.sh --app word --timeout 30000
+scripts/bridge/wait-and-check.sh --app word --document 8ab9056e --timeout 30000
 ```
 
 Exit 0 = healthy session with tools. Exit 1 = bridge unreachable or unhealthy.
 
 ### smoke-test.sh
 
-Full integration smoke test: waits for session, takes screenshot, fetches metadata, inspects session, checks events.
+Full integration smoke test: runs a health preflight, then the 8 numbered checks for session wait, summary, state, diag, metadata, inspect, events, and screenshot capture.
 
 ```bash
-scripts/bridge/smoke-test.sh word --out-dir ./smoke-results
+scripts/bridge/smoke-test.sh word:word_abc123 --document 8ab9056e --out-dir ./smoke-results
 ```
 
 Exit code = number of failed checks (0 = all pass).
+
+When multiple sessions match the current selector or filters, `office-bridge wait`
+fails with an ambiguity error instead of silently returning the first match.
+For live Word work, prefer an exact `word:<session-id>` selector or `--document`
+filter after listing sessions.
 
 ### regression-loop.sh
 
@@ -471,6 +476,14 @@ workflow, not a replacement for it. Continue to use `summary`, `state`, `diag`,
 `tool`, `events`, `poll`, and `screenshot` as the primary testing surfaces.
 It currently targets the pane by accessibility bounds and relative offsets, not
 by deep named web controls.
+
+In Hybrid Word, it is acceptable to split testing into:
+- bridge-driven framework validation on live documents, and
+- manual UI validation by a human partner.
+
+If the pane is open and the bridge session is healthy, lack of precise DOM
+input automation should not block verification of the live agent framework,
+tool registry, runtime state, or document operations.
 
 ## Security Note
 

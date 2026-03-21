@@ -7,13 +7,15 @@ import {
   type RuntimeState,
 } from "@office-agents/sdk";
 import { get, type Writable, writable } from "svelte/store";
-import type { AppAdapter } from "./app-adapter";
+import type { AppAdapter, BridgeRuntimeStateLike } from "./app-adapter";
 
 export class ChatController {
   readonly state: Writable<RuntimeState>;
   adapter: AppAdapter;
   #runtime: AgentRuntime;
   #unsubscribe: (() => void) | null = null;
+  readonly #bridgeRuntimeState = (): BridgeRuntimeStateLike =>
+    this.#runtime.getRuntimeStateSlice();
 
   constructor(adapter: AppAdapter) {
     this.adapter = adapter;
@@ -22,6 +24,7 @@ export class ChatController {
     }
 
     this.#runtime = new AgentRuntime(adapter);
+    this.#attachBridgeRuntimeState(adapter);
     this.state = writable(this.#runtime.getState());
     this.#unsubscribe = this.#runtime.subscribe((next) => this.state.set(next));
     this.#runtime.init();
@@ -36,17 +39,24 @@ export class ChatController {
   }
 
   setAdapter(adapter: AppAdapter) {
+    this.#detachBridgeRuntimeState(this.adapter);
     this.adapter = adapter;
     if (adapter.storageNamespace) {
       configureNamespace(adapter.storageNamespace);
     }
+    this.#attachBridgeRuntimeState(adapter);
     this.#runtime.setAdapter(adapter);
   }
 
   dispose() {
     this.#unsubscribe?.();
     this.#unsubscribe = null;
+    this.#detachBridgeRuntimeState(this.adapter);
     this.#runtime.dispose();
+  }
+
+  getRuntimeStateSlice(): BridgeRuntimeStateLike {
+    return this.#runtime.getRuntimeStateSlice();
   }
 
   getModelsForProvider(provider: string): Model<Api>[] {
@@ -143,5 +153,15 @@ export class ChatController {
 
   uninstallSkill(name: string) {
     return this.#runtime.uninstallSkill(name);
+  }
+
+  #attachBridgeRuntimeState(adapter: AppAdapter) {
+    adapter.getRuntimeState = this.#bridgeRuntimeState;
+  }
+
+  #detachBridgeRuntimeState(adapter: AppAdapter) {
+    if (adapter.getRuntimeState === this.#bridgeRuntimeState) {
+      delete adapter.getRuntimeState;
+    }
   }
 }
