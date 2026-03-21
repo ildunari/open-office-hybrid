@@ -79,6 +79,35 @@ html {
   opacity: 1;
 }
 
+/* ── Expandable panel defaults ──
+   Apply .panel-expandable to any collapsible/dropdown content container.
+   Gives it: scrollable overflow, text wrapping, vertical resize handle,
+   bounded height so it doesn't steal all space from siblings. */
+.panel-expandable {
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  min-height: 3rem;
+  max-height: 20rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--chat-scrollbar) transparent;
+}
+
+.panel-expandable::-webkit-scrollbar {
+  width: 4px;
+}
+
+.panel-expandable::-webkit-scrollbar-thumb {
+  background: var(--chat-scrollbar);
+  border-radius: 2px;
+}
+
+.panel-expandable::-webkit-scrollbar-thumb:hover {
+  background: var(--chat-scrollbar-hover);
+}
+
 .markdown-content {
   color: var(--chat-text-primary);
   font-size: 0.8125rem;

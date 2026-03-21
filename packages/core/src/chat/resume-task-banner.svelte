@@ -11,8 +11,8 @@
 </script>
 
 {#if message}
-  <div class="mx-3 mt-3 border border-(--chat-border) bg-(--chat-warning-bg) rounded-sm px-3 py-2 text-xs text-(--chat-warning)">
-    <div>{message}</div>
+  <div class="mx-3 mt-3 border border-(--chat-border) bg-(--chat-warning-bg) rounded-sm px-3 py-2 text-xs text-(--chat-warning) flex flex-col">
+    <div class="panel-expandable min-h-0 max-h-32">{message}</div>
     {#if canResume}
       <div class="mt-3 flex justify-end">
         <button

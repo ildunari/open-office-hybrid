@@ -58,7 +58,7 @@ More often than not, `basic` fetch is good enough but requires a CORS proxy conf
 ## Development
 
 > [!NOTE]
-> This project is **not production-ready** and is not intended for publication to the Microsoft Add-in Store. Think of it as a framework and reference for building your own Office-based agents. That said, I'm happy to squash bugs — feel free to report them in [Issues](https://github.com/hewliyang/office-agents/issues).
+> This project is **not production-ready** and is not intended for publication to the Microsoft Add-in Store. Think of it as a framework and reference for building your own Office-based agents. That said, I'm happy to squash bugs — feel free to report them in [Issues](https://github.com/ildunari/open-office-hybrid/issues).
 
 ```bash
 pnpm install                # Install all dependencies

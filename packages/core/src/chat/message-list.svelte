@@ -3,16 +3,18 @@
   import { Loader2 } from "lucide-svelte";
   import { tick } from "svelte";
   import { getChatContext } from "./chat-runtime-context";
+  import {
+    getGroupedMessages,
+    type MessageGroup,
+    type MessageGroupCache,
+  } from "./message-groups";
   import MarkdownContent from "./markdown-content.svelte";
   import ThinkingBlock from "./thinking-block.svelte";
   import ToolCallBlock from "./tool-call-block.svelte";
+  import { emitBridgeUIEvent } from "./bridge-ui-events.js";
 
   type ToolCallPart = Extract<MessagePart, { type: "toolCall" }>;
   type ThinkingPart = Extract<MessagePart, { type: "thinking" }>;
-
-  type MessageGroup =
-    | { type: "user"; message: ChatMessage }
-    | { type: "assistant"; messages: ChatMessage[] };
 
   const chat = getChatContext();
   const runtimeState = chat.state;
@@ -20,29 +22,6 @@
 
   let container = $state<HTMLDivElement | null>(null);
   let shouldAutoScroll = true;
-
-  function groupMessages(messages: ChatMessage[]): MessageGroup[] {
-    const groups: MessageGroup[] = [];
-    let currentAssistantGroup: ChatMessage[] = [];
-
-    for (const message of messages) {
-      if (message.role === "user") {
-        if (currentAssistantGroup.length > 0) {
-          groups.push({ type: "assistant", messages: currentAssistantGroup });
-          currentAssistantGroup = [];
-        }
-        groups.push({ type: "user", message });
-      } else {
-        currentAssistantGroup.push(message);
-      }
-    }
-
-    if (currentAssistantGroup.length > 0) {
-      groups.push({ type: "assistant", messages: currentAssistantGroup });
-    }
-
-    return groups;
-  }
 
   function flattenAssistantParts(messages: ChatMessage[]) {
     const allParts: { part: MessagePart; messageId: string; isLast: boolean }[] =
@@ -63,35 +42,28 @@
     return allParts;
   }
 
+  let scrollDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
   function handleScroll() {
     if (!container) return;
     const { scrollTop, scrollHeight, clientHeight } = container;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
     shouldAutoScroll = distanceFromBottom < 100;
+
+    if (scrollDebounceTimer) clearTimeout(scrollDebounceTimer);
+    scrollDebounceTimer = setTimeout(() => {
+      if (!container) return;
+      const pct = container.scrollHeight > 0 ? Math.round(container.scrollTop / container.scrollHeight * 100) : 0;
+      emitBridgeUIEvent("ui:scroll_position", { atBottom: shouldAutoScroll, scrollPct: pct });
+    }, 500);
   }
 
-  let cachedGroups: MessageGroup[] = [];
-  let cachedMsgCount = -1;
-  let cachedFirstId = "";
-  let cachedLastId = "";
+  let groupCache: MessageGroupCache | null = null;
 
   const groups = $derived.by(() => {
-    const msgs = $runtimeState.messages;
-    const count = msgs.length;
-    const firstId = msgs[0]?.id ?? "";
-    const lastId = msgs[count - 1]?.id ?? "";
-    if (
-      count === cachedMsgCount &&
-      firstId === cachedFirstId &&
-      lastId === cachedLastId
-    ) {
-      return cachedGroups;
-    }
-    cachedMsgCount = count;
-    cachedFirstId = firstId;
-    cachedLastId = lastId;
-    cachedGroups = groupMessages(msgs);
-    return cachedGroups;
+    const result = getGroupedMessages($runtimeState.messages, groupCache);
+    groupCache = result.cache;
+    return result.groups;
   });
   const lastMessage = $derived(
     $runtimeState.messages[$runtimeState.messages.length - 1],

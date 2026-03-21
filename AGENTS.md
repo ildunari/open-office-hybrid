@@ -110,6 +110,15 @@ pnpm exec office-bridge screenshot word --pages 1 --out page1.png
 pnpm exec office-bridge vfs ls word /home/user
 pnpm exec office-bridge vfs pull word /home/user/uploads/report.docx ./report.docx
 pnpm exec office-bridge vfs push word ./local.txt /home/user/uploads/local.txt
+pnpm exec office-bridge state word              # Dump runtime state as JSON
+pnpm exec office-bridge summary word            # One-line status summary
+pnpm exec office-bridge poll word               # Stream events as NDJSON
+pnpm exec office-bridge assert word --mode discuss  # Assert runtime state (CI gates)
+pnpm exec office-bridge bench word get_document_text --runs 5  # Tool latency benchmark
+pnpm exec office-bridge diag word               # Dump diagnostics (hooks, patterns, threads)
+pnpm exec office-bridge dom word visible-panels  # DOM inspection queries
+pnpm exec office-bridge reset word              # Clear IndexedDB + localStorage for test isolation
+pnpm exec office-bridge screenshot-diff before.png after.png --threshold 0.90  # Visual regression
 ```
 
 `office-bridge exec` runs code with full taskpane/runtime access by default during development. Use `--sandbox` to route through the existing app escape-hatch tool instead.
@@ -123,6 +132,17 @@ Bridge defaults:
 - HTTPS API: `https://localhost:4017`
 - WebSocket: `wss://localhost:4017/ws`
 - Package docs: `packages/bridge/README.md`
+
+## Word Add-in Safety
+
+Two add-ins are sideloaded in Word (in `~/Library/Containers/com.microsoft.Word/Data/Documents/wef/`):
+
+| Add-in | ID | Port | Rule |
+|--------|-----|------|------|
+| **OpenWord Dev** ("Dave") | `a3f1c8e2-...09b3c` | 3002 | **NEVER touch this add-in or its manifest** |
+| **OpenWord Hybrid** | `7b3a3c5d-...07e1` | 3003 | Active development target |
+
+The Hybrid add-in has isolated storage (`OpenWordHybridDB_v1`, `openword-hybrid-*` localStorage prefix) so it won't interfere with Dev. Always verify you're modifying the Hybrid variant before making changes.
 
 ## Code Style
 

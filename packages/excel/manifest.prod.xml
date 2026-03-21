@@ -8,7 +8,7 @@
   <Description DefaultValue="AI Chat for Excel - Chat with LLMs directly in Excel using your own API keys."/>
   <IconUrl DefaultValue="https://openexcel.pages.dev/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://openexcel.pages.dev/assets/icon-64.png"/>
-  <SupportUrl DefaultValue="https://github.com/hewliyang/office-agents"/>
+  <SupportUrl DefaultValue="https://github.com/ildunari/open-office-hybrid"/>
   <AppDomains>
     <AppDomain>https://openexcel.pages.dev</AppDomain>
   </AppDomains>
@@ -67,7 +67,7 @@
         <bt:Image id="Icon.80x80" DefaultValue="https://openexcel.pages.dev/assets/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://github.com/hewliyang/office-agents"/>
+        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://github.com/ildunari/open-office-hybrid"/>
         <bt:Url id="Commands.Url" DefaultValue="https://openexcel.pages.dev/commands.html"/>
         <bt:Url id="Taskpane.Url" DefaultValue="https://openexcel.pages.dev/taskpane.html"/>
       </bt:Urls>

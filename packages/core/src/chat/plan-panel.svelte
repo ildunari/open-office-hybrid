@@ -2,6 +2,7 @@
   import type { ExecutionPlan } from "@office-agents/sdk";
   import { ChevronDown } from "lucide-svelte";
   import TaskProgressBar from "./task-progress-bar.svelte";
+  import { emitBridgeUIEvent } from "./bridge-ui-events.js";
 
   interface Props {
     plan: ExecutionPlan | null;
@@ -21,7 +22,10 @@
     <button
       type="button"
       class="w-full flex items-center justify-between gap-2 text-left"
-      onclick={() => (expanded = !expanded)}
+      onclick={() => {
+        expanded = !expanded;
+        emitBridgeUIEvent("ui:panel_toggled", { panel: "plan", visible: expanded });
+      }}
     >
       <div class="min-w-0">
         <div class="text-[10px] uppercase tracking-widest text-(--chat-text-muted)">
@@ -48,7 +52,7 @@
     {/if}
 
     {#if expanded}
-      <div class="mt-2 space-y-1">
+      <div class="panel-expandable mt-2 space-y-1 max-h-48">
         {#each plan.steps as step (step.id)}
           <div class="flex items-start gap-2 text-xs">
             <div class={`mt-0.5 h-2 w-2 rounded-full shrink-0 ${step.status === "completed" ? "bg-green-500" : step.status === "active" ? "bg-(--chat-accent)" : step.status === "failed" ? "bg-red-500" : "bg-(--chat-text-muted)"}`}></div>

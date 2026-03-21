@@ -249,8 +249,8 @@ When only `permissionMode` is present, the SDK derives the split fields automati
 
 ## Used By
 
-- **[@office-agents/excel](https://github.com/hewliyang/office-agents/tree/main/packages/excel)** — Excel Add-in with AI chat
-- **[@office-agents/powerpoint](https://github.com/hewliyang/office-agents/tree/main/packages/powerpoint)** — PowerPoint Add-in with AI chat
+- **[@office-agents/excel](https://github.com/ildunari/open-office-hybrid/tree/main/packages/excel)** — Excel Add-in with AI chat
+- **[@office-agents/powerpoint](https://github.com/ildunari/open-office-hybrid/tree/main/packages/powerpoint)** — PowerPoint Add-in with AI chat
 
 ## License
 

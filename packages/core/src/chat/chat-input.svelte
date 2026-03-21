@@ -4,7 +4,7 @@
 
   const LINE_HEIGHT = 20;
   const MIN_ROWS = 1;
-  const MAX_ROWS = 2;
+  const MAX_ROWS = 8;
 
   const chat = getChatContext();
   const runtimeState = chat.state;

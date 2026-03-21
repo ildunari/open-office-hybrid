@@ -8,7 +8,7 @@
   <Description DefaultValue="AI assistant for Word documents."/>
   <IconUrl DefaultValue="https://openword.pages.dev/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://openword.pages.dev/assets/icon-64.png"/>
-  <SupportUrl DefaultValue="https://www.contoso.com/help"/>
+  <SupportUrl DefaultValue="https://github.com/ildunari/open-office-hybrid"/>
   <AppDomains>
     <AppDomain>https://www.contoso.com</AppDomain>
   </AppDomains>
@@ -72,7 +72,7 @@
         <bt:Image id="Icon.80x80" DefaultValue="https://openword.pages.dev/assets/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://go.microsoft.com/fwlink/?LinkId=276812"/>
+        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://github.com/ildunari/open-office-hybrid"/>
         <bt:Url id="Commands.Url" DefaultValue="https://openword.pages.dev/commands.html"/>
         <bt:Url id="Taskpane.Url" DefaultValue="https://openword.pages.dev/taskpane.html"/>
       </bt:Urls>

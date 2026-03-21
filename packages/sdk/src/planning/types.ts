@@ -175,6 +175,7 @@ export interface TaskRecord {
     timestamp: number;
   }>;
   toolCallIds: string[];
+  resumeCount?: number;
   createdAt: number;
   updatedAt: number;
 }

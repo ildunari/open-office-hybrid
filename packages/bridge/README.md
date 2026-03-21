@@ -113,6 +113,46 @@ office-bridge vfs rm word /home/user/uploads/notes.txt
 
 `vfs ls` currently enumerates files via a VFS snapshot in the add-in runtime, so it is meant for development/debugging rather than high-performance file browsing.
 
+## Monitoring & testing commands
+
+Commands for agent-driven testing, state inspection, and debugging:
+
+```bash
+office-bridge state word                              # Dump runtime state as JSON
+office-bridge state word --compact                    # One-line mode/phase/streaming summary
+office-bridge summary word                            # One-line status (streaming, plan, tokens, cost)
+office-bridge poll word --events tool:completed,error:runtime  # Stream events as NDJSON via SSE
+office-bridge assert word --mode discuss              # Assert runtime state (exit 1 on mismatch)
+office-bridge bench word get_document_text --runs 10  # Benchmark a tool
+office-bridge diag word                               # Full diagnostics dump (session + events + state)
+office-bridge dom word visible-panels                 # Run pre-built DOM inspection query
+office-bridge reset word --keep-config                # Clear storage (preserve API keys)
+office-bridge screenshot-diff before.png after.png    # Byte-level image comparison
+```
+
+## SSE event streaming
+
+Subscribe to real-time events from a session:
+
+```bash
+curl -sk -N "https://localhost:4017/sessions/{id}/events/stream?events=tool:completed,error:runtime"
+```
+
+The `poll` CLI command wraps this with automatic SSE-to-polling fallback.
+
+## Shell scripts
+
+Automation scripts in `scripts/bridge/`:
+
+| Script | Purpose |
+|--------|---------|
+| `wait-and-check.sh` | Wait for a session and verify it has tools loaded |
+| `smoke-test.sh` | Full integration smoke test (5 checks) |
+| `regression-loop.sh` | Run tool sequence from JSON, compare to baselines |
+| `event-monitor.sh` | Long-running event poller with JSONL log output |
+
+See [AGENT-API.md](./AGENT-API.md) for the full machine-readable API reference.
+
 ## Browser integration
 
 Apps import `startOfficeBridge()` from `@office-agents/bridge/client` and pass the current `AppAdapter`.

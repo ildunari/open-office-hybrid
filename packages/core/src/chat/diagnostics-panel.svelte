@@ -2,6 +2,7 @@
   import type { RuntimeState } from "@office-agents/sdk";
   import { ChevronDown } from "lucide-svelte";
   import { buildDiagnosticsModel } from "./diagnostics";
+  import { emitBridgeUIEvent } from "./bridge-ui-events.js";
 
   interface Props {
     runtimeState: RuntimeState;
@@ -25,13 +26,14 @@
   }
 </script>
 
-<div class="border-b border-(--chat-border) bg-(--chat-bg-secondary) px-3 py-2">
+<div class="border-b border-(--chat-border) bg-(--chat-bg-secondary) px-3 py-2 overflow-hidden">
   <button
     type="button"
     class="w-full flex items-center justify-between gap-2 text-left"
     onclick={() => {
       hasToggled = true;
       expanded = !isExpanded;
+      emitBridgeUIEvent("ui:panel_toggled", { panel: "diagnostics", visible: !isExpanded });
     }}
   >
     <div class="min-w-0">
@@ -49,25 +51,25 @@
   </button>
 
   {#if isExpanded}
-    <div class="mt-3 grid gap-3 text-[11px]">
-      <section class="grid gap-1">
+    <div class="panel-expandable mt-3 grid gap-3 text-[11px]">
+      <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">policy</div>
-        <div class="text-(--chat-text-primary)">
+        <div class="text-(--chat-text-primary) break-words">
           mode: {runtimeState.permissionMode}
         </div>
-        <div class="text-(--chat-text-primary)">
+        <div class="text-(--chat-text-primary) break-words">
           boundary: {model.capabilityBoundary.mode} - {model.capabilityBoundary.description}
         </div>
-        <div class="text-(--chat-text-primary)">
+        <div class="text-(--chat-text-primary) break-words">
           approvals: {model.approvalPolicy.mode} - {model.approvalPolicy.description}
         </div>
       </section>
 
-      <section class="grid gap-1">
+      <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">instruction sources</div>
         {#each model.instructionSources as source (source.id)}
-          <div class="rounded-sm border border-(--chat-border) px-2 py-1">
-            <div class="text-(--chat-text-primary)">
+          <div class="rounded-sm border border-(--chat-border) px-2 py-1 min-w-0">
+            <div class="text-(--chat-text-primary) break-words">
               {source.label} <span class="text-(--chat-text-muted)">({source.kind})</span>
             </div>
             <div class="text-(--chat-text-secondary) break-words">{source.summary}</div>
@@ -75,18 +77,18 @@
         {/each}
       </section>
 
-      <section class="grid gap-1">
+      <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">active framework</div>
-        <div class="text-(--chat-text-primary)">
+        <div class="text-(--chat-text-primary) break-words">
           hooks: {model.activeHooks.length > 0 ? model.activeHooks.join(", ") : "none"}
         </div>
-        <div class="text-(--chat-text-primary)">
+        <div class="text-(--chat-text-primary) break-words">
           patterns:
           {model.activePatterns.length > 0
             ? model.activePatterns.map((pattern) => pattern.id).join(", ")
             : "none"}
         </div>
-        <div class="text-(--chat-text-primary)">
+        <div class="text-(--chat-text-primary) break-words">
           verifiers:
           {model.activeVerifierIds.length > 0
             ? model.activeVerifierIds.join(", ")
@@ -94,22 +96,22 @@
         </div>
       </section>
 
-      <section class="grid gap-1">
+      <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">threads</div>
         {#if model.activeThread}
-          <div class="text-(--chat-text-primary)">
+          <div class="text-(--chat-text-primary) break-words">
             active: {model.activeThread.title} ({model.activeThread.status})
           </div>
         {:else}
           <div class="text-(--chat-text-muted)">No active thread.</div>
         {/if}
         {#if model.otherThreads.length > 0}
-          <div class="text-(--chat-text-secondary)">
+          <div class="text-(--chat-text-secondary) break-words">
             archived/other:
             {model.otherThreads.map((thread) => `${thread.title} (${thread.status})`).join(", ")}
           </div>
         {/if}
-        <div class="text-(--chat-text-primary)">
+        <div class="text-(--chat-text-primary) break-words">
           compaction:
           {#if model.compactionState}
             {model.compactionState.artifactCount} artifacts, last thread {model.compactionState.lastCompactedThreadId ?? "n/a"} at {formatWhen(model.compactionState.updatedAt)}
@@ -119,12 +121,12 @@
         </div>
       </section>
 
-      <section class="grid gap-1">
+      <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">policy trace</div>
         {#if model.recentPolicyTrace.length > 0}
           {#each model.recentPolicyTrace as trace (trace.id)}
-            <div class="rounded-sm border border-(--chat-border) px-2 py-1">
-              <div class="text-(--chat-text-primary)">
+            <div class="rounded-sm border border-(--chat-border) px-2 py-1 min-w-0">
+              <div class="text-(--chat-text-primary) break-words">
                 {trace.event} -> {trace.outcome}
                 <span class="text-(--chat-text-muted)">at {formatWhen(trace.at)}</span>
               </div>
@@ -136,16 +138,16 @@
         {/if}
       </section>
 
-      <section class="grid gap-1">
+      <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">completion</div>
         {#if model.completionArtifacts.length > 0}
           {#each model.completionArtifacts as artifact (artifact.id)}
-            <div class="rounded-sm border border-(--chat-border) px-2 py-1">
-              <div class="text-(--chat-text-primary)">
+            <div class="rounded-sm border border-(--chat-border) px-2 py-1 min-w-0">
+              <div class="text-(--chat-text-primary) break-words">
                 {artifact.summary}
                 <span class="text-(--chat-text-muted)">({artifact.verificationStatus})</span>
               </div>
-              <div class="text-(--chat-text-secondary)">
+              <div class="text-(--chat-text-secondary) break-words">
                 thread {artifact.threadId} at {formatWhen(artifact.createdAt)}
               </div>
             </div>

@@ -149,6 +149,7 @@ export interface RuntimeAdapter {
     request: string,
     classification: Awaited<ReturnType<TaskClassifier["classify"]>>,
   ) => Promise<ScopeRiskEstimate> | ScopeRiskEstimate;
+  bridgeEventSink?: (event: string, payload: Record<string, unknown>) => void;
 }
 
 export interface UploadedFile {
@@ -415,6 +416,76 @@ export class AgentRuntime {
     return this.state;
   }
 
+  getRuntimeStateSlice(): {
+    mode: string;
+    taskPhase: string;
+    isStreaming: boolean;
+    permissionMode: string;
+    waitingState: string | null;
+    activePlanSummary: {
+      id: string;
+      status: string;
+      stepCount: number;
+      activeStepIndex: number;
+    } | null;
+    activeTaskSummary: { id: string; status: string; mode: string } | null;
+    contextBudget: { usagePct: number; action: string };
+    lastVerification: { status: string } | null;
+    sessionStats: {
+      inputTokens: number;
+      outputTokens: number;
+      totalCost: number;
+      messageCount: number;
+    };
+    error: string | null;
+    threadCount: number;
+    activeThreadId: string | null;
+    degradedGuardrails: string[];
+  } {
+    const s = this.state;
+    const plan = s.activePlan;
+    const task = s.activeTask;
+    const stats = s.sessionStats;
+    return {
+      mode: s.mode,
+      taskPhase: s.taskPhase,
+      isStreaming: s.isStreaming,
+      permissionMode: s.permissionMode,
+      waitingState: s.waitingState?.kind ?? null,
+      activePlanSummary: plan
+        ? {
+            id: plan.id,
+            status: plan.status,
+            stepCount: plan.steps.length,
+            activeStepIndex: plan.activeStepId
+              ? plan.steps.findIndex((step) => step.id === plan.activeStepId)
+              : -1,
+          }
+        : null,
+      activeTaskSummary: task
+        ? {
+            id: task.id,
+            status: task.status,
+            mode: task.mode ?? "discuss",
+          }
+        : null,
+      contextBudget: s.contextBudgetState ?? { usagePct: 0, action: "none" },
+      lastVerification: s.lastVerification
+        ? { status: s.lastVerification.status }
+        : null,
+      sessionStats: {
+        inputTokens: stats.inputTokens,
+        outputTokens: stats.outputTokens,
+        totalCost: stats.totalCost,
+        messageCount: s.messages.length,
+      },
+      error: s.error,
+      threadCount: s.threads.length,
+      activeThreadId: s.activeThreadId,
+      degradedGuardrails: s.degradedGuardrails,
+    };
+  }
+
   subscribe(listener: StateListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -426,8 +497,30 @@ export class AgentRuntime {
     }
   }
 
+  private emitBridgeEvent(event: string, payload: Record<string, unknown>) {
+    try {
+      this.adapter.bridgeEventSink?.(event, payload);
+    } catch {
+      // Bridge event emission is best-effort; never block runtime.
+    }
+  }
+
   private update(partial: Partial<RuntimeState>) {
+    const prevMode = this.state.mode;
+    const prevPhase = this.state.taskPhase;
     this.state = this.syncHybridState({ ...this.state, ...partial });
+    if (this.state.mode !== prevMode) {
+      this.emitBridgeEvent("state:mode_changed", {
+        from: prevMode,
+        to: this.state.mode,
+      });
+    }
+    if (this.state.taskPhase !== prevPhase) {
+      this.emitBridgeEvent("state:phase_changed", {
+        from: prevPhase,
+        to: this.state.taskPhase,
+      });
+    }
     this.emit();
   }
 
@@ -890,6 +983,10 @@ export class AgentRuntime {
             timestamp: event.message.timestamp,
           };
           this.updateMessages((msgs) => [...msgs, chatMessage]);
+          this.emitBridgeEvent("message:created", {
+            messageId: id,
+            role: "assistant",
+          });
         }
         break;
       }
@@ -902,6 +999,10 @@ export class AgentRuntime {
       }
       case "message_end": {
         this.flushStreamingBuffer();
+        this.emitBridgeEvent("message:completed", {
+          messageId: this.streamingMessageId ?? "",
+          role: event.message.role,
+        });
         if (event.message.role === "assistant") {
           const assistantMsg = event.message as AssistantMessage;
           const isError =
@@ -946,6 +1047,10 @@ export class AgentRuntime {
       case "tool_execution_start": {
         this.flushStreamingBuffer();
         this.taskTracker.recordToolCall(event.toolCallId);
+        this.emitBridgeEvent("tool:started", {
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+        });
         this.updateMessages((msgs) => {
           const messages = [...msgs];
           for (let i = messages.length - 1; i >= 0; i--) {
@@ -1038,6 +1143,19 @@ export class AgentRuntime {
           resultText,
           timestamp: Date.now(),
         });
+
+        if (event.isError) {
+          this.emitBridgeEvent("tool:failed", {
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            error: resultText,
+          });
+        } else {
+          this.emitBridgeEvent("tool:completed", {
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+          });
+        }
 
         this.updateMessages((msgs) => {
           const messages = [...msgs];
@@ -1451,8 +1569,13 @@ export class AgentRuntime {
 
   async resumeFromHandoff() {
     if (!this.state.activeTask || !this.agent) return;
+    const task = this.taskTracker.getCurrentTask();
+    if (task) {
+      (task as any).resumeCount = (task.resumeCount ?? 0) + 1;
+    }
     this.taskTracker.setMode("execute");
     this.taskTracker.setHandoff(null);
+    this.taskTracker.setApprovalPending(false);
     this.appendPolicyTrace({
       event: "task_resumed",
       outcome: "allowed",
@@ -1461,6 +1584,7 @@ export class AgentRuntime {
     this.update({
       mode: "execute",
       handoff: null,
+      approvalRequest: null,
       error: null,
       activeTask: this.taskTracker.getCurrentTask(),
     });
@@ -2279,15 +2403,33 @@ export class AgentRuntime {
       verification.retryable,
     );
 
-    const handoff =
-      verification.status === "failed" || verification.status === "retryable"
-        ? await this.buildHandoff(
-            this.taskTracker.getCurrentTask()!,
-            verification.retryable
-              ? "Resume the task after addressing the retryable verification mismatch."
-              : "Review the failed verification before continuing.",
-          )
-        : null;
+    const verificationFailed =
+      verification.status === "failed" || verification.status === "retryable";
+    const isFullAuto = this.state.approvalPolicy.mode === "auto";
+    const resumeCount = task.resumeCount ?? 0;
+    const retriesExhausted = resumeCount >= 2;
+
+    let handoff: Awaited<ReturnType<typeof this.buildHandoff>> | null = null;
+    let finalMode: string;
+
+    if (verificationFailed && !isFullAuto && !retriesExhausted) {
+      handoff = await this.buildHandoff(
+        this.taskTracker.getCurrentTask()!,
+        verification.retryable
+          ? "Resume the task after addressing the retryable verification mismatch."
+          : "Review the failed verification before continuing.",
+      );
+      finalMode = "blocked";
+    } else {
+      if (verificationFailed) {
+        degradedGuardrails.push(
+          isFullAuto
+            ? "Verification failed but full_auto mode suppressed the pause."
+            : `Verification failed after ${resumeCount} resume attempts; completing with degraded guardrails.`,
+        );
+      }
+      finalMode = "completed";
+    }
 
     if (verification.status === "skipped") {
       degradedGuardrails.push(
@@ -2296,17 +2438,10 @@ export class AgentRuntime {
     }
 
     this.taskTracker.setHandoff(handoff);
-    this.taskTracker.setMode(
-      verification.status === "failed" || verification.status === "retryable"
-        ? "blocked"
-        : "completed",
-    );
+    this.taskTracker.setMode(finalMode === "blocked" ? "blocked" : "completed");
 
     this.update({
-      mode:
-        verification.status === "failed" || verification.status === "retryable"
-          ? "blocked"
-          : "completed",
+      mode: finalMode === "blocked" ? "blocked" : "completed",
       handoff,
       lastVerification: verification,
       degradedGuardrails,

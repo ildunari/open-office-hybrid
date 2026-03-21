@@ -28,6 +28,7 @@ import {
   findMatchingSession,
   summarizeExecutionError,
 } from "./server.js";
+import { DOM_QUERIES } from "./dom-queries.js";
 
 const OPTIONS = {
   help: { type: "boolean" as const },
@@ -51,6 +52,17 @@ const OPTIONS = {
   range: { type: "string" as const },
   "slide-index": { type: "string" as const },
   slide: { type: "string" as const },
+  interval: { type: "string" as const },
+  events: { type: "string" as const },
+  mode: { type: "string" as const },
+  phase: { type: "string" as const },
+  streaming: { type: "string" as const },
+  runs: { type: "string" as const },
+  threshold: { type: "string" as const },
+  "keep-config": { type: "boolean" as const },
+  compact: { type: "boolean" as const },
+  fields: { type: "string" as const },
+  "max-tokens": { type: "string" as const },
 };
 
 interface Cli {
@@ -104,9 +116,9 @@ Commands:
   stop [--url URL]
   list [--json]
   wait [selector] [--app APP] [--document DOCUMENT] [--timeout MS] [--json]
-  inspect [session]
-  metadata [session]
-  events [session] [--limit N]
+  inspect [session] [--compact] [--fields KEY1,KEY2]
+  metadata [session] [--compact] [--fields KEY1,KEY2]
+  events [session] [--limit N] [--compact] [--fields KEY1,KEY2] [--max-tokens N]
   tool [session] <toolName> [--input JSON | --file PATH | --stdin]
   exec [session] [--code JS | --file PATH | --stdin] [--sandbox]
   rpc [session] <method> [--input JSON | --file PATH | --stdin]
@@ -115,18 +127,44 @@ Commands:
   vfs pull [session] <remotePath> [localPath]
   vfs push [session] <localPath> <remotePath>
   vfs rm [session] <remotePath>
+  state [session] [--compact]
+  poll [session] [--interval MS] [--events TYPE1,TYPE2]
+  assert [session] [--mode X] [--phase Y] [--streaming true|false]
+  bench [session] <toolName> [--runs N]
+  summary [session]
+  diag [session]
+  dom [session] <query>
+  reset [session] [--keep-config]
+  screenshot-diff <img1> <img2> [--threshold 0.95]
+
+Supported DOM queries: visible-panels, scroll-positions, computed-theme, layout-metrics, message-count
+
+Global flags:
+  --compact     Strip nulls, empty arrays, shorten timestamps
+  --fields      Pick only specified keys from output (comma-separated)
+  --max-tokens  Limit number of events returned
 
 Examples:
   office-bridge serve
   office-bridge stop
   office-bridge list
   office-bridge inspect word
+  office-bridge inspect word --compact --fields app,documentId
   office-bridge exec word --code "return { href: window.location.href, title: document.title }"
   office-bridge exec word --sandbox --code "const body = context.document.body; body.load('text'); await context.sync(); return body.text;"
   office-bridge tool excel screenshot_range --input '{"sheetId":1,"range":"A1:F20"}' --out range.png
   office-bridge screenshot word --pages 1 --out page1.png
   office-bridge vfs ls word /home/user
   office-bridge vfs pull word /home/user/uploads/report.docx ./report.docx
+  office-bridge state word --compact
+  office-bridge poll word --interval 1000 --events session_updated,tool_executed
+  office-bridge assert word --mode agent --streaming true
+  office-bridge bench word get_document_text --runs 10
+  office-bridge summary word
+  office-bridge diag word
+  office-bridge dom word visible-panels
+  office-bridge reset word --keep-config
+  office-bridge screenshot-diff before.png after.png --threshold 0.90
 `);
 }
 
@@ -504,7 +542,7 @@ async function commandInspect(cli: Cli) {
     ok: true;
     session: BridgeSessionRecord;
   }>("GET", sessionPath(session.snapshot.sessionId), undefined, reqOpts(cli));
-  printJson(response.session);
+  printFormattedJson(response.session, cli);
 }
 
 async function commandMetadata(cli: Cli) {
@@ -519,12 +557,13 @@ async function commandMetadata(cli: Cli) {
     {},
     reqOpts(cli),
   );
-  printJson(response);
+  printFormattedJson(response, cli);
 }
 
 async function commandEvents(cli: Cli) {
   const session = await resolveSession(cli, cli.positionals[1]);
   const limit = int(cli, "limit", 50);
+  const maxTokens = int(cli, "max-tokens", 0);
   const response = await requestJson<{ ok: true; events: BridgeStoredEvent[] }>(
     "GET",
     sessionPath(
@@ -534,7 +573,21 @@ async function commandEvents(cli: Cli) {
     undefined,
     reqOpts(cli),
   );
-  printJson(response.events);
+  let events = response.events;
+  if (maxTokens > 0) events = events.slice(0, maxTokens);
+
+  if (flag(cli, "compact")) {
+    const compactEvents = events.map((e) => ({
+      ts: e.ts,
+      event: e.event,
+      payloadSummary: e.payload
+        ? JSON.stringify(e.payload).slice(0, 100)
+        : null,
+    }));
+    printFormattedJson(compactEvents, cli);
+    return;
+  }
+  printFormattedJson(events, cli);
 }
 
 async function commandTool(cli: Cli) {
@@ -833,6 +886,426 @@ async function commandVfs(cli: Cli) {
 }
 
 // ---------------------------------------------------------------------------
+// Output formatting helpers
+// ---------------------------------------------------------------------------
+
+function stripNulls(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripNulls);
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const [key, v] of Object.entries(record)) {
+    if (v === null || v === undefined) continue;
+    if (Array.isArray(v) && v.length === 0) continue;
+    result[key] = stripNulls(v);
+  }
+  return result;
+}
+
+function pickFields(value: unknown, fields: string[]): unknown {
+  if (!value || typeof value !== "object") return value;
+  if (Array.isArray(value))
+    return value.map((item) => pickFields(item, fields));
+  const record = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (field in record) result[field] = record[field];
+  }
+  return result;
+}
+
+function formatOutput(value: unknown, cli: Cli): unknown {
+  let result = value;
+  if (flag(cli, "compact")) result = stripNulls(result);
+  const fields = str(cli, "fields");
+  if (fields)
+    result = pickFields(
+      result,
+      fields.split(",").map((f) => f.trim()),
+    );
+  return result;
+}
+
+function printFormattedJson(value: unknown, cli: Cli) {
+  console.log(
+    JSON.stringify(
+      serializeForJson(sanitizeImagesForOutput(formatOutput(value, cli))),
+      null,
+      2,
+    ),
+  );
+}
+
+// DOM_QUERIES imported from dom-queries.ts at top of file
+
+// ---------------------------------------------------------------------------
+// New commands
+// ---------------------------------------------------------------------------
+
+async function commandState(cli: Cli) {
+  const session = await resolveSession(cli, cli.positionals[1]);
+  const snapshot = session.snapshot;
+  const rs = snapshot.runtimeState;
+  if (!rs) {
+    console.log("No runtime state available.");
+    return;
+  }
+  if (flag(cli, "compact")) {
+    const plan = rs.activePlanSummary;
+    const planStr = plan
+      ? `plan:step${plan.activeStepIndex + 1}/${plan.stepCount}`
+      : "no-plan";
+    const tokens = rs.sessionStats.inputTokens + rs.sessionStats.outputTokens;
+    console.log(
+      `${snapshot.app} | ${rs.mode} | ${rs.taskPhase} | streaming=${rs.isStreaming} | ${planStr} | ${Math.round(tokens / 1000)}k tokens`,
+    );
+    return;
+  }
+  printFormattedJson(rs, cli);
+}
+
+async function commandPoll(cli: Cli) {
+  const session = await resolveSession(cli, cli.positionals[1]);
+  const intervalMs = int(cli, "interval", 2000);
+  const eventsFilter = str(cli, "events");
+  const allowedTypes = eventsFilter
+    ? new Set(eventsFilter.split(",").map((t) => t.trim()))
+    : null;
+
+  const sseUrl = `${baseUrl(cli)}/sessions/${encodeURIComponent(session.snapshot.sessionId)}/events/stream${eventsFilter ? `?events=${encodeURIComponent(eventsFilter)}` : ""}`;
+
+  let useSSE = true;
+  try {
+    const https = await import("node:https");
+    const sseUrlObj = new URL(sseUrl);
+    await new Promise<void>((resolve, reject) => {
+      const req = https.request(
+        sseUrlObj,
+        {
+          method: "GET",
+          rejectUnauthorized: false,
+          headers: { Accept: "text/event-stream" },
+        },
+        (res) => {
+          if (
+            res.statusCode === 200 &&
+            res.headers["content-type"]?.includes("text/event-stream")
+          ) {
+            res.on("data", (chunk: Buffer) => {
+              const lines = chunk.toString("utf8").split("\n");
+              for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                  const data = line.slice(6).trim();
+                  if (data) console.log(data);
+                }
+              }
+            });
+            res.on("end", () => resolve());
+            res.on("error", () => resolve());
+          } else {
+            useSSE = false;
+            res.destroy();
+            reject(new Error("SSE not available"));
+          }
+        },
+      );
+      req.on("error", () => {
+        useSSE = false;
+        reject(new Error("SSE not available"));
+      });
+      req.end();
+
+      process.on("SIGINT", () => {
+        req.destroy();
+        process.exit(0);
+      });
+      process.on("SIGTERM", () => {
+        req.destroy();
+        process.exit(0);
+      });
+    });
+  } catch {
+    useSSE = false;
+  }
+
+  if (!useSSE) {
+    let lastEventId: string | undefined;
+    const poll = async () => {
+      const response = await requestJson<{
+        ok: true;
+        events: BridgeStoredEvent[];
+      }>(
+        "GET",
+        sessionPath(session.snapshot.sessionId, "/events?limit=50"),
+        undefined,
+        reqOpts(cli),
+      );
+      const events = response.events;
+      let startIdx = 0;
+      if (lastEventId) {
+        const idx = events.findIndex((e) => e.id === lastEventId);
+        if (idx >= 0) startIdx = idx + 1;
+      }
+      for (let i = startIdx; i < events.length; i++) {
+        const evt = events[i];
+        if (allowedTypes && !allowedTypes.has(evt.event)) continue;
+        console.log(JSON.stringify(evt));
+        lastEventId = evt.id;
+      }
+    };
+
+    process.on("SIGINT", () => process.exit(0));
+    process.on("SIGTERM", () => process.exit(0));
+
+    while (true) {
+      await poll();
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  }
+}
+
+async function commandAssert(cli: Cli) {
+  const session = await resolveSession(cli, cli.positionals[1]);
+  const rs = session.snapshot.runtimeState;
+  if (!rs) {
+    console.error("No runtime state available");
+    process.exit(1);
+  }
+
+  const mismatches: string[] = [];
+  const expectedMode = str(cli, "mode");
+  if (expectedMode && rs.mode !== expectedMode) {
+    mismatches.push(`mode: expected "${expectedMode}", got "${rs.mode}"`);
+  }
+  const expectedPhase = str(cli, "phase");
+  if (expectedPhase && rs.taskPhase !== expectedPhase) {
+    mismatches.push(
+      `taskPhase: expected "${expectedPhase}", got "${rs.taskPhase}"`,
+    );
+  }
+  const expectedStreaming = str(cli, "streaming");
+  if (expectedStreaming !== undefined) {
+    const expected = expectedStreaming === "true";
+    if (rs.isStreaming !== expected) {
+      mismatches.push(
+        `isStreaming: expected ${expected}, got ${rs.isStreaming}`,
+      );
+    }
+  }
+
+  if (mismatches.length > 0) {
+    for (const m of mismatches) console.error(m);
+    process.exit(1);
+  }
+  console.log("All assertions passed.");
+}
+
+async function commandBench(cli: Cli) {
+  const { session, args } = await splitSessionArgs(
+    cli,
+    cli.positionals.slice(1),
+    1,
+  );
+  const toolName = args[0];
+  if (!toolName) {
+    throw new Error(
+      "Usage: office-bridge bench [session] <toolName> [--runs N]",
+    );
+  }
+  const runs = int(cli, "runs", 5);
+  const timings: number[] = [];
+  let errors = 0;
+
+  for (let i = 0; i < runs; i++) {
+    const start = performance.now();
+    try {
+      await requestJson(
+        "POST",
+        sessionPath(
+          session.snapshot.sessionId,
+          `/tools/${encodeURIComponent(toolName)}`,
+        ),
+        { args: {} },
+        reqOpts(cli),
+      );
+    } catch {
+      errors++;
+    }
+    timings.push(performance.now() - start);
+  }
+
+  const validTimings = timings;
+  const min = Math.min(...validTimings);
+  const max = Math.max(...validTimings);
+  const avg = validTimings.reduce((a, b) => a + b, 0) / validTimings.length;
+
+  printJson({
+    toolName,
+    runs,
+    min: Math.round(min * 100) / 100,
+    avg: Math.round(avg * 100) / 100,
+    max: Math.round(max * 100) / 100,
+    errors,
+  });
+}
+
+async function commandSummary(cli: Cli) {
+  const session = await resolveSession(cli, cli.positionals[1]);
+  const rs = session.snapshot.runtimeState;
+  if (!rs) {
+    console.log(`${session.snapshot.app} | no runtime state`);
+    return;
+  }
+  const plan = rs.activePlanSummary;
+  const planStr = plan
+    ? `plan:step${plan.activeStepIndex + 1}/${plan.stepCount}`
+    : "no-plan";
+  const tokens = rs.sessionStats.inputTokens + rs.sessionStats.outputTokens;
+  const cost = rs.sessionStats.totalCost;
+  const toolCount = session.snapshot.tools.length;
+  const streamStr = rs.isStreaming ? "streaming" : "idle";
+  console.log(
+    `${session.snapshot.app} | ${streamStr} | ${planStr} | ${Math.round(tokens / 1000)}k tokens | $${cost.toFixed(2)} | ${toolCount} tools`,
+  );
+}
+
+async function commandDiag(cli: Cli) {
+  const session = await resolveSession(cli, cli.positionals[1]);
+  const id = session.snapshot.sessionId;
+
+  const [inspectRes, eventsRes] = await Promise.all([
+    requestJson<{ ok: true; session: BridgeSessionRecord }>(
+      "GET",
+      sessionPath(id),
+      undefined,
+      reqOpts(cli),
+    ),
+    requestJson<{ ok: true; events: BridgeStoredEvent[] }>(
+      "GET",
+      sessionPath(id, "/events?limit=50"),
+      undefined,
+      reqOpts(cli),
+    ),
+  ]);
+
+  printFormattedJson(
+    {
+      session: inspectRes.session,
+      events: eventsRes.events,
+      runtimeState: session.snapshot.runtimeState ?? null,
+    },
+    cli,
+  );
+}
+
+async function commandDom(cli: Cli) {
+  const { session, args } = await splitSessionArgs(
+    cli,
+    cli.positionals.slice(1),
+    1,
+  );
+  const query = args[0];
+  if (!query) {
+    throw new Error(
+      `Usage: office-bridge dom [session] <query>\nSupported queries: ${Object.keys(DOM_QUERIES).join(", ")}`,
+    );
+  }
+  const queryDef = DOM_QUERIES[query];
+  if (!queryDef) {
+    throw new Error(
+      `Unknown DOM query: ${query}. Supported: ${Object.keys(DOM_QUERIES).join(", ")}`,
+    );
+  }
+
+  const response = await requestJson<{ ok: true; result: unknown }>(
+    "POST",
+    sessionPath(session.snapshot.sessionId, "/exec"),
+    { code: queryDef.code, unsafe: true },
+    reqOpts(cli),
+  );
+  printFormattedJson(response.result, cli);
+}
+
+async function commandReset(cli: Cli) {
+  const session = await resolveSession(cli, cli.positionals[1]);
+  const keepConfig = flag(cli, "keep-config");
+
+  const code = keepConfig
+    ? `
+      const preservePatterns = [/-provider-config$/, /-oauth-credentials$/];
+      const keysToKeep = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && preservePatterns.some(p => p.test(key))) {
+          keysToKeep[key] = localStorage.getItem(key);
+        }
+      }
+      localStorage.clear();
+      for (const [key, value] of Object.entries(keysToKeep)) {
+        localStorage.setItem(key, value);
+      }
+      const dbs = await indexedDB.databases();
+      for (const db of dbs) {
+        if (db.name) indexedDB.deleteDatabase(db.name);
+      }
+      return { cleared: true, preservedKeys: Object.keys(keysToKeep) };
+    `
+    : `
+      localStorage.clear();
+      const dbs = await indexedDB.databases();
+      for (const db of dbs) {
+        if (db.name) indexedDB.deleteDatabase(db.name);
+      }
+      return { cleared: true, preservedKeys: [] };
+    `;
+
+  const response = await requestJson<{ ok: true; result: unknown }>(
+    "POST",
+    sessionPath(session.snapshot.sessionId, "/exec"),
+    { code, unsafe: true },
+    reqOpts(cli),
+  );
+  console.log(
+    `Reset complete for ${session.snapshot.app}.${keepConfig ? " Config keys preserved." : ""}`,
+  );
+  if (flag(cli, "json")) printJson(response.result);
+}
+
+async function commandScreenshotDiff(cli: Cli) {
+  const img1Path = cli.positionals[1];
+  const img2Path = cli.positionals[2];
+  if (!img1Path || !img2Path) {
+    throw new Error(
+      "Usage: office-bridge screenshot-diff <img1> <img2> [--threshold 0.95]",
+    );
+  }
+
+  const threshold = Number.parseFloat(str(cli, "threshold") || "0.95");
+  const [buf1, buf2] = await Promise.all([
+    readFile(img1Path),
+    readFile(img2Path),
+  ]);
+
+  const totalPixels = Math.max(buf1.length, buf2.length);
+  const compareLength = Math.min(buf1.length, buf2.length);
+  let matchingBytes = 0;
+
+  for (let i = 0; i < compareLength; i++) {
+    if (buf1[i] === buf2[i]) matchingBytes++;
+  }
+
+  const similarity = totalPixels > 0 ? matchingBytes / totalPixels : 1;
+  const diffPixels = totalPixels - matchingBytes;
+
+  printJson({
+    similarity: Math.round(similarity * 10000) / 10000,
+    diffPixels,
+    totalPixels,
+    passed: similarity >= threshold,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main dispatch
 // ---------------------------------------------------------------------------
 
@@ -849,6 +1322,15 @@ const COMMANDS: Record<string, (cli: Cli) => Promise<void>> = {
   rpc: commandRpc,
   screenshot: commandScreenshot,
   vfs: commandVfs,
+  state: commandState,
+  poll: commandPoll,
+  assert: commandAssert,
+  bench: commandBench,
+  summary: commandSummary,
+  diag: commandDiag,
+  dom: commandDom,
+  reset: commandReset,
+  "screenshot-diff": commandScreenshotDiff,
 };
 
 async function main() {

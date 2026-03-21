@@ -27,7 +27,9 @@
   import ResumeTaskBanner from "./resume-task-banner.svelte";
   import SettingsPanel from "./settings-panel.svelte";
   import StatusStrip from "./status-strip.svelte";
+  import ResizeHandle from "./resize-handle.svelte";
   import type { ChatTab } from "./types";
+  import { emitBridgeUIEvent } from "./bridge-ui-events.js";
 
   type Theme = "light" | "dark";
 
@@ -52,6 +54,8 @@
   let dragCounter = $state(0);
   let sessionDropdownOpen = $state(false);
   let sessionDropdownRef = $state<HTMLDivElement | null>(null);
+  let diagnosticsWrapperRef = $state<HTMLDivElement | null>(null);
+  let inputWrapperRef = $state<HTMLDivElement | null>(null);
 
   let theme = $state<Theme>(loadTheme());
 
@@ -70,6 +74,7 @@
     theme = theme === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem(THEME_KEY, theme);
+    emitBridgeUIEvent("ui:theme_changed", { theme });
   }
 
   function formatTokens(value: number): string {
@@ -118,6 +123,7 @@
     await controller.switchSession(sessionId);
     sessionDropdownOpen = false;
     activeTab = "chat";
+    emitBridgeUIEvent("ui:session_switched", { toSessionId: sessionId });
   }
 
   function handleClickOutside(event: MouseEvent) {
@@ -167,6 +173,11 @@
 
   $effect(() => {
     controller.setAdapter(adapter);
+  });
+
+  $effect(() => {
+    emitBridgeUIEvent("ui:tab_changed", { tab: activeTab });
+    emitBridgeUIEvent("ui:panel_toggled", { panel: "settings", visible: activeTab === "settings" });
   });
 
   $effect(() => {
@@ -397,13 +408,19 @@
       approvalMessage={$runtimeState.approvalRequest?.uiMessage ?? null}
     />
 
-    <DiagnosticsPanel runtimeState={$runtimeState} />
+    <div bind:this={diagnosticsWrapperRef} class="shrink-0 overflow-hidden">
+      <DiagnosticsPanel runtimeState={$runtimeState} />
+    </div>
+    <ResizeHandle target={() => diagnosticsWrapperRef} direction="above" min={32} max={500} />
 
     <MessageList />
     {#if SelectionIndicator}
       <SelectionIndicator />
     {/if}
-    <ChatInput />
+    <ResizeHandle target={() => inputWrapperRef} direction="below" min={48} max={300} />
+    <div bind:this={inputWrapperRef} class="shrink-0">
+      <ChatInput />
+    </div>
     {#if $runtimeState.providerConfig}
       <div
         class="flex items-center justify-between px-3 py-1.5 text-[10px] border-t border-(--chat-border) bg-(--chat-bg-secondary) text-(--chat-text-muted)"

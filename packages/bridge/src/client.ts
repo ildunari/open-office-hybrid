@@ -1,7 +1,10 @@
 import {
   BRIDGE_PROTOCOL_VERSION,
   type BridgeEventMessage,
+  type BridgeEventName,
+  type BridgeEventPayloads,
   type BridgeHostInfo,
+  type BridgeRuntimeStateSlice,
   type BridgeSessionSnapshot,
   type BridgeToolDefinition,
   type BridgeToolExecutionResult,
@@ -51,6 +54,7 @@ interface BridgeAdapter {
     nameMap?: Record<number, string>;
   } | null>;
   onToolResult?: (toolCallId: string, result: string, isError: boolean) => void;
+  getRuntimeState?: () => BridgeRuntimeStateSlice | null;
 }
 
 interface BridgeVfsAdapter {
@@ -77,6 +81,10 @@ export interface OfficeBridgeController {
   readonly enabled: boolean;
   readonly instanceId: string;
   refresh: () => Promise<BridgeSessionSnapshot | null>;
+  emitEvent: <K extends BridgeEventName>(
+    event: K,
+    payload: BridgeEventPayloads[K],
+  ) => void;
   stop: () => void;
 }
 
@@ -174,6 +182,7 @@ async function captureSessionSnapshot(
   };
 
   const now = Date.now();
+  const runtimeState = adapter.getRuntimeState?.() ?? undefined;
 
   return {
     sessionId: `${app}:${instanceId}`,
@@ -186,6 +195,7 @@ async function captureSessionSnapshot(
     documentMetadata: meta?.metadata,
     tools: getToolDefinitions(adapter),
     host: hostInfo,
+    runtimeState,
     connectedAt: previous?.connectedAt ?? now,
     updatedAt: now,
   };
@@ -688,9 +698,16 @@ export function startOfficeBridge(
       refresh().catch(() => undefined);
     };
 
+    const handleBeforeUnload = () => {
+      sendEvent("session:hmr_reload", {
+        previousSessionId: state.snapshot?.sessionId,
+      });
+    };
+
     window.addEventListener("error", handleWindowError);
     window.addEventListener("unhandledrejection", handleUnhandledRejection);
     window.addEventListener("focus", handleFocus);
+    window.addEventListener("beforeunload", handleBeforeUnload);
 
     if (options.forwardConsole !== false) {
       const methods = ["debug", "info", "log", "warn", "error"] as const;
@@ -735,6 +752,7 @@ export function startOfficeBridge(
         handleUnhandledRejection,
       );
       window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
       consoleRestore?.();
       consoleRestore = null;
     };
@@ -752,6 +770,13 @@ export function startOfficeBridge(
     refresh: async () => {
       if (!enabled || state.stopped) return null;
       return refresh();
+    },
+    emitEvent: <K extends BridgeEventName>(
+      event: K,
+      payload: BridgeEventPayloads[K],
+    ) => {
+      if (!enabled || state.stopped) return;
+      sendEvent(event, payload);
     },
     stop: () => {
       state.stopped = true;

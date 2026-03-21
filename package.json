@@ -3,6 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ildunari/open-office-hybrid.git"
+  },
+  "homepage": "https://github.com/ildunari/open-office-hybrid",
+  "bugs": {
+    "url": "https://github.com/ildunari/open-office-hybrid/issues"
+  },
   "scripts": {
     "build": "pnpm -r build",
     "bridge": "pnpm --filter @office-agents/bridge build && node packages/bridge/dist/cli.js",

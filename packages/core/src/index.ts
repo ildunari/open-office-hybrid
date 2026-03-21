@@ -144,3 +144,4 @@ export type {
 } from "./chat";
 export { ChatInterface, FilesPanel, getChatContext } from "./chat";
 export { default as ErrorBoundary } from "./chat/error-boundary.svelte";
+export { setBridgeController } from "./chat/bridge-ui-events.js";

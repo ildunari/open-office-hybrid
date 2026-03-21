@@ -5,6 +5,7 @@
     ErrorBoundary,
     readFile,
     readFileBuffer,
+    setBridgeController,
     snapshotVfs,
     writeFile,
   } from "@office-agents/core";
@@ -34,7 +35,11 @@
           deleteFile,
         },
       });
-      stopBridge = () => bridge.stop();
+      setBridgeController(bridge);
+      stopBridge = () => {
+        setBridgeController(null);
+        bridge.stop();
+      };
     });
 
     return () => {
