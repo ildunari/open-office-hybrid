@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { emitBridgeUIEvent } from "./bridge-ui-events.js";
 
   interface Props {
     children?: Snippet;
@@ -12,6 +13,11 @@
     errorMessage =
       error instanceof Error ? error.message : "Something went wrong";
     console.error("[UI] Unhandled render error:", error);
+    emitBridgeUIEvent("error:ui_boundary", {
+      source: "error-boundary",
+      errorClass: "ui_render",
+      message: errorMessage,
+    });
   }
 </script>
 

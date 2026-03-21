@@ -38,6 +38,8 @@ interface PendingRequest {
   timeout: ReturnType<typeof setTimeout>;
 }
 
+type SseListener = (event: BridgeStoredEvent) => void;
+
 export interface BridgeSessionRecord {
   snapshot: BridgeSessionSnapshot;
   connectedAt: number;
@@ -49,6 +51,7 @@ export interface BridgeSessionRecord {
 interface SessionState extends BridgeSessionRecord {
   socket: WebSocket;
   pending: Map<string, PendingRequest>;
+  sseListeners: Set<SseListener>;
 }
 
 export interface BridgeServerOptions {
@@ -152,14 +155,22 @@ function addStoredEvent(
   event: string,
   payload?: unknown,
 ) {
-  session.recentEvents.push({
+  const storedEvent: BridgeStoredEvent = {
     id: createBridgeId("event"),
     event,
     ts: Date.now(),
     payload: serializeForJson(payload),
-  });
+  };
+  session.recentEvents.push(storedEvent);
   if (session.recentEvents.length > eventLimit) {
     session.recentEvents.splice(0, session.recentEvents.length - eventLimit);
+  }
+  for (const listener of session.sseListeners) {
+    try {
+      listener(storedEvent);
+    } catch {
+      // Ignore listener errors.
+    }
   }
 }
 
@@ -274,6 +285,86 @@ export async function createBridgeServer(
           jsonResponse(res, 200, {
             ok: true,
             events: session.recentEvents.slice(-Math.max(1, limit)),
+          });
+          return;
+        }
+
+        const sseMatch = routeMatch(
+          pathname,
+          /^\/sessions\/([^/]+)\/events\/stream$/,
+        );
+        if (req.method === "GET" && sseMatch) {
+          const sessionId = decodeURIComponent(sseMatch[1]);
+          const session = sessions.get(sessionId);
+          if (!session) {
+            jsonResponse(res, 404, {
+              ok: false,
+              error: { message: `Unknown session: ${sessionId}` },
+            });
+            return;
+          }
+
+          const eventsFilter = url.searchParams.get("events");
+          const allowedTypes = eventsFilter
+            ? new Set(eventsFilter.split(",").map((t) => t.trim()))
+            : null;
+
+          res.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+          });
+
+          const listener: SseListener = (event) => {
+            if (allowedTypes && !allowedTypes.has(event.event)) return;
+            res.write(`data: ${JSON.stringify(event)}\n\n`);
+          };
+
+          session.sseListeners.add(listener);
+
+          req.on("close", () => {
+            session.sseListeners.delete(listener);
+          });
+          return;
+        }
+
+        const diffMatch = routeMatch(pathname, /^\/sessions\/([^/]+)\/diff$/);
+        if (req.method === "POST" && diffMatch) {
+          const sessionId = decodeURIComponent(diffMatch[1]);
+          const session = sessions.get(sessionId);
+          if (!session) {
+            jsonResponse(res, 404, {
+              ok: false,
+              error: { message: `Unknown session: ${sessionId}` },
+            });
+            return;
+          }
+          const body = (await readJsonBody(req)) as
+            | { since?: number }
+            | undefined;
+          const since = body?.since ?? 0;
+          const now = Date.now();
+          const newEvents = session.recentEvents.filter((e) => e.ts > since);
+
+          const runtimeStateDiff: Record<string, unknown> = {};
+          const rs = session.snapshot.runtimeState;
+          if (rs) {
+            for (const [key, value] of Object.entries(rs)) {
+              if (value !== null && value !== undefined) {
+                runtimeStateDiff[key] = value;
+              }
+            }
+          }
+
+          jsonResponse(res, 200, {
+            ok: true,
+            newEvents,
+            changed: newEvents.length > 0,
+            runtimeStateDiff,
+            newEventCount: newEvents.length,
+            since,
+            now,
           });
           return;
         }
@@ -569,6 +660,7 @@ export async function createBridgeServer(
           recentEvents: [],
           pending: new Map(),
           pendingCount: 0,
+          sseListeners: new Set(),
         };
 
         addStoredEvent(next, eventLimit, "bridge_connected", {

@@ -36,6 +36,7 @@ export interface BridgeSessionSnapshot {
   documentMetadata?: unknown;
   tools: BridgeToolDefinition[];
   host: BridgeHostInfo;
+  runtimeState?: BridgeRuntimeStateSlice;
   connectedAt: number;
   updatedAt: number;
 }
@@ -104,6 +105,193 @@ export interface BridgeStoredEvent {
   event: string;
   ts: number;
   payload?: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Typed event registry — discriminated payloads by event name
+// ---------------------------------------------------------------------------
+
+export type BridgeErrorClass =
+  | "office_js"
+  | "tool_execution"
+  | "network"
+  | "timeout"
+  | "rate_limit"
+  | "llm_api"
+  | "ui_render"
+  | "internal"
+  | "unknown";
+
+export interface BridgeEventPayloads {
+  // Message lifecycle
+  "message:created": { messageId: string; role: string };
+  "message:streaming": { messageId: string; tokenCount?: number };
+  "message:completed": {
+    messageId: string;
+    role: string;
+    tokenCount?: number;
+    durationMs?: number;
+  };
+
+  // Tool lifecycle
+  "tool:queued": { toolCallId: string; toolName: string };
+  "tool:started": { toolCallId: string; toolName: string };
+  "tool:completed": {
+    toolCallId: string;
+    toolName: string;
+    durationMs?: number;
+    truncated?: boolean;
+  };
+  "tool:failed": {
+    toolCallId: string;
+    toolName: string;
+    error: string;
+    durationMs?: number;
+  };
+
+  // Plan lifecycle
+  "plan:created": { planId: string; stepCount: number; mode: string };
+  "plan:step_started": {
+    planId: string;
+    stepId: string;
+    stepIndex: number;
+    kind: string;
+  };
+  "plan:step_completed": {
+    planId: string;
+    stepId: string;
+    status: string;
+    durationMs?: number;
+  };
+  "plan:completed": { planId: string; status: string; durationMs?: number };
+
+  // State transitions
+  "state:mode_changed": { from: string; to: string; reason?: string };
+  "state:phase_changed": { from: string; to: string; reason?: string };
+
+  // Approval flow
+  "approval:requested": { actionClass: string; scopes: string[] };
+  "approval:granted": { actionClass: string };
+  "approval:denied": { actionClass: string; reason?: string };
+
+  // Context budget
+  "context:budget_update": { usagePct: number; action: string };
+  "context:compacted": { artifactCount: number; threadId?: string };
+
+  // Errors
+  "error:tool": {
+    source: string;
+    errorClass: BridgeErrorClass;
+    message: string;
+    stack?: string;
+  };
+  "error:runtime": {
+    source: string;
+    errorClass: BridgeErrorClass;
+    message: string;
+    stack?: string;
+    recoveryAction?: string;
+  };
+  "error:office_js": {
+    source: string;
+    errorClass: "office_js";
+    message: string;
+    stack?: string;
+  };
+  "error:ui_boundary": {
+    source: string;
+    errorClass: "ui_render";
+    message: string;
+    stack?: string;
+  };
+  "error:recovered": {
+    source: string;
+    errorClass: BridgeErrorClass;
+    message: string;
+    recoveryAction: string;
+  };
+
+  // UI events (emitted from frontend components)
+  "ui:tab_changed": { tab: string };
+  "ui:theme_changed": { theme: string };
+  "ui:panel_toggled": { panel: string; visible: boolean };
+  "ui:scroll_position": { atBottom: boolean; scrollPct: number };
+  "ui:approval_shown": { actionClass: string };
+  "ui:approval_responded": { actionClass: string; approved: boolean };
+  "ui:session_switched": { fromSessionId?: string; toSessionId: string };
+  "ui:resize": { target: string; height: number };
+
+  // Session lifecycle
+  "session:hmr_reload": { previousSessionId?: string };
+  "session:reconnected": { previousSessionId?: string };
+
+  // Existing untyped events (backward compat — payload stays unknown)
+  bridge_connected: Record<string, unknown>;
+  bridge_status: Record<string, unknown>;
+  bridge_error: Record<string, unknown>;
+  bridge_warning: Record<string, unknown>;
+  session_updated: Record<string, unknown>;
+  tool_executed: Record<string, unknown>;
+  console: Record<string, unknown>;
+  window_error: Record<string, unknown>;
+  unhandled_rejection: Record<string, unknown>;
+  unsafe_office_js_executed: Record<string, unknown>;
+  vfs_listed: Record<string, unknown>;
+  vfs_read: Record<string, unknown>;
+  vfs_written: Record<string, unknown>;
+  vfs_deleted: Record<string, unknown>;
+}
+
+export type BridgeEventName = keyof BridgeEventPayloads;
+
+export interface BridgeTypedEvent<K extends BridgeEventName = BridgeEventName> {
+  type: "event";
+  event: K;
+  ts: number;
+  payload: BridgeEventPayloads[K];
+}
+
+// ---------------------------------------------------------------------------
+// Runtime state slice — curated subset of RuntimeState for bridge snapshots
+// ---------------------------------------------------------------------------
+
+export interface BridgeRuntimeStateSlice {
+  mode: string;
+  taskPhase: string;
+  isStreaming: boolean;
+  permissionMode: string;
+  waitingState: string | null;
+  activePlanSummary: {
+    id: string;
+    status: string;
+    stepCount: number;
+    activeStepIndex: number;
+  } | null;
+  activeTaskSummary: {
+    id: string;
+    status: string;
+    mode: string;
+  } | null;
+  contextBudget: { usagePct: number; action: string };
+  lastVerification: { status: string } | null;
+  sessionStats: {
+    inputTokens: number;
+    outputTokens: number;
+    totalCost: number;
+    messageCount: number;
+  };
+  error: string | null;
+  threadCount: number;
+  activeThreadId: string | null;
+  degradedGuardrails: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Classified bridge error (extends BridgeError with error class)
+// ---------------------------------------------------------------------------
+
+export interface BridgeClassifiedError extends BridgeError {
+  errorClass: BridgeErrorClass;
 }
 
 export interface BridgeInvokeRequest {
@@ -282,6 +470,21 @@ export function toBridgeError(error: unknown): BridgeError {
   return {
     message: typeof error === "string" ? error : "Unknown bridge error",
   };
+}
+
+export function toBridgeClassifiedError(
+  error: unknown,
+  errorClass: BridgeErrorClass = "unknown",
+): BridgeClassifiedError {
+  const base = toBridgeError(error);
+  return { ...base, errorClass };
+}
+
+export function createBridgeEvent<K extends BridgeEventName>(
+  event: K,
+  payload: BridgeEventPayloads[K],
+): BridgeTypedEvent<K> {
+  return { type: "event", event, ts: Date.now(), payload };
 }
 
 export function isBridgeHelloMessage(
