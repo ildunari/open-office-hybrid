@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 BRIDGE_URL="${BRIDGE_URL:-https://localhost:4017}"
 SESSION=""
 BASELINE_DIR="./baselines"
 SEQUENCE_FILE=""
+REQUIRE_HYBRID=false
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") <tool-sequence.json> [session] [--baseline-dir DIR] [--help]
+Usage: $(basename "$0") <tool-sequence.json> [session] [--baseline-dir DIR] [--bridge-url URL] [--hybrid-word] [--help]
 Run tool calls from a JSON file and compare outputs to baselines.
   tool-sequence.json: [{"tool":"name","args":{},"expectContains":"..."}]
   --baseline-dir DIR  Baseline directory (default: ./baselines)
+  --bridge-url URL    Bridge URL (default: https://localhost:4017)
+  --hybrid-word       Require OpenWord Hybrid and use https://localhost:4018 by default
   BRIDGE_URL env      Bridge URL (default: https://localhost:4017)
   Exit: 0=pass, N=failures (max 125), 2=usage error
 EOF
@@ -21,6 +26,8 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --baseline-dir) BASELINE_DIR="$2"; shift 2 ;;
+    --bridge-url) BRIDGE_URL="$2"; shift 2 ;;
+    --hybrid-word) REQUIRE_HYBRID=true; shift ;;
     --help) usage 0 ;;
     --*) echo "Unknown option: $1" >&2; usage 2 ;;
     *)
@@ -32,11 +39,24 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$REQUIRE_HYBRID" == "true" && "$BRIDGE_URL" == "https://localhost:4017" ]]; then
+  BRIDGE_URL="https://localhost:4018"
+fi
+
 [[ -z "$SEQUENCE_FILE" ]] && { echo "Error: tool-sequence.json required" >&2; usage 2; }
 command -v jq >/dev/null 2>&1 || { echo "Error: jq is required" >&2; exit 1; }
 [[ -f "$SEQUENCE_FILE" ]] || { echo "Error: File not found: $SEQUENCE_FILE" >&2; exit 1; }
 
 mkdir -p "$BASELINE_DIR"
+
+WAIT_ARGS=(--app word --timeout 10000 --bridge-url "$BRIDGE_URL")
+if [[ -n "$SESSION" ]]; then
+  WAIT_ARGS=("$SESSION" "${WAIT_ARGS[@]}")
+fi
+if [[ "$REQUIRE_HYBRID" == "true" ]]; then
+  WAIT_ARGS=(--hybrid-word "${WAIT_ARGS[@]}")
+fi
+"${SCRIPT_DIR}/wait-and-check.sh" "${WAIT_ARGS[@]}" >/dev/null
 
 BRIDGE_ARGS=(--url "$BRIDGE_URL")
 SESSION_ARGS=("${BRIDGE_ARGS[@]}")

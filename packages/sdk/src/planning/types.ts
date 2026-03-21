@@ -149,6 +149,7 @@ export interface TaskRecord {
   constraints?: string[];
   expectedEffects?: string[];
   approvalPending?: boolean;
+  approvalRequest?: import("../verification").ApprovalRequest;
   verificationSummary?: {
     status: "pending" | "passed" | "failed" | "retryable" | "skipped";
     failedVerifierIds?: string[];

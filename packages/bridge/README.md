@@ -150,6 +150,22 @@ Automation scripts in `scripts/bridge/`:
 | `smoke-test.sh` | Full integration smoke test (5 checks) |
 | `regression-loop.sh` | Run tool sequence from JSON, compare to baselines |
 | `event-monitor.sh` | Long-running event poller with JSONL log output |
+| `focus-word-pane.sh` | Use macOS accessibility to click/focus the OpenWord Hybrid side panel |
+
+`focus-word-pane.sh` is a helper only. The main live-testing method remains the
+bridge workflow: verify the live session, inspect `summary` / `state` / `diag`,
+run tools, capture events, and save screenshots/artifacts. Use the pane-focus
+helper only when the taskpane needs to be surfaced or the input needs focus
+before running the standard bridge-based checks.
+
+For Hybrid Word runs on the alternate bridge:
+
+```bash
+BRIDGE_URL=https://localhost:4018 scripts/bridge/wait-and-check.sh --hybrid-word
+scripts/bridge/focus-word-pane.sh --target body
+scripts/bridge/focus-word-pane.sh --target input
+scripts/bridge/smoke-test.sh --hybrid-word --scenario review-heavy --fixture comments.docx
+```
 
 See [AGENT-API.md](./AGENT-API.md) for the full machine-readable API reference.
 

@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "liveSubset": [
+    "comments.docx",
+    "Headers.docx",
+    "having-images.docx",
+    "strict-format.docx"
+  ],
+  "scenarios": [
+    {
+      "file": "comments.docx",
+      "stressArea": "review-heavy",
+      "headlessOwners": ["sdk", "word", "core"],
+      "liveRole": "review-heavy",
+      "request": "Review the comments in comments.docx, summarize open issues, and preserve tracked review context."
+    },
+    {
+      "file": "footnotes.docx",
+      "stressArea": "structure-heavy",
+      "headlessOwners": ["sdk", "word"],
+      "liveRole": "structure-heavy",
+      "request": "Inspect footnotes.docx, explain the document structure, and verify footnote references stay intact."
+    },
+    {
+      "file": "tables.docx",
+      "stressArea": "structure-heavy",
+      "headlessOwners": ["word", "core"],
+      "liveRole": "structure-heavy",
+      "request": "Inspect tables.docx, map the table structure, and verify scoped edits would target the correct table region."
+    },
+    {
+      "file": "text-box.docx",
+      "stressArea": "structure-heavy",
+      "headlessOwners": ["word", "core"],
+      "liveRole": "structure-heavy",
+      "request": "Inspect text-box.docx and verify that non-body text content is surfaced clearly in diagnostics."
+    },
+    {
+      "file": "strict-format.docx",
+      "stressArea": "formatting-heavy",
+      "headlessOwners": ["sdk", "word"],
+      "liveRole": "formatting-heavy",
+      "request": "Rewrite content in strict-format.docx while preserving formatting exactly and rereading after the change."
+    },
+    {
+      "file": "simple-list.docx",
+      "stressArea": "formatting-heavy",
+      "headlessOwners": ["sdk", "word"],
+      "liveRole": "formatting-heavy",
+      "request": "Rewrite the list content in simple-list.docx while preserving numbering and indentation."
+    },
+    {
+      "file": "having-images.docx",
+      "stressArea": "media-heavy",
+      "headlessOwners": ["word", "core", "bridge"],
+      "liveRole": "media-heavy",
+      "request": "Inspect having-images.docx, compare structure to screenshots, and verify image-heavy content does not confuse the UI."
+    },
+    {
+      "file": "blk-inner-content.docx",
+      "stressArea": "structure-heavy",
+      "headlessOwners": ["word", "core"],
+      "liveRole": "structure-heavy",
+      "request": "Inspect blk-inner-content.docx and verify nested block content is represented accurately in structure tools."
+    },
+    {
+      "file": "Headers.docx",
+      "stressArea": "structure-heavy",
+      "headlessOwners": ["sdk", "word", "bridge"],
+      "liveRole": "structure-heavy",
+      "request": "Inspect Headers.docx, verify header-linked structure handling, and ensure rereads include header-sensitive context."
+    },
+    {
+      "file": "toc.docx",
+      "stressArea": "structure-heavy",
+      "headlessOwners": ["word", "core", "bridge"],
+      "liveRole": "structure-heavy",
+      "request": "Inspect toc.docx, verify table-of-contents structure handling, and keep navigation-related content stable."
+    }
+  ]
+}

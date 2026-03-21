@@ -3,6 +3,7 @@ export {
   type OfficeBridgeController,
   startOfficeBridge,
 } from "./client.js";
+export { DOM_QUERIES } from "./dom-queries.js";
 export {
   BRIDGE_PROTOCOL_VERSION,
   type BridgeApp,
@@ -50,4 +51,3 @@ export {
   toBridgeError,
   uint8ArrayToBase64,
 } from "./protocol.js";
-export { DOM_QUERIES } from "./dom-queries.js";

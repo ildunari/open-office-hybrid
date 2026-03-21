@@ -1408,6 +1408,19 @@ export class AgentRuntime {
         expectedEffects: riskEstimate.expectedEffects,
         mode: classification.needsPlan ? "plan" : "discuss",
         approvalPending: riskEstimate.requiresApproval && !permissionBlocked,
+        approvalRequest:
+          riskEstimate.requiresApproval && !permissionBlocked
+            ? {
+                level: riskEstimate.level,
+                destructive: riskEstimate.destructive,
+                reason: riskEstimate.reasons.join("; "),
+                requestedAt: Date.now(),
+                uiMessage:
+                  this.state.permissionMode === "read_only"
+                    ? "This request is paused because permission mode is read-only."
+                    : "Approve the plan to allow document mutation.",
+              }
+            : null,
       });
       this.patternRegistry.deactivateAll();
       this.patternRegistry.activateMatching(
@@ -1422,6 +1435,8 @@ export class AgentRuntime {
           ? ["No verification suites configured for this adapter."]
           : [];
 
+      const approvalRequest = activeTask.approvalRequest ?? null;
+
       this.update({
         mode: riskEstimate.requiresApproval
           ? permissionBlocked
@@ -1430,19 +1445,7 @@ export class AgentRuntime {
           : classification.needsPlan
             ? "plan"
             : "discuss",
-        approvalRequest:
-          riskEstimate.requiresApproval && !permissionBlocked
-            ? {
-                level: riskEstimate.level,
-                destructive: riskEstimate.destructive,
-                reason: riskEstimate.reasons.join("; "),
-                requestedAt: Date.now(),
-                uiMessage:
-                  this.state.permissionMode === "read_only"
-                    ? "This request is paused because permission mode is read-only."
-                    : "Approve the plan to allow document mutation.",
-              }
-            : null,
+        approvalRequest,
         handoff: null,
         lastVerification: null,
         degradedGuardrails,
@@ -1544,6 +1547,7 @@ export class AgentRuntime {
     if (!this.state.activeTask || !this.agent) return;
     if (this.state.capabilityBoundary.mode === "read_only") return;
     this.taskTracker.setApprovalPending(false);
+    this.taskTracker.setApprovalRequest(null);
     this.taskTracker.setMode("execute");
     this.taskTracker.setHandoff(null);
     this.appendPolicyTrace({
@@ -1576,6 +1580,7 @@ export class AgentRuntime {
     this.taskTracker.setMode("execute");
     this.taskTracker.setHandoff(null);
     this.taskTracker.setApprovalPending(false);
+    this.taskTracker.setApprovalRequest(null);
     this.appendPolicyTrace({
       event: "task_resumed",
       outcome: "allowed",
@@ -1742,15 +1747,9 @@ export class AgentRuntime {
         },
         uploads: uploadNames.map((name) => ({ name, size: 0 })),
         mode: activeTask?.mode ?? (activePlan ? "plan" : "discuss"),
-        approvalRequest:
-          activeTask?.approvalPending && activeTask.handoff
-            ? {
-                level: activePlan?.classification.risk ?? "medium",
-                destructive: true,
-                reason: activeTask.handoff.nextRecommendedAction,
-                requestedAt: activeTask.handoff.updatedAt,
-              }
-            : null,
+        approvalRequest: activeTask?.approvalPending
+          ? (activeTask.approvalRequest ?? null)
+          : null,
         handoff: activeTask?.handoff ?? null,
         lastVerification: null,
         degradedGuardrails: [],
@@ -1821,15 +1820,9 @@ export class AgentRuntime {
       },
       uploads: uploadNames.map((name) => ({ name, size: 0 })),
       mode: activeTask?.mode ?? (activePlan ? "plan" : "discuss"),
-      approvalRequest:
-        activeTask?.approvalPending && activeTask.handoff
-          ? {
-              level: activePlan?.classification.risk ?? "medium",
-              destructive: true,
-              reason: activeTask.handoff.nextRecommendedAction,
-              requestedAt: activeTask.handoff.updatedAt,
-            }
-          : null,
+      approvalRequest: activeTask?.approvalPending
+        ? (activeTask.approvalRequest ?? null)
+        : null,
       handoff: activeTask?.handoff ?? null,
       lastVerification: null,
       degradedGuardrails: [],
@@ -2004,15 +1997,9 @@ export class AgentRuntime {
         },
         uploads: uploadNames.map((name) => ({ name, size: 0 })),
         mode: activeTask?.mode ?? (activePlan ? "plan" : "discuss"),
-        approvalRequest:
-          activeTask?.approvalPending && activeTask.handoff
-            ? {
-                level: activePlan?.classification.risk ?? "medium",
-                destructive: true,
-                reason: activeTask.handoff.nextRecommendedAction,
-                requestedAt: activeTask.handoff.updatedAt,
-              }
-            : null,
+        approvalRequest: activeTask?.approvalPending
+          ? (activeTask.approvalRequest ?? null)
+          : null,
         handoff: activeTask?.handoff ?? null,
         lastVerification: null,
         degradedGuardrails: [],
@@ -2372,6 +2359,14 @@ export class AgentRuntime {
       );
     }
 
+    const freshHookNotes = this.hookRegistry
+      .drainPromptNotes()
+      .map((note) => note.text);
+    const promptNotes = [...this.state.lastPromptNotes, ...freshHookNotes];
+    if (freshHookNotes.length > 0) {
+      this.update({ lastPromptNotes: promptNotes });
+    }
+
     const verification = await this.verificationEngine.run({
       app:
         this.adapter.hostApp === "word" ||
@@ -2392,7 +2387,7 @@ export class AgentRuntime {
         toolExecutions: compacted.kept,
       },
       toolExecutions: compacted.kept,
-      promptNotes: this.state.lastPromptNotes,
+      promptNotes,
     });
 
     this.taskTracker.setVerificationResults(

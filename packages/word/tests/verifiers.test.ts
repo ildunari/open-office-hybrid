@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildWordHandoffSummary,
@@ -5,6 +8,23 @@ import {
   estimateWordScopeRisk,
   getWordVerificationSuites,
 } from "../src/lib/verifiers";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const corpusScenarios = JSON.parse(
+  readFileSync(
+    path.join(
+      __dirname,
+      "../../sdk/tests/fixtures/docx-corpus/docx-corpus.scenarios.json",
+    ),
+    "utf8",
+  ),
+) as {
+  scenarios: Array<{
+    file: string;
+    stressArea: string;
+    request: string;
+  }>;
+};
 
 describe("word verifier helpers", () => {
   it("detects revision-sensitive requests", () => {
@@ -69,7 +89,7 @@ describe("word verifier helpers", () => {
       }),
     ).toEqual(
       expect.objectContaining({
-        status: "passed",
+        status: "retryable",
       }),
     );
 
@@ -87,5 +107,95 @@ describe("word verifier helpers", () => {
         status: "retryable",
       }),
     );
+  });
+
+  it("exports the paragraph OOXML read tool for Word safety flows", () => {
+    const source = readFileSync(
+      path.join(__dirname, "../src/lib/tools/index.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain('from "./get-paragraph-ooxml"');
+    expect(source).toContain("getParagraphOoxmlTool");
+  });
+
+  it("requires revision-safe evidence instead of passing on the absence of write errors alone", async () => {
+    const suites = getWordVerificationSuites();
+    const revisionSuite = suites.find((suite) => suite.id === "word:revision-safe");
+
+    expect(
+      await revisionSuite?.verify({
+        mode: "verify",
+        request: "Redline this contract and preserve tracked changes.",
+        plan: null,
+        task: null,
+        toolExecutions: [
+          {
+            toolCallId: "tc-1",
+            toolName: "execute_office_js",
+            isError: false,
+            resultText: "ok",
+            timestamp: 1,
+          },
+        ],
+        promptNotes: [],
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        status: "retryable",
+      }),
+    );
+  });
+
+  it("binds corpus-derived review and formatting scenarios to the stricter verifier expectations", async () => {
+    const suites = getWordVerificationSuites();
+    const revisionSuite = suites.find((suite) => suite.id === "word:revision-safe");
+    const formatSuite = suites.find((suite) => suite.id === "word:format-preserved");
+    const commentsScenario = corpusScenarios.scenarios.find(
+      (scenario) => scenario.file === "comments.docx",
+    );
+    const formatScenario = corpusScenarios.scenarios.find(
+      (scenario) => scenario.file === "strict-format.docx",
+    );
+
+    expect(
+      await revisionSuite?.verify({
+        mode: "verify",
+        request: commentsScenario?.request ?? "Review comments.docx safely.",
+        plan: null,
+        task: null,
+        toolExecutions: [
+          {
+            toolCallId: "tc-comments",
+            toolName: "execute_office_js",
+            isError: false,
+            resultText: "ok",
+            timestamp: 1,
+          },
+        ],
+        promptNotes: [],
+      }),
+    ).toEqual(expect.objectContaining({ status: "retryable" }));
+
+    expect(
+      await formatSuite?.verify({
+        mode: "verify",
+        request:
+          formatScenario?.request ??
+          "Rewrite strict-format.docx while preserving formatting exactly.",
+        plan: null,
+        task: null,
+        toolExecutions: [
+          {
+            toolCallId: "tc-format",
+            toolName: "execute_office_js",
+            isError: false,
+            resultText: "ok",
+            timestamp: 1,
+          },
+        ],
+        promptNotes: [],
+      }),
+    ).toEqual(expect.objectContaining({ status: "retryable" }));
   });
 });

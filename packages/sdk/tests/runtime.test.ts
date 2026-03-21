@@ -1,10 +1,13 @@
 import "fake-indexeddb/auto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentRuntime,
   type RuntimeAdapter,
   type RuntimeState,
 } from "../src/runtime";
+import { inferTaskClassification } from "../src/planning";
 import { configureNamespace } from "../src/storage/namespace";
 import { resetVfs, setStaticFiles } from "../src/vfs";
 
@@ -50,6 +53,122 @@ function createAdapter(
     ...overrides,
   };
 }
+
+function createPlan(
+  overrides: Partial<{
+    id: string;
+    userRequest: string;
+    summary: string;
+    approvalRequired: boolean;
+    classification: ReturnType<typeof inferTaskClassification>;
+  }> = {},
+) {
+  return {
+    id: overrides.id ?? "plan-test",
+    userRequest: overrides.userRequest ?? "Rewrite the introduction",
+    summary: overrides.summary ?? "Plan summary",
+    mode: "auto" as const,
+    status: "active" as const,
+    requirements: [],
+    strategy: [],
+    executionUnits: [],
+    verification: [],
+    milestones: [],
+    approvalRequired: overrides.approvalRequired ?? true,
+    expectedEffects: [],
+    steps: [],
+    createdAt: 1,
+    updatedAt: 1,
+    classification:
+      overrides.classification ??
+      inferTaskClassification("Rewrite the introduction"),
+    revisionNotes: [],
+  };
+}
+
+function runtimeInternals(runtime: AgentRuntime) {
+  return runtime as unknown as {
+    taskClassifier: { classify: (message: string) => Promise<unknown> };
+    estimateScopeRisk: (message: string, classification: unknown) => Promise<{
+      level: "none" | "low" | "medium" | "high";
+      destructive: boolean;
+      requiresApproval: boolean;
+      reasons: string[];
+      scopeSummary?: string;
+      constraints?: string[];
+      expectedEffects?: string[];
+    }>;
+    applyApprovalPolicy: (
+      message: string,
+      classification: { risk: "none" | "low" | "medium" | "high" },
+      riskEstimate: {
+        level: "none" | "low" | "medium" | "high";
+        destructive: boolean;
+        requiresApproval: boolean;
+        reasons: string[];
+      },
+    ) => {
+      level: "none" | "low" | "medium" | "high";
+      destructive: boolean;
+      requiresApproval: boolean;
+      reasons: string[];
+    };
+    isCapabilityBoundaryBlocked: (
+      message: string,
+      classification: { risk: "none" | "low" | "medium" | "high" },
+      riskEstimate: {
+        level: "none" | "low" | "medium" | "high";
+        destructive: boolean;
+        requiresApproval: boolean;
+        reasons: string[];
+      },
+    ) => boolean;
+    taskTracker: {
+      beginTask: (
+        request: string,
+        classification: ReturnType<typeof inferTaskClassification>,
+        options?: Record<string, unknown>,
+      ) => Record<string, unknown>;
+      getCurrentTask: () => Record<string, unknown> | null;
+      recordToolExecution: (execution: {
+        toolCallId: string;
+        toolName: string;
+        isError: boolean;
+        resultText: string;
+        timestamp: number;
+      }) => void;
+      setHandoff: (handoff: Record<string, unknown> | null) => void;
+      persist: (sessionId: string) => Promise<unknown>;
+    };
+    hookRegistry: {
+      addPromptNotes: (
+        notes: Array<{
+          level: "info" | "warning" | "error";
+          text: string;
+          source: { hookName: string };
+        }>,
+      ) => void;
+    };
+    planManager: {
+      hydrate: (plan: ReturnType<typeof createPlan>) => void;
+      persist: (sessionId: string) => Promise<unknown>;
+    };
+    update: (partial: Partial<RuntimeState>) => void;
+  };
+}
+
+const corpusScenarioMap = JSON.parse(
+  readFileSync(
+    path.join(__dirname, "fixtures", "docx-corpus", "docx-corpus.scenarios.json"),
+    "utf8",
+  ),
+) as {
+  scenarios: Array<{
+    file: string;
+    stressArea: string;
+    request: string;
+  }>;
+};
 
 describe("AgentRuntime", () => {
   let dbName: string;
@@ -273,6 +392,89 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("classifies analysis-only requests as non-mutating risk", () => {
+    const classification = inferTaskClassification(
+      "Summarize the current document and list the risky clauses.",
+    );
+
+    expect(classification.risk).toBe("none");
+    expect(classification.needsPlan).toBe(true);
+  });
+
+  it("does not require approval for analysis-only work in confirm_writes mode", () => {
+    const runtime = new AgentRuntime(createAdapter());
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+      permissionMode: "confirm_writes",
+    });
+
+    const classification = inferTaskClassification(
+      "Summarize the current document and list the risky clauses.",
+    );
+    const riskEstimate = (
+      runtime as unknown as {
+        applyApprovalPolicy: (
+          classification: ReturnType<typeof inferTaskClassification>,
+          riskEstimate: {
+            level: "none";
+            destructive: false;
+            requiresApproval: false;
+            reasons: string[];
+          },
+        ) => {
+          requiresApproval: boolean;
+        };
+      }
+    ).applyApprovalPolicy(classification, {
+      level: "none",
+      destructive: false,
+      requiresApproval: false,
+      reasons: ["analysis only"],
+    });
+
+    expect(riskEstimate.requiresApproval).toBe(false);
+    runtime.dispose();
+  });
+
+  it("does not block analysis-only work at the read-only capability boundary", () => {
+    const runtime = new AgentRuntime(createAdapter());
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+      permissionMode: "read_only",
+    });
+
+    const classification = inferTaskClassification(
+      "Summarize the current document and list the risky clauses.",
+    );
+    const blocked = (
+      runtime as unknown as {
+        isCapabilityBoundaryBlocked: (
+          classification: ReturnType<typeof inferTaskClassification>,
+          riskEstimate: { destructive: false },
+        ) => boolean;
+      }
+    ).isCapabilityBoundaryBlocked(classification, {
+      destructive: false,
+    });
+
+    expect(blocked).toBe(false);
+    runtime.dispose();
+  });
+
   it("can fork and compact lightweight task threads", async () => {
     const runtime = new AgentRuntime(createAdapter());
     await runtime.init();
@@ -366,6 +568,189 @@ describe("AgentRuntime", () => {
     expect(runtime.getState().threads[0]?.rootTaskId).toBeNull();
     expect(runtime.getState().threads[0]?.milestoneIds).toEqual([]);
     runtime.dispose();
+  });
+
+  it("preserves approval request details when switching sessions", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+
+    const firstSessionId = runtime.getState().currentSession!.id;
+    const tracker = (
+      runtime as unknown as {
+        taskTracker: {
+          beginTask: (
+            request: string,
+            classification: ReturnType<typeof inferTaskClassification>,
+            options: Record<string, unknown>,
+          ) => unknown;
+          persist: (sessionId: string) => Promise<unknown>;
+        };
+      }
+    ).taskTracker;
+
+    tracker.beginTask(
+      "Rewrite the selected paragraph.",
+      inferTaskClassification("Rewrite the selected paragraph."),
+      {
+        approvalPending: true,
+        approvalRequest: {
+          level: "medium",
+          destructive: false,
+          reason: "Approval required before rewriting content.",
+          requestedAt: 123,
+          uiMessage: "Approve the rewrite.",
+          actionClass: "structural_write",
+          scopes: [{ kind: "paragraph", ref: "3" }],
+        },
+      },
+    );
+    await tracker.persist(firstSessionId);
+
+    await runtime.newSession();
+    const secondSessionId = runtime.getState().currentSession!.id;
+    await runtime.switchSession(firstSessionId);
+
+    const restoredApproval = runtime.getState().approvalRequest;
+    expect(restoredApproval?.reason).toBe(
+      "Approval required before rewriting content.",
+    );
+    expect(restoredApproval?.destructive).toBe(false);
+    expect(restoredApproval?.actionClass).toBe("structural_write");
+    expect(restoredApproval?.scopes).toEqual([{ kind: "paragraph", ref: "3" }]);
+
+    await runtime.switchSession(secondSessionId);
+    runtime.dispose();
+  });
+
+  it("includes fresh hook notes in verification for the current run", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        getVerificationSuites: () => [
+          {
+            id: "note-suite",
+            label: "Note suite",
+            appliesTo: () => true,
+            verify: (context) => ({
+              suiteId: "note-suite",
+              label: "Note suite",
+              expectedEffect: "Hook notes are visible.",
+              observedEffect: context.promptNotes.join(", "),
+              status: context.promptNotes.includes("Fresh hook note")
+                ? "passed"
+                : "retryable",
+              evidence: context.promptNotes,
+              retryable: !context.promptNotes.includes("Fresh hook note"),
+            }),
+          },
+        ],
+      }),
+    );
+    await runtime.init();
+
+    (
+      runtime as unknown as {
+        taskTracker: {
+          beginTask: (
+            request: string,
+            classification: ReturnType<typeof inferTaskClassification>,
+            options?: Record<string, unknown>,
+          ) => unknown;
+          recordToolExecution: (execution: {
+            toolCallId: string;
+            toolName: string;
+            isError: boolean;
+            resultText: string;
+            timestamp: number;
+          }) => void;
+        };
+        hookRegistry: { addPromptNotes: (notes: Array<{ text: string; level: "info"; source: { hookName: string } }>) => void };
+        syncAdapterVerifiers: (adapter: RuntimeAdapter) => void;
+      }
+    ).syncAdapterVerifiers(createAdapter({
+      getVerificationSuites: () => [
+        {
+          id: "note-suite",
+          label: "Note suite",
+          appliesTo: () => true,
+          verify: (context) => ({
+            suiteId: "note-suite",
+            label: "Note suite",
+            expectedEffect: "Hook notes are visible.",
+            observedEffect: context.promptNotes.join(", "),
+            status: context.promptNotes.includes("Fresh hook note")
+              ? "passed"
+              : "retryable",
+            evidence: context.promptNotes,
+            retryable: !context.promptNotes.includes("Fresh hook note"),
+          }),
+        },
+      ],
+    }));
+
+    const internals = runtime as unknown as {
+      taskTracker: {
+        beginTask: (
+          request: string,
+          classification: ReturnType<typeof inferTaskClassification>,
+          options?: Record<string, unknown>,
+        ) => unknown;
+        recordToolExecution: (execution: {
+          toolCallId: string;
+          toolName: string;
+          isError: boolean;
+          resultText: string;
+          timestamp: number;
+        }) => void;
+      };
+      hookRegistry: {
+        addPromptNotes: (
+          notes: Array<{
+            text: string;
+            level: "info";
+            source: { hookName: string };
+          }>,
+        ) => void;
+      };
+    };
+
+    internals.taskTracker.beginTask(
+      "Rewrite the selected paragraph.",
+      inferTaskClassification("Rewrite the selected paragraph."),
+    );
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tool-1",
+      toolName: "execute_office_js",
+      isError: false,
+      resultText: '{"success":true}',
+      timestamp: Date.now(),
+    });
+    internals.hookRegistry.addPromptNotes([
+      {
+        text: "Fresh hook note",
+        level: "info",
+        source: { hookName: "test-hook" },
+      },
+    ]);
+
+    const verification = await runtime.runVerificationPhase();
+    expect(verification?.status).toBe("passed");
+    expect(runtime.getState().lastPromptNotes).toContain("Fresh hook note");
+    runtime.dispose();
+  });
+
+  it("keeps corpus-derived review, structure, and formatting requests out of mutation gating when they are analysis-only", () => {
+    const requests = corpusScenarioMap.scenarios
+      .filter((scenario) =>
+        ["review-heavy", "structure-heavy", "formatting-heavy"].includes(
+          scenario.stressArea,
+        ),
+      )
+      .map((scenario) => `Inspect ${scenario.file} and summarize risks without changing the document.`);
+
+    for (const request of requests) {
+      const classification = inferTaskClassification(request);
+      expect(classification.risk).toBe("none");
+    }
   });
 
   it("uploadFiles adds files and updates state", async () => {

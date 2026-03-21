@@ -454,6 +454,24 @@ scripts/bridge/event-monitor.sh word --filter error,tool --log-file events.jsonl
 
 Ctrl+C prints a summary of event types collected.
 
+### focus-word-pane.sh
+
+Use macOS accessibility to click or focus the already-open `OpenWord Hybrid`
+side panel inside Microsoft Word.
+
+```bash
+scripts/bridge/focus-word-pane.sh --target body
+scripts/bridge/focus-word-pane.sh --target header
+scripts/bridge/focus-word-pane.sh --target input
+```
+
+This is useful when the taskpane is open but needs focus before further manual
+or scripted interaction. It is a helper for the main bridge-based validation
+workflow, not a replacement for it. Continue to use `summary`, `state`, `diag`,
+`tool`, `events`, `poll`, and `screenshot` as the primary testing surfaces.
+It currently targets the pane by accessibility bounds and relative offsets, not
+by deep named web controls.
+
 ## Security Note
 
 Authentication and rate limiting are **not yet implemented**. The bridge is designed for local development only and binds to `localhost` by default. Auth and rate limiting are planned for future work (Phase 2, deferred).

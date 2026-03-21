@@ -964,4 +964,92 @@ describe("bridge server state diff endpoint", () => {
     expect(diff.runtimeStateDiff.isStreaming).toBe(true);
     expect(diff.runtimeStateDiff.taskPhase).toBe("executing");
   });
+
+  it("preserves waiting, compaction, and degraded guardrail fields in runtimeStateDiff", async () => {
+    const tls = createTempTlsMaterial();
+    tlsDir = tls.dir;
+    const port = await getFreePort();
+    server = await createBridgeServer({
+      host: "127.0.0.1",
+      port,
+      certPath: tls.certPath,
+      keyPath: tls.keyPath,
+      logger: silentLogger,
+    });
+
+    const runtimeState: BridgeRuntimeStateSlice = {
+      mode: "blocked",
+      taskPhase: "waiting_on_user",
+      isStreaming: false,
+      permissionMode: "confirm_risky",
+      waitingState: "approval",
+      activePlanSummary: {
+        id: "plan-1",
+        status: "in_progress",
+        stepCount: 3,
+        activeStepIndex: 1,
+      },
+      activeTaskSummary: {
+        id: "task-1",
+        status: "blocked",
+        mode: "verify",
+      },
+      contextBudget: { usagePct: 0.88, action: "compact" },
+      lastVerification: { status: "retryable" },
+      sessionStats: {
+        inputTokens: 321,
+        outputTokens: 654,
+        totalCost: 0.02,
+        messageCount: 8,
+      },
+      error: "Verification follow-up required",
+      threadCount: 2,
+      activeThreadId: "thread-2",
+      degradedGuardrails: [
+        "Compacted 2 earlier tool execution records.",
+        "Verification failed after 2 resume attempts; completing with degraded guardrails.",
+      ],
+    };
+
+    socket = await connectClient(server.wsUrl);
+    socket.send(
+      JSON.stringify({
+        type: "hello",
+        role: "office-addin",
+        protocolVersion: 1,
+        snapshot: createSnapshot({ runtimeState }),
+      }),
+    );
+    await waitForParsedMessage(socket);
+
+    const diff = (await requestJson(
+      "POST",
+      `/sessions/${encodeURIComponent("excel:test-session")}/diff`,
+      { since: 0 },
+      { baseUrl: server.httpUrl },
+    )) as {
+      ok: boolean;
+      runtimeStateDiff: BridgeRuntimeStateSlice;
+    };
+
+    expect(diff.ok).toBe(true);
+    expect(diff.runtimeStateDiff.waitingState).toBe("approval");
+    expect(diff.runtimeStateDiff.activePlanSummary).toEqual({
+      id: "plan-1",
+      status: "in_progress",
+      stepCount: 3,
+      activeStepIndex: 1,
+    });
+    expect(diff.runtimeStateDiff.activeTaskSummary).toEqual({
+      id: "task-1",
+      status: "blocked",
+      mode: "verify",
+    });
+    expect(diff.runtimeStateDiff.threadCount).toBe(2);
+    expect(diff.runtimeStateDiff.activeThreadId).toBe("thread-2");
+    expect(diff.runtimeStateDiff.degradedGuardrails).toEqual([
+      "Compacted 2 earlier tool execution records.",
+      "Verification failed after 2 resume attempts; completing with degraded guardrails.",
+    ]);
+  });
 });

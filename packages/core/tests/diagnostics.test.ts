@@ -1,5 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { buildDiagnosticsModel } from "../src/chat/diagnostics";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+const corpusScenarios = JSON.parse(
+  readFileSync(
+    path.join(
+      __dirname,
+      "../../sdk/tests/fixtures/docx-corpus/docx-corpus.scenarios.json",
+    ),
+    "utf8",
+  ),
+) as {
+  scenarios: Array<{
+    file: string;
+    stressArea: string;
+    request: string;
+  }>;
+};
 
 describe("buildDiagnosticsModel", () => {
   it("selects the active thread and sorts diagnostic collections predictably", () => {
@@ -113,5 +131,101 @@ describe("buildDiagnosticsModel", () => {
       "trace-2",
       "trace-1",
     ]);
+  });
+
+  it("trims crowded diagnostics collections to the latest policy trace entries and first completion artifacts", () => {
+    const model = buildDiagnosticsModel({
+      permissionMode: "confirm_risky",
+      capabilityBoundary: {
+        mode: "standard",
+        blockedActionClasses: [],
+        description: "normal",
+      },
+      approvalPolicy: {
+        mode: "confirm_risky",
+        description: "ask on risky work",
+      },
+      instructionSources: [],
+      policyTrace: Array.from({ length: 8 }, (_, index) => ({
+        id: `trace-${index + 1}`,
+        event: "policy_check" as const,
+        outcome: "allowed" as const,
+        reason: `reason-${index + 1}`,
+        capabilityMode: "standard" as const,
+        approvalMode: "confirm_risky" as const,
+        at: index + 1,
+      })),
+      activeHookNames: [],
+      activePatternMetadata: [],
+      activeVerifierIds: [],
+      threads: [],
+      activeThreadId: null,
+      compactionState: null,
+      completionArtifacts: Array.from({ length: 7 }, (_, index) => ({
+        id: `artifact-${index + 1}`,
+        threadId: "thread-1",
+        taskId: `task-${index + 1}`,
+        summary: `artifact-${index + 1}`,
+        verificationStatus: "passed" as const,
+        changedScopes: [],
+        createdAt: index + 1,
+      })),
+      lastVerification: null,
+    });
+
+    expect(model.recentPolicyTrace).toHaveLength(6);
+    expect(model.recentPolicyTrace.map((trace) => trace.id)).toEqual([
+      "trace-8",
+      "trace-7",
+      "trace-6",
+      "trace-5",
+      "trace-4",
+      "trace-3",
+    ]);
+    expect(model.completionArtifacts).toHaveLength(5);
+    expect(model.completionArtifacts.map((artifact) => artifact.id)).toEqual([
+      "artifact-1",
+      "artifact-2",
+      "artifact-3",
+      "artifact-4",
+      "artifact-5",
+    ]);
+  });
+
+  it("handles corpus-derived crowded diagnostics summaries without disturbing selection and ordering", () => {
+    const longSummaries = corpusScenarios.scenarios.map((scenario, index) => ({
+      id: `source-${index + 1}`,
+      kind: "document_memory" as const,
+      label: scenario.file,
+      precedence: index,
+      summary: `${scenario.stressArea}: ${scenario.request}`,
+    }));
+
+    const model = buildDiagnosticsModel({
+      permissionMode: "confirm_risky",
+      capabilityBoundary: {
+        mode: "standard",
+        blockedActionClasses: [],
+        description: "normal",
+      },
+      approvalPolicy: {
+        mode: "confirm_risky",
+        description: "ask on risky work",
+      },
+      instructionSources: longSummaries,
+      policyTrace: [],
+      activeHookNames: [],
+      activePatternMetadata: [],
+      activeVerifierIds: [],
+      threads: [],
+      activeThreadId: null,
+      compactionState: null,
+      completionArtifacts: [],
+      lastVerification: null,
+    });
+
+    expect(model.instructionSources).toHaveLength(corpusScenarios.scenarios.length);
+    expect(model.instructionSources[0]?.label).toBe("comments.docx");
+    expect(model.instructionSources.at(-1)?.label).toBe("toc.docx");
   });
 });

@@ -9,8 +9,13 @@ const HIGH_RISK_RE =
 const MEDIUM_RISK_RE =
   /\b(rewrite|update|modify|revise|change|format|restructure|refactor)\b/i;
 
+const ANALYSIS_RE =
+  /\b(read|summarize|analyse|analyze|check|inspect|review|compare|list|describe|explain|audit|look at)\b/i;
+
 const COMPLEXITY_HINT_RE =
   /\b(and|then|after|before|verify|check|compare|summarize|analyze|plan|multi|entire|whole)\b/gi;
+
+const FILE_REFERENCE_RE = /\b[\w.-]+\.(?:docx|pdf|xlsx|pptx|txt|csv|json)\b/gi;
 
 export interface TaskClassifierOptions {
   classifyFn?: (
@@ -48,9 +53,11 @@ export class TaskClassifier {
 
 export function inferTaskClassification(message: string): TaskClassification {
   const trimmed = message.trim();
-  const complexityHints = trimmed.match(COMPLEXITY_HINT_RE)?.length ?? 0;
-  const highRisk = HIGH_RISK_RE.test(trimmed);
-  const mediumRisk = MEDIUM_RISK_RE.test(trimmed);
+  const normalized = trimmed.replace(FILE_REFERENCE_RE, "document");
+  const complexityHints = normalized.match(COMPLEXITY_HINT_RE)?.length ?? 0;
+  const highRisk = HIGH_RISK_RE.test(normalized);
+  const mediumRisk = MEDIUM_RISK_RE.test(normalized);
+  const analysisOnly = ANALYSIS_RE.test(normalized) && !highRisk && !mediumRisk;
 
   let complexity: TaskClassification["complexity"] = "simple";
   if (complexityHints >= 4) complexity = "complex";
@@ -60,7 +67,9 @@ export function inferTaskClassification(message: string): TaskClassification {
     ? "high"
     : mediumRisk
       ? "medium"
-      : "low";
+      : analysisOnly
+        ? "none"
+        : "low";
 
   const needsPlan =
     complexity === "moderate" ||

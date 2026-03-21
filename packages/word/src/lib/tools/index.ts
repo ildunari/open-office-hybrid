@@ -3,6 +3,7 @@ import { executeOfficeJsTool } from "./execute-office-js";
 import { getDocumentStructureTool } from "./get-document-structure";
 import { getDocumentTextTool } from "./get-document-text";
 import { getOoxmlTool } from "./get-ooxml";
+import { getParagraphOoxmlTool } from "./get-paragraph-ooxml";
 import { screenshotDocumentTool } from "./screenshot-document";
 
 export const WORD_TOOLS = [
@@ -14,6 +15,7 @@ export const WORD_TOOLS = [
   getDocumentTextTool,
   getDocumentStructureTool,
   getOoxmlTool,
+  getParagraphOoxmlTool,
   // Word write tools
   executeOfficeJsTool,
 ];
@@ -25,6 +27,7 @@ export {
   getDocumentStructureTool,
   getDocumentTextTool,
   getOoxmlTool,
+  getParagraphOoxmlTool,
   screenshotDocumentTool,
 };
 

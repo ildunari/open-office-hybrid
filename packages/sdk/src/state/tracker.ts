@@ -1,6 +1,10 @@
 import type { TaskClassification, TaskRecord } from "../planning";
 import { saveTaskRecord, type TaskRecordEntry } from "../storage/db";
-import type { HandoffPacket, VerificationResult } from "../verification/types";
+import type {
+  ApprovalRequest,
+  HandoffPacket,
+  VerificationResult,
+} from "../verification/types";
 import { buildUndoNarrative, type TrackedMutation } from "./undo";
 
 export interface BeginTaskOptions {
@@ -11,6 +15,7 @@ export interface BeginTaskOptions {
   expectedEffects?: string[];
   mode?: TaskRecord["mode"];
   approvalPending?: boolean;
+  approvalRequest?: ApprovalRequest | null;
 }
 
 export class TaskTracker {
@@ -34,6 +39,7 @@ export class TaskTracker {
       constraints: options.constraints ?? [],
       expectedEffects: options.expectedEffects ?? [],
       approvalPending: options.approvalPending ?? false,
+      approvalRequest: options.approvalRequest ?? undefined,
       toolCallIds: [],
       toolExecutions: [],
       createdAt: now,
@@ -97,6 +103,15 @@ export class TaskTracker {
     this.currentTask = {
       ...this.currentTask,
       approvalPending,
+      updatedAt: Date.now(),
+    };
+  }
+
+  setApprovalRequest(approvalRequest: ApprovalRequest | null): void {
+    if (!this.currentTask) return;
+    this.currentTask = {
+      ...this.currentTask,
+      approvalRequest: approvalRequest ?? undefined,
       updatedAt: Date.now(),
     };
   }

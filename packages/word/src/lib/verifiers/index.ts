@@ -10,6 +10,12 @@ const WORD_SCOPE_RE =
 const WORD_FORMAT_RE = /\b(format|style|rewrite|replace|preserve)\b/i;
 const WORD_REVISION_RE =
   /\b(redline|tracked changes|track changes|comment|review)\b/i;
+const WORD_REREAD_TOOL_NAMES = new Set([
+  "get_document_text",
+  "get_document_structure",
+  "get_ooxml",
+  "get_paragraph_ooxml",
+]);
 
 export function detectWordNumericTokens(text: string): string[] {
   return (
@@ -68,6 +74,28 @@ export function buildWordHandoffSummary(task: TaskRecord): string {
   return `Resume Word task for ${task.scopeSummary ?? "document scope"}. ${task.userRequest}.${numericNote}`;
 }
 
+function hasTool(
+  toolExecutions: NonNullable<TaskRecord["toolExecutions"]>,
+  toolName: string,
+): boolean {
+  return toolExecutions.some((execution) => execution.toolName === toolName);
+}
+
+function hasPostWriteReread(
+  toolExecutions: NonNullable<TaskRecord["toolExecutions"]>,
+): boolean {
+  const writeExecution = toolExecutions.find(
+    (execution) =>
+      execution.toolName === "execute_office_js" && !execution.isError,
+  );
+  if (!writeExecution) return false;
+  return toolExecutions.some(
+    (execution) =>
+      execution.timestamp >= writeExecution.timestamp &&
+      WORD_REREAD_TOOL_NAMES.has(execution.toolName),
+  );
+}
+
 export function getWordVerificationSuites(): VerificationSuite[] {
   return [
     {
@@ -75,19 +103,23 @@ export function getWordVerificationSuites(): VerificationSuite[] {
       label: "Formatting preserved",
       appliesTo: (context) => WORD_FORMAT_RE.test(context.request),
       verify: (context) => {
-        const hadWrite = context.toolExecutions.some(
-          (execution) => execution.toolName === "execute_office_js",
-        );
+        const hadWrite = hasTool(context.toolExecutions, "execute_office_js");
+        const hadPostWriteReread = hasPostWriteReread(context.toolExecutions);
         return {
           suiteId: "word:format-preserved",
           label: "Formatting preserved",
           expectedEffect: "Formatting stays consistent after the edit.",
-          observedEffect: hadWrite
-            ? "Word write executed; no explicit formatting mismatch detected."
-            : "No Word write detected to verify.",
-          status: hadWrite ? "passed" : "retryable",
-          evidence: context.promptNotes,
-          retryable: !hadWrite,
+          observedEffect: !hadWrite
+            ? "No Word write detected to verify."
+            : hadPostWriteReread
+              ? "Word write was followed by a reread of nearby document state."
+              : "Word write executed without a reread of the affected document state.",
+          status: hadWrite && hadPostWriteReread ? "passed" : "retryable",
+          evidence: [
+            ...context.toolExecutions.map((execution) => execution.toolName),
+            ...context.promptNotes,
+          ],
+          retryable: !(hadWrite && hadPostWriteReread),
         };
       },
     },
@@ -95,19 +127,39 @@ export function getWordVerificationSuites(): VerificationSuite[] {
       id: "word:revision-safe",
       label: "Revision-safe edit",
       appliesTo: (context) => detectRevisionSensitiveRequest(context.request),
-      verify: (context) => ({
-        suiteId: "word:revision-safe",
-        label: "Revision-safe edit",
-        expectedEffect: "Tracked changes / revision-safe flow preserved.",
-        observedEffect: context.toolExecutions.some((entry) => entry.isError)
-          ? "Write error detected during revision-sensitive flow."
-          : "No write errors detected during revision-sensitive flow.",
-        status: context.toolExecutions.some((entry) => entry.isError)
-          ? "failed"
-          : "passed",
-        evidence: context.toolExecutions.map((entry) => entry.toolName),
-        retryable: false,
-      }),
+      verify: (context) => {
+        const hadWrite = hasTool(context.toolExecutions, "execute_office_js");
+        const hadWriteError = context.toolExecutions.some(
+          (entry) => entry.isError,
+        );
+        const hadPostWriteReread = hasPostWriteReread(context.toolExecutions);
+        const hadRevisionPromptNote = context.promptNotes.some((note) =>
+          /revision layer|tracked changes|revision-safe/i.test(note),
+        );
+
+        return {
+          suiteId: "word:revision-safe",
+          label: "Revision-safe edit",
+          expectedEffect: "Tracked changes / revision-safe flow preserved.",
+          observedEffect: hadWriteError
+            ? "Write error detected during revision-sensitive flow."
+            : !hadWrite
+              ? "No Word write detected for the revision-sensitive request."
+              : hadPostWriteReread && hadRevisionPromptNote
+                ? "Revision-sensitive write was followed by a reread with revision guidance present."
+                : "Revision-sensitive write lacked either a reread or explicit revision guidance.",
+          status: hadWriteError
+            ? "failed"
+            : hadWrite && hadPostWriteReread && hadRevisionPromptNote
+              ? "passed"
+              : "retryable",
+          evidence: [
+            ...context.toolExecutions.map((entry) => entry.toolName),
+            ...context.promptNotes,
+          ],
+          retryable: !hadWriteError,
+        };
+      },
     },
     {
       id: "word:coherence-reread",

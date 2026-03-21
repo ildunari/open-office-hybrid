@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 BRIDGE_URL="${BRIDGE_URL:-https://localhost:4017}"
 SESSION=""
 FILTER=""
 LOG_FILE="events.jsonl"
 DURATION=0
 POLL_INTERVAL=2
+REQUIRE_HYBRID=false
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [session] [--filter TYPES] [--log-file PATH] [--duration SEC] [--help]
+Usage: $(basename "$0") [session] [--filter TYPES] [--log-file PATH] [--duration SEC] [--bridge-url URL] [--hybrid-word] [--help]
 Monitor bridge events with filtering. Polls and appends to a JSONL log file.
   --filter TYPES     Comma-separated event type substrings (e.g. "error,tool")
   --log-file PATH    Output file (default: events.jsonl)
   --duration SEC     Stop after N seconds (default: 0 = run until killed)
+  --bridge-url URL   Bridge URL (default: https://localhost:4017)
+  --hybrid-word      Require OpenWord Hybrid and use https://localhost:4018 by default
   BRIDGE_URL env     Bridge URL (default: https://localhost:4017)
 EOF
   exit "${1:-0}"
@@ -25,11 +30,17 @@ while [[ $# -gt 0 ]]; do
     --filter) FILTER="$2"; shift 2 ;;
     --log-file) LOG_FILE="$2"; shift 2 ;;
     --duration) DURATION="$2"; shift 2 ;;
+    --bridge-url) BRIDGE_URL="$2"; shift 2 ;;
+    --hybrid-word) REQUIRE_HYBRID=true; shift ;;
     --help) usage 0 ;;
     --*) echo "Unknown option: $1" >&2; usage 2 ;;
     *) SESSION="$1"; shift ;;
   esac
 done
+
+if [[ "$REQUIRE_HYBRID" == "true" && "$BRIDGE_URL" == "https://localhost:4017" ]]; then
+  BRIDGE_URL="https://localhost:4018"
+fi
 
 HAS_JQ=true
 command -v jq >/dev/null 2>&1 || HAS_JQ=false
@@ -37,6 +48,15 @@ command -v jq >/dev/null 2>&1 || HAS_JQ=false
 BRIDGE_ARGS=(--url "$BRIDGE_URL")
 SESSION_ARGS=("${BRIDGE_ARGS[@]}")
 [[ -n "$SESSION" ]] && SESSION_ARGS=("$SESSION" "${BRIDGE_ARGS[@]}")
+
+WAIT_ARGS=(--app word --timeout 10000 --bridge-url "$BRIDGE_URL")
+if [[ -n "$SESSION" ]]; then
+  WAIT_ARGS=("$SESSION" "${WAIT_ARGS[@]}")
+fi
+if [[ "$REQUIRE_HYBRID" == "true" ]]; then
+  WAIT_ARGS=(--hybrid-word "${WAIT_ARGS[@]}")
+fi
+"${SCRIPT_DIR}/wait-and-check.sh" "${WAIT_ARGS[@]}" >/dev/null
 
 TOTAL_EVENTS=0; ITERATION=0; LAST_SEEN=""
 START_TIME=$(date +%s)

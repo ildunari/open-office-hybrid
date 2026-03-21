@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "description": "Trusted open-source DOCX corpus for adversarial Word and runtime testing.",
+  "generated_for": "Word Adversarial Runtime Campaign",
+  "files": [
+    {
+      "name": "comments.docx",
+      "source_repo": "mwilliamson/mammoth.js",
+      "license": "BSD-2-Clause",
+      "source_url": "https://raw.githubusercontent.com/mwilliamson/mammoth.js/master/test/test-data/comments.docx",
+      "sha256": "adc9f524d176f562db830c346c1e9e21c6a6aa6768d9c09892a423f1257fe17c",
+      "features": ["comments", "annotations", "reviewing"]
+    },
+    {
+      "name": "footnotes.docx",
+      "source_repo": "mwilliamson/mammoth.js",
+      "license": "BSD-2-Clause",
+      "source_url": "https://raw.githubusercontent.com/mwilliamson/mammoth.js/master/test/test-data/footnotes.docx",
+      "sha256": "a3d786ba3ad53833dd3d5e01bd55e93b628c1287d8f9210eb94cb7533f270306",
+      "features": ["footnotes", "references", "non-body-structure"]
+    },
+    {
+      "name": "tables.docx",
+      "source_repo": "mwilliamson/mammoth.js",
+      "license": "BSD-2-Clause",
+      "source_url": "https://raw.githubusercontent.com/mwilliamson/mammoth.js/master/test/test-data/tables.docx",
+      "sha256": "9f75a82d36530d91989a43fcb8940f2e753051787714cecbf6a1f49a22e58ded",
+      "features": ["tables", "layout", "grid-structure"]
+    },
+    {
+      "name": "text-box.docx",
+      "source_repo": "mwilliamson/mammoth.js",
+      "license": "BSD-2-Clause",
+      "source_url": "https://raw.githubusercontent.com/mwilliamson/mammoth.js/master/test/test-data/text-box.docx",
+      "sha256": "a94f4c516bec29b7c2e2e219ad1799700f0eecd0ebf25ef7f8fc59c14db8fdc9",
+      "features": ["text-box", "shapes", "non-body-text"]
+    },
+    {
+      "name": "strict-format.docx",
+      "source_repo": "mwilliamson/mammoth.js",
+      "license": "BSD-2-Clause",
+      "source_url": "https://raw.githubusercontent.com/mwilliamson/mammoth.js/master/test/test-data/strict-format.docx",
+      "sha256": "86d90f50d8fd3310c4079291c6622878d8f4d8864d665d1e34841f407e7b7662",
+      "features": ["strict-ooxml", "formatting", "compatibility"]
+    },
+    {
+      "name": "simple-list.docx",
+      "source_repo": "mwilliamson/mammoth.js",
+      "license": "BSD-2-Clause",
+      "source_url": "https://raw.githubusercontent.com/mwilliamson/mammoth.js/master/test/test-data/simple-list.docx",
+      "sha256": "ed3c015cf411d07b08bf34264ff709363740b0747af355479088079d0796dfb3",
+      "features": ["lists", "numbering", "indentation"]
+    },
+    {
+      "name": "having-images.docx",
+      "source_repo": "python-openxml/python-docx",
+      "license": "MIT",
+      "source_url": "https://raw.githubusercontent.com/python-openxml/python-docx/master/tests/test_files/having-images.docx",
+      "sha256": "72f40baa1b89e4849e817121dbbf148ed78e51be9bf04d8e6f4bc1494aa517b7",
+      "features": ["images", "media", "rich-content"]
+    },
+    {
+      "name": "blk-inner-content.docx",
+      "source_repo": "python-openxml/python-docx",
+      "license": "MIT",
+      "source_url": "https://raw.githubusercontent.com/python-openxml/python-docx/master/tests/test_files/blk-inner-content.docx",
+      "sha256": "16243dd05f686d6d5fab331843691492ad78ae3eb4f13cc8686077b44718c0ba",
+      "features": ["nested-block-content", "structure", "body-children"]
+    },
+    {
+      "name": "Headers.docx",
+      "source_repo": "plutext/docx4j",
+      "license": "see upstream repo",
+      "source_url": "https://raw.githubusercontent.com/plutext/docx4j/VERSION_11_5_7/docx4j-samples-docx4j/sample-docs/Headers.docx",
+      "sha256": "7bdaf60ef968ea43882309b48677229c7d194394ee032633a2252c3f4f8536f2",
+      "features": ["headers", "sections", "header-linked-content"]
+    },
+    {
+      "name": "toc.docx",
+      "source_repo": "plutext/docx4j",
+      "license": "see upstream repo",
+      "source_url": "https://raw.githubusercontent.com/plutext/docx4j/VERSION_11_5_7/docx4j-samples-docx4j/sample-docs/toc.docx",
+      "sha256": "f1c2bab7ac6eb58e38e1ae4245d31fd306f75bc319c118385a11b8abbdfe8a49",
+      "features": ["table-of-contents", "fields", "document-navigation"]
+    }
+  ]
+}

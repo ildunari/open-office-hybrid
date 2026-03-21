@@ -245,6 +245,40 @@ describe("createBridgeEvent", () => {
     expect(event.payload.tab).toBe("diagnostics");
   });
 
+  it("creates approval and compaction events with the expected payloads", () => {
+    const approvalRequested = createBridgeEvent("approval:requested", {
+      actionClass: "destructive_write",
+      scopes: ["document:body"],
+    });
+    expect(approvalRequested.payload).toEqual({
+      actionClass: "destructive_write",
+      scopes: ["document:body"],
+    });
+
+    const approvalShown = createBridgeEvent("ui:approval_shown", {
+      actionClass: "structural_write",
+    });
+    expect(approvalShown.payload.actionClass).toBe("structural_write");
+
+    const approvalResponded = createBridgeEvent("ui:approval_responded", {
+      actionClass: "structural_write",
+      approved: true,
+    });
+    expect(approvalResponded.payload).toEqual({
+      actionClass: "structural_write",
+      approved: true,
+    });
+
+    const compacted = createBridgeEvent("context:compacted", {
+      artifactCount: 2,
+      threadId: "thread-1",
+    });
+    expect(compacted.payload).toEqual({
+      artifactCount: 2,
+      threadId: "thread-1",
+    });
+  });
+
   it("creates an error:tool event with errorClass", () => {
     const event = createBridgeEvent("error:tool", {
       source: "eval_officejs",

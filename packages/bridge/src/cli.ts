@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { DOM_QUERIES } from "./dom-queries.js";
 import {
   type BridgeRequestOptions,
   probeBridge,
@@ -28,7 +29,6 @@ import {
   findMatchingSession,
   summarizeExecutionError,
 } from "./server.js";
-import { DOM_QUERIES } from "./dom-queries.js";
 
 const OPTIONS = {
   help: { type: "boolean" as const },
