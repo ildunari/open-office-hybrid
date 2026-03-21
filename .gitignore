@@ -16,6 +16,8 @@ Thumbs.db
 
 # Editor directories
 .idea/
+.claude/
+.codex/
 
 # Logs
 *.log
@@ -26,3 +28,4 @@ npm-debug.log*
 *.key
 *.pem
 headless-test/
+tmp/
