@@ -274,6 +274,7 @@ describe("CLI command registration", () => {
   const cliSource = readFileSync(path.join(__dirname, "../src/cli.ts"), "utf8");
 
   const NEW_COMMANDS = [
+    "prompt",
     "state",
     "poll",
     "assert",
@@ -300,6 +301,16 @@ describe("CLI command registration", () => {
       expect(cliSource).toContain(cmd);
     });
   }
+
+  it('threads timeoutMs into prompt refresh polling', () => {
+    expect(cliSource).toContain('sessionPath(sessionId, "/refresh")');
+    expect(cliSource).toContain("timeoutMs,\n      },\n    );");
+  });
+
+  it('threads timeoutMs into prompt event polling', () => {
+    expect(cliSource).toContain('sessionPath(sessionId, "/events?limit=50")');
+    expect(cliSource).toContain("timeoutMs,\n      },\n    );");
+  });
 });
 
 // ---------------------------------------------------------------------------

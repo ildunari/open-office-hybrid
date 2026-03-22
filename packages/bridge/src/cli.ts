@@ -11,7 +11,12 @@ import {
   requestJson,
 } from "./http-client.js";
 import {
+  buildPromptExecCode,
+  observePromptRun,
+} from "./prompt-automation.js";
+import {
   type BridgeInvokeMethod,
+  type BridgeRuntimeStateSlice,
   type BridgeSessionSnapshot,
   type BridgeStoredEvent,
   type BridgeVfsEntry,
@@ -21,6 +26,7 @@ import {
   getDefaultRawExecutionTool,
   normalizeBridgeUrl,
   serializeForJson,
+  summarizePromptAutomationRun,
 } from "./protocol.js";
 import { getScreenshotTimeoutMs } from "./screenshot-timeout.js";
 import {
@@ -46,6 +52,7 @@ const OPTIONS = {
   code: { type: "string" as const },
   explanation: { type: "string" as const },
   out: { type: "string" as const },
+  prompt: { type: "string" as const },
   limit: { type: "string" as const },
   app: { type: "string" as const },
   document: { type: "string" as const },
@@ -61,11 +68,14 @@ const OPTIONS = {
   streaming: { type: "string" as const },
   runs: { type: "string" as const },
   threshold: { type: "string" as const },
+  text: { type: "string" as const },
   "keep-config": { type: "boolean" as const },
   compact: { type: "boolean" as const },
   fields: { type: "string" as const },
   "max-tokens": { type: "string" as const },
 };
+
+const DEFAULT_PROMPT_TIMEOUT_MS = 5 * 60_000;
 
 interface Cli {
   positionals: string[];
@@ -121,6 +131,7 @@ Commands:
   inspect [session] [--compact] [--fields KEY1,KEY2]
   metadata [session] [--compact] [--fields KEY1,KEY2]
   events [session] [--limit N] [--compact] [--fields KEY1,KEY2] [--max-tokens N]
+  prompt [session] [prompt text] [--prompt TEXT | --file PATH | --stdin] [--timeout MS]
   tool [session] <toolName> [--input JSON | --file PATH | --stdin]
   exec [session] [--code JS | --file PATH | --stdin] [--sandbox]
   rpc [session] <method> [--input JSON | --file PATH | --stdin]
@@ -152,6 +163,7 @@ Examples:
   office-bridge list
   office-bridge inspect word
   office-bridge inspect word --compact --fields app,documentId
+  office-bridge prompt word:SESSION_ID "Summarize the key changes in this document."
   office-bridge exec word --code "return { href: window.location.href, title: document.title }"
   office-bridge exec word --sandbox --code "const body = context.document.body; body.load('text'); await context.sync(); return body.text;"
   office-bridge tool excel screenshot_range --input '{"sheetId":1,"range":"A1:F20"}' --out range.png
@@ -207,6 +219,31 @@ async function loadCode(cli: Cli): Promise<string> {
   if (flag(cli, "stdin") || !process.stdin.isTTY) return readStdin();
 
   throw new Error("Missing code. Use --code, --file, or --stdin.");
+}
+
+async function loadPromptText(
+  cli: Cli,
+  positionalPrompt: string | undefined,
+): Promise<string> {
+  const inline = str(cli, "prompt");
+  if (inline?.trim()) return inline;
+
+  const legacyText = str(cli, "text");
+  if (legacyText?.trim()) return legacyText;
+
+  const file = str(cli, "file");
+  if (file) return readFile(file, "utf8");
+
+  if (flag(cli, "stdin") || !process.stdin.isTTY) {
+    const content = await readStdin();
+    if (content.trim()) return content;
+  }
+
+  if (positionalPrompt?.trim()) return positionalPrompt;
+
+  throw new Error(
+    "Missing prompt. Pass prompt text directly, use --prompt, --file, or --stdin.",
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -628,6 +665,107 @@ async function commandTool(cli: Cli) {
     await maybeSaveToolImages(response.result, str(cli, "out")),
   );
   printJson(response.result);
+}
+
+async function commandPrompt(cli: Cli) {
+  const { session, args } = await splitSessionArgs(
+    cli,
+    cli.positionals.slice(1),
+    0,
+  );
+  if (session.snapshot.app.toLowerCase() !== "word") {
+    throw new Error(
+      "Prompt automation is currently supported only for Word bridge sessions.",
+    );
+  }
+  const prompt = await loadPromptText(
+    cli,
+    str(cli, "text") ?? args.join(" "),
+  );
+  const timeoutMs = str(cli, "timeout")
+    ? int(cli, "timeout", DEFAULT_PROMPT_TIMEOUT_MS)
+    : DEFAULT_PROMPT_TIMEOUT_MS;
+  const startedAt = Date.now();
+  const initialState = session.snapshot.runtimeState ?? null;
+  const sessionId = session.snapshot.sessionId;
+  const code = buildPromptExecCode(prompt);
+
+  const response = await requestJson<{ ok: true; result: unknown }>(
+    "POST",
+    "/rpc",
+    {
+      sessionId: session.snapshot.sessionId,
+      method: "execute_unsafe_office_js",
+      params: {
+        code,
+        explanation:
+          "Submit a benchmark prompt and wait for the Word runtime to settle.",
+      },
+      timeoutMs,
+    },
+    {
+      ...reqOpts(cli),
+      timeoutMs,
+    },
+  );
+
+  const loadSessionSnapshot = async (): Promise<BridgeSessionSnapshot> => {
+    const sessionResponse = await requestJson<{
+      ok: true;
+      snapshot: BridgeSessionSnapshot;
+    }>(
+      "POST",
+      sessionPath(sessionId, "/refresh"),
+      undefined,
+      {
+        ...reqOpts(cli),
+        timeoutMs,
+      },
+    );
+    return sessionResponse.snapshot;
+  };
+
+  const loadRecentEvents = async (): Promise<BridgeStoredEvent[]> => {
+    const eventsResponse = await requestJson<{
+      ok: true;
+      events: BridgeStoredEvent[];
+    }>(
+      "GET",
+      sessionPath(sessionId, "/events?limit=50"),
+      undefined,
+      {
+        ...reqOpts(cli),
+        timeoutMs,
+      },
+    );
+    return eventsResponse.events;
+  };
+
+  const initialSnapshot = await loadSessionSnapshot();
+  const observation = await observePromptRun({
+    initialState: initialState as BridgeRuntimeStateSlice | null,
+    initialSnapshot,
+    timeoutMs,
+    loadSnapshot: loadSessionSnapshot,
+    loadEvents: loadRecentEvents,
+  });
+  const completedAt = Date.now();
+
+  const summary = summarizePromptAutomationRun({
+    sessionId,
+    app: session.snapshot.app,
+    documentId: session.snapshot.documentId,
+    prompt,
+    startedAt,
+    completedAt,
+    snapshot: observation.snapshot,
+    timedOut: observation.timedOut,
+  });
+
+  printFormattedJson(summary, cli);
+  if (summary.outcome === "error" || summary.outcome === "timed_out") {
+    process.exit(1);
+  }
 }
 
 async function commandExec(cli: Cli) {
@@ -1341,6 +1479,7 @@ const COMMANDS: Record<string, (cli: Cli) => Promise<void>> = {
   inspect: commandInspect,
   metadata: commandMetadata,
   events: commandEvents,
+  prompt: commandPrompt,
   tool: commandTool,
   exec: commandExec,
   rpc: commandRpc,

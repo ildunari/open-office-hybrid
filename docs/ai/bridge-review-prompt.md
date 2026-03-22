@@ -1,5 +1,17 @@
 # Bridge Agent Testing & Monitoring System - Code Review Prompt
 
+## Related Hybrid Word Prompt Family
+
+Use the narrower Hybrid Word prompt family when the task is not a broad bridge-system review:
+
+- [`hybrid-word-testing-review-prompt.md`](./hybrid-word-testing-review-prompt.md) for read-only testing and coverage audits
+- [`hybrid-word-live-smoke-prompt.md`](./hybrid-word-live-smoke-prompt.md) for live bridge/session verification against OpenWord Hybrid
+- [`hybrid-word-benchmark-regression-prompt.md`](./hybrid-word-benchmark-regression-prompt.md) for fixture-driven Word benchmark and regression work
+
+Choose the narrowest prompt that matches the question. Keep this document for broad bridge testing and monitoring reviews that span instrumentation, CLI, scripts, UI events, and state diffing together.
+
+If this prompt is being run inside the side-panel LLM itself, treat host repo paths, `pnpm` commands, and `office-bridge` commands as operator-facing references unless the host has already supplied the resulting receipts. Do not pretend the in-pane `bash` tool can execute host-side bridge workflows directly.
+
 Use this document to perform a complete independent review of the Office Bridge agent testing, monitoring, and debugging system built across Phases 1-5.
 
 ## Files Changed

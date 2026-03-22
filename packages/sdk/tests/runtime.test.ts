@@ -570,6 +570,52 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("hides stale active plan summaries once the task is completed", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+
+    const completedTask = {
+      id: "task-complete",
+      userRequest: "Summarize the current session health",
+      status: "completed" as const,
+      mode: "completed" as const,
+      toolCallIds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+
+    (
+      runtime as unknown as {
+        update: (partial: Partial<RuntimeState>) => void;
+      }
+    ).update({
+      mode: "completed",
+      activeTask: completedTask,
+      activePlan: {
+        ...createPlan({
+          id: "plan-stale",
+          userRequest: completedTask.userRequest,
+        }),
+        steps: [
+          {
+            id: "step-read",
+            description: "Read the target state",
+            kind: "read",
+            status: "pending",
+            successCriteria: "Target inspected",
+            retryLimit: 1,
+            retryCount: 0,
+            toolCalls: [],
+          },
+        ],
+        activeStepId: "step-read",
+      },
+    });
+
+    expect(runtime.getRuntimeStateSlice().activePlanSummary).toBeNull();
+    runtime.dispose();
+  });
+
   it("preserves approval request details when switching sessions", async () => {
     const runtime = new AgentRuntime(createAdapter());
     await runtime.init();

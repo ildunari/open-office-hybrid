@@ -446,13 +446,15 @@ export class AgentRuntime {
     const plan = s.activePlan;
     const task = s.activeTask;
     const stats = s.sessionStats;
+    const exposeActivePlanSummary =
+      !!plan && !(s.mode === "completed" || task?.status === "completed");
     return {
       mode: s.mode,
       taskPhase: s.taskPhase,
       isStreaming: s.isStreaming,
       permissionMode: s.permissionMode,
       waitingState: s.waitingState?.kind ?? null,
-      activePlanSummary: plan
+      activePlanSummary: exposeActivePlanSummary
         ? {
             id: plan.id,
             status: plan.status,

@@ -10,6 +10,7 @@ import {
   getDefaultRawExecutionTool,
   normalizeBridgeUrl,
   serializeForJson,
+  summarizePromptAutomationRun,
   toBridgeClassifiedError,
   toBridgeError,
 } from "../src/protocol";
@@ -468,6 +469,132 @@ describe("getDefaultRawExecutionTool", () => {
     expect(getDefaultRawExecutionTool("visio")).toBeUndefined();
     expect(getDefaultRawExecutionTool("")).toBeUndefined();
     expect(getDefaultRawExecutionTool("onenote")).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// summarizePromptAutomationRun
+// ---------------------------------------------------------------------------
+
+describe("summarizePromptAutomationRun", () => {
+  it("summarizes a completed run with the latest assistant text and tool calls", () => {
+    const summary = summarizePromptAutomationRun({
+      sessionId: "word:test-session",
+      app: "word",
+      documentId: "doc-123",
+      prompt: "Summarize this document",
+      startedAt: 1_000,
+      completedAt: 1_350,
+      snapshot: {
+        mode: "completed",
+        taskPhase: "completed",
+        isStreaming: false,
+        permissionMode: "full_auto",
+        waitingState: null,
+        error: null,
+        approvalRequest: null,
+        handoff: null,
+        messages: [
+          {
+            id: "msg-user",
+            role: "user",
+            timestamp: 1_010,
+            parts: [{ type: "text", text: "Summarize this document" }],
+          },
+          {
+            id: "msg-assistant",
+            role: "assistant",
+            timestamp: 1_340,
+            parts: [
+              { type: "thinking", thinking: "Checking the document" },
+              {
+                type: "toolCall",
+                id: "tool-1",
+                name: "get_document_text",
+                args: {},
+                status: "complete",
+                result: "Document body",
+              },
+              { type: "text", text: "Here is the summary." },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(summary.outcome).toBe("completed");
+    expect(summary.durationMs).toBe(350);
+    expect(summary.latestAssistant?.text).toBe("Here is the summary.");
+    expect(summary.latestAssistant?.toolCalls).toEqual([
+      {
+        id: "tool-1",
+        name: "get_document_text",
+        status: "complete",
+        result: "Document body",
+      },
+    ]);
+    expect(summary.state.taskPhase).toBe("completed");
+  });
+
+  it("surfaces approval and handoff details when the runtime is waiting on the user", () => {
+    const summary = summarizePromptAutomationRun({
+      sessionId: "word:test-session",
+      app: "word",
+      documentId: "doc-123",
+      prompt: "Rewrite the whole contract",
+      startedAt: 2_000,
+      completedAt: 2_120,
+      snapshot: {
+        mode: "awaiting_approval",
+        taskPhase: "waiting_on_user",
+        isStreaming: false,
+        permissionMode: "confirm_risky",
+        waitingState: { kind: "approval", reason: "Need approval" },
+        error: null,
+        approvalRequest: {
+          reason: "This is a risky whole-document rewrite.",
+          actionClass: "destructive_write",
+          scopes: [{ kind: "document", ref: "body" }],
+        },
+        handoff: {
+          summary: "Approve the plan to continue.",
+          nextRecommendedAction: "Approve the plan.",
+        },
+        messages: [],
+      },
+    });
+
+    expect(summary.outcome).toBe("waiting_on_user");
+    expect(summary.approvalRequired).toBe(true);
+    expect(summary.state.waitingState).toBe("approval");
+    expect(summary.approval?.actionClass).toBe("destructive_write");
+    expect(summary.handoff?.summary).toBe("Approve the plan to continue.");
+  });
+
+  it("reports error outcome when the runtime snapshot contains an error", () => {
+    const summary = summarizePromptAutomationRun({
+      sessionId: "word:test-session",
+      app: "word",
+      documentId: "doc-123",
+      prompt: "Do the thing",
+      startedAt: 3_000,
+      completedAt: 3_090,
+      snapshot: {
+        mode: "blocked",
+        taskPhase: "blocked",
+        isStreaming: false,
+        permissionMode: "full_auto",
+        waitingState: null,
+        error: "The model request failed.",
+        approvalRequest: null,
+        handoff: null,
+        messages: [],
+      },
+    });
+
+    expect(summary.outcome).toBe("error");
+    expect(summary.state.error).toBe("The model request failed.");
+    expect(summary.latestAssistant).toBeNull();
   });
 });
 

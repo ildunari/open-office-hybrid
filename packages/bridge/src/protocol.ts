@@ -378,6 +378,213 @@ interface ToolResultLike {
   details?: unknown;
 }
 
+type PromptAutomationOutcome =
+  | "completed"
+  | "waiting_on_user"
+  | "error"
+  | "blocked"
+  | "streaming"
+  | "timed_out";
+
+export interface BridgePromptAutomationToolCallSummary {
+  id: string | null;
+  name: string | null;
+  status: string | null;
+  result?: string;
+}
+
+export interface BridgePromptAutomationAssistantSummary {
+  id: string | null;
+  timestamp: number | null;
+  text: string;
+  toolCalls: BridgePromptAutomationToolCallSummary[];
+}
+
+export interface BridgePromptAutomationSummary {
+  sessionId: string;
+  app: BridgeApp;
+  documentId: string;
+  prompt: string;
+  startedAt: number;
+  completedAt: number;
+  durationMs: number;
+  outcome: PromptAutomationOutcome;
+  state: {
+    mode: string | null;
+    taskPhase: string | null;
+    isStreaming: boolean;
+    waitingState: string | null;
+    permissionMode: string | null;
+    error: string | null;
+  };
+  approvalRequired: boolean;
+  approval: {
+    reason: string | null;
+    actionClass: string | null;
+    scopes: unknown[] | null;
+  } | null;
+  handoff: {
+    summary: string | null;
+    nextRecommendedAction: string | null;
+  } | null;
+  messageCount: number;
+  latestAssistant: BridgePromptAutomationAssistantSummary | null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function extractWaitingKind(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  const waiting = asRecord(value);
+  return waiting ? readString(waiting.kind) : null;
+}
+
+function extractAssistantText(parts: unknown[]): string {
+  return parts
+    .map((part) => asRecord(part))
+    .filter(
+      (part): part is Record<string, unknown> =>
+        !!part && readString(part.type) === "text",
+    )
+    .map((part) => readString(part.text) ?? "")
+    .filter((text) => text.length > 0)
+    .join("\n\n");
+}
+
+function extractAssistantToolCalls(
+  parts: unknown[],
+): BridgePromptAutomationToolCallSummary[] {
+  return parts
+    .map((part) => asRecord(part))
+    .filter(
+      (part): part is Record<string, unknown> =>
+        !!part && readString(part.type) === "toolCall",
+    )
+    .map((part) => {
+      const result = readString(part.result);
+      return {
+        id: readString(part.id),
+        name: readString(part.name),
+        status: readString(part.status),
+        ...(result ? { result } : {}),
+      };
+    });
+}
+
+export function summarizePromptAutomationRun(input: {
+  sessionId: string;
+  app: BridgeApp;
+  documentId: string;
+  prompt: string;
+  startedAt: number;
+  completedAt: number;
+  snapshot: unknown;
+  timedOut?: boolean;
+}): BridgePromptAutomationSummary {
+  const snapshot = asRecord(input.snapshot) ?? {};
+  const messages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
+  const latestAssistantRecord =
+    messages
+      .map((message) => asRecord(message))
+      .filter(
+        (message): message is Record<string, unknown> =>
+          !!message && readString(message.role) === "assistant",
+      )
+      .at(-1) ?? null;
+
+  const latestAssistantParts =
+    latestAssistantRecord && Array.isArray(latestAssistantRecord.parts)
+      ? latestAssistantRecord.parts
+      : [];
+  const latestAssistant = latestAssistantRecord
+    ? {
+        id: readString(latestAssistantRecord.id),
+        timestamp: readNumber(latestAssistantRecord.timestamp),
+        text: extractAssistantText(latestAssistantParts),
+        toolCalls: extractAssistantToolCalls(latestAssistantParts),
+      }
+    : null;
+
+  const mode = readString(snapshot.mode);
+  const taskPhase = readString(snapshot.taskPhase);
+  const isStreaming = snapshot.isStreaming === true;
+  const waitingState = extractWaitingKind(snapshot.waitingState);
+  const permissionMode = readString(snapshot.permissionMode);
+  const error = readString(snapshot.error);
+
+  const approvalRecord = asRecord(snapshot.approvalRequest);
+  const handoffRecord = asRecord(snapshot.handoff);
+
+  let outcome: PromptAutomationOutcome = "completed";
+  if (input.timedOut) {
+    outcome = "timed_out";
+  } else if (isStreaming) {
+    outcome = "streaming";
+  } else if (error) {
+    outcome = "error";
+  } else if (
+    waitingState ||
+    approvalRecord ||
+    handoffRecord ||
+    taskPhase === "waiting_on_user"
+  ) {
+    outcome = "waiting_on_user";
+  } else if (mode === "blocked" || taskPhase === "blocked") {
+    outcome = "blocked";
+  }
+
+  return {
+    sessionId: input.sessionId,
+    app: input.app,
+    documentId: input.documentId,
+    prompt: input.prompt,
+    startedAt: input.startedAt,
+    completedAt: input.completedAt,
+    durationMs: Math.max(0, input.completedAt - input.startedAt),
+    outcome,
+    state: {
+      mode,
+      taskPhase,
+      isStreaming,
+      waitingState,
+      permissionMode,
+      error,
+    },
+    approvalRequired: Boolean(approvalRecord),
+    approval: approvalRecord
+      ? {
+          reason: readString(approvalRecord.reason),
+          actionClass: readString(approvalRecord.actionClass),
+          scopes: Array.isArray(approvalRecord.scopes)
+            ? approvalRecord.scopes
+            : null,
+        }
+      : null,
+    handoff: handoffRecord
+      ? {
+          summary: readString(handoffRecord.summary),
+          nextRecommendedAction: readString(
+            handoffRecord.nextRecommendedAction,
+          ),
+        }
+      : null,
+    messageCount: messages.length,
+    latestAssistant,
+  };
+}
+
 export function createBridgeId(prefix = "bridge"): string {
   if (
     typeof crypto !== "undefined" &&
