@@ -147,7 +147,7 @@ Commands:
   summary [session]
   diag [session]
   dom [session] <query>
-  reset [session] [--keep-config]
+  reset [session] [--keep-config] [--timeout MS]
   screenshot-diff <img1> <img2> [--threshold 0.95]
 
 Supported DOM queries: visible-panels, scroll-positions, computed-theme, layout-metrics, message-count
@@ -178,6 +178,7 @@ Examples:
   office-bridge diag word
   office-bridge dom word visible-panels
   office-bridge reset word --keep-config
+  office-bridge reset word --keep-config --timeout 300000
   office-bridge screenshot-diff before.png after.png --threshold 0.90
 `);
 }
@@ -1391,6 +1392,7 @@ async function commandDom(cli: Cli) {
 async function commandReset(cli: Cli) {
   const session = await resolveSession(cli, cli.positionals[1]);
   const keepConfig = flag(cli, "keep-config");
+  const timeoutMs = int(cli, "timeout", DEFAULT_PROMPT_TIMEOUT_MS);
 
   const code = keepConfig
     ? `
@@ -1425,7 +1427,10 @@ async function commandReset(cli: Cli) {
     "POST",
     sessionPath(session.snapshot.sessionId, "/exec"),
     { code, unsafe: true },
-    reqOpts(cli),
+    {
+      ...reqOpts(cli),
+      timeoutMs,
+    },
   );
   console.log(
     `Reset complete for ${session.snapshot.app}.${keepConfig ? " Config keys preserved." : ""}`,

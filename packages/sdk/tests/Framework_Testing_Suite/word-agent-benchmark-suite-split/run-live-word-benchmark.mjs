@@ -461,15 +461,17 @@ async function waitForSessionReady(bridgeUrl, sessionId, timeoutMs = 60_000) {
   );
 }
 
-async function resetLiveSessionState(bridgeUrl, sessionId) {
+async function resetLiveSessionState(bridgeUrl, sessionId, timeoutMs) {
   runBridgeCliText([
     "--url",
     bridgeUrl,
     "reset",
     sessionId,
     "--keep-config",
+    "--timeout",
+    String(timeoutMs),
   ]);
-  await waitForSessionReady(bridgeUrl, sessionId);
+  await waitForSessionReady(bridgeUrl, sessionId, timeoutMs);
 }
 
 function applyMutationPlan(task, taskPaths) {
@@ -742,11 +744,16 @@ async function main() {
             });
 
             if (runtimePolicy.resetSessionBeforeTask) {
-              await resetLiveSessionState(args.bridgeUrl, resolved.sessionId);
+              await resetLiveSessionState(
+                args.bridgeUrl,
+                resolved.sessionId,
+                runtimePolicy.promptTimeoutMs,
+              );
               appendActionLog(taskPaths, {
                 type: "session_reset",
                 sessionId: resolved.sessionId,
                 keepConfig: true,
+                timeoutMs: runtimePolicy.promptTimeoutMs,
                 timestamp: new Date().toISOString(),
               });
             }

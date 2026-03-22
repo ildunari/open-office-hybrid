@@ -311,6 +311,12 @@ describe("CLI command registration", () => {
     expect(cliSource).toContain('sessionPath(sessionId, "/events?limit=50")');
     expect(cliSource).toContain("timeoutMs,\n      },\n    );");
   });
+
+  it('threads timeoutMs into reset execution requests', () => {
+    expect(cliSource).toContain('reset [session] [--keep-config] [--timeout MS]');
+    expect(cliSource).toContain('sessionPath(session.snapshot.sessionId, "/exec")');
+    expect(cliSource).toContain("...reqOpts(cli),\n      timeoutMs,");
+  });
 });
 
 // ---------------------------------------------------------------------------
