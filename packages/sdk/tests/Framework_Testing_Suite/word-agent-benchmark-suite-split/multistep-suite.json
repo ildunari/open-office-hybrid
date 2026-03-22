@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "pack_id": "multistep",
+  "description": "Curated multi-step sessions for serial live execution against the local Word fixtures.",
+  "sessions": [
+    {
+      "session_id": "S01-report-maintenance",
+      "phase": 6,
+      "archetype": "technical_report",
+      "source_doc_id": "report_tti_generic_v1",
+      "steps": [
+        "Identify the heading tree and section map.",
+        "Repair or refresh the table of contents.",
+        "Normalize heading styles in the selected report chapter.",
+        "Confirm the page numbering and headers remained intact."
+      ],
+      "sticky_constraints": [
+        "Do not edit the title page.",
+        "Preserve headers and footers outside the active report section."
+      ]
+    },
+    {
+      "session_id": "S02-contract-scope-discipline",
+      "phase": 8,
+      "archetype": "legal",
+      "source_doc_id": "legal_contract_msc_core_terms_ew_2025_v1",
+      "steps": [
+        "Identify the clause tree and defined terms near the target region.",
+        "Insert or revise a clause in the approved location only.",
+        "Verify numbering continuity and defined-term consistency."
+      ],
+      "sticky_constraints": [
+        "Do not touch clauses outside the approved region.",
+        "Do not change defined-term meaning."
+      ]
+    },
+    {
+      "session_id": "S03-grant-scope-and-compliance",
+      "phase": 8,
+      "archetype": "grant",
+      "source_doc_id": "grant_nih_r01_template_v1",
+      "steps": [
+        "Inspect the sponsor headings and the approved edit region.",
+        "Rewrite the selected paragraph for clarity.",
+        "Confirm no sponsor headings or protected regions changed."
+      ],
+      "sticky_constraints": [
+        "Work only in the approved region.",
+        "Preserve sponsor headings exactly."
+      ]
+    }
+  ]
+}
