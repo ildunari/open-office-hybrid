@@ -324,6 +324,48 @@ describe("bridge server", () => {
 
     await expect(invocation).rejects.toThrow(/disconnected/i);
   });
+
+  it("honors caller-supplied timeoutMs on the unsafe exec HTTP route", async () => {
+    const tls = createTempTlsMaterial();
+    tlsDir = tls.dir;
+    const port = await getFreePort();
+    server = await createBridgeServer({
+      host: "127.0.0.1",
+      port,
+      certPath: tls.certPath,
+      keyPath: tls.keyPath,
+      logger: silentLogger,
+    });
+
+    socket = await connectClient(server.wsUrl);
+    socket.send(
+      JSON.stringify({
+        type: "hello",
+        role: "office-addin",
+        protocolVersion: 1,
+        snapshot: createSnapshot(),
+      }),
+    );
+    await waitForParsedMessage(socket);
+
+    const execPromise = requestJson(
+      "POST",
+      "/sessions/excel%3Atest-session/exec",
+      {
+        code: "return 1;",
+        unsafe: true,
+        timeoutMs: 75,
+      },
+      { baseUrl: server.httpUrl, timeoutMs: 500 },
+    );
+
+    const invokeMessage = await waitForParsedMessage(socket);
+    expect(invokeMessage.type).toBe("invoke");
+
+    await expect(execPromise).rejects.toThrow(
+      /Bridge request timed out after 75ms \(execute_unsafe_office_js\)/,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

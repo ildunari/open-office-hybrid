@@ -502,6 +502,7 @@ export async function createBridgeServer(
             code?: string;
             explanation?: string;
             unsafe?: boolean;
+            timeoutMs?: number;
           };
           const session = sessions.get(sessionId);
           if (!session) {
@@ -520,6 +521,7 @@ export async function createBridgeServer(
                 code: body?.code ?? "",
                 explanation: body?.explanation,
               },
+              timeoutMs: body?.timeoutMs,
             });
             jsonResponse(res, 200, { ok: true, result, mode: "unsafe" });
             return;
@@ -545,6 +547,7 @@ export async function createBridgeServer(
                 explanation: body?.explanation,
               },
             },
+            timeoutMs: body?.timeoutMs,
           });
           jsonResponse(res, 200, {
             ok: true,
