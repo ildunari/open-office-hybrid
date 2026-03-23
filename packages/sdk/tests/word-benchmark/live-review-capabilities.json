@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "capabilities": [
+    {
+      "capability_id": "nih_grants",
+      "display_name": "NIH Grants",
+      "fixture_families": [
+        "grant"
+      ],
+      "source_doc_ids": [
+        "grant_nih_r01_template_v1",
+        "grant_biosketch_nonfellowship_2021_v1"
+      ],
+      "seed_task_ids": [
+        "T11-grant-template-rewrite",
+        "T39-grant-approved-region",
+        "M08-grant-protected-neighbor",
+        "S03-grant-scope-and-compliance",
+        "T31-biosketch-consistency",
+        "M11-biosketch-length-neutral"
+      ]
+    }
+  ]
+}

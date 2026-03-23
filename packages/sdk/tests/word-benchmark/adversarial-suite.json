@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "pack_id": "adversarial",
+  "description": "Recovery and ambiguity-sensitive benchmark tasks for the local Word fixtures.",
+  "tasks": [
+    {
+      "task_id": "M01-report-section-break-recovery",
+      "phase": 8,
+      "archetype": "technical_report",
+      "source_doc_id": "report_tti_generic_v1",
+      "prompt": "Diagnose and recover from a deleted or misplaced section break without changing unrelated report sections.",
+      "allowed_regions": ["damaged_section_boundary"],
+      "forbidden_regions": ["all_other_sections"],
+      "expected_invariants": ["page_number_scheme_preserved", "header_footer_isolation_preserved"],
+      "validator_bundle": ["section_map_check", "header_footer_linkage_check", "page_number_scheme_check"],
+      "human_review_axes": ["recovery_quality", "collateral_damage"],
+      "auto_fail_conditions": ["header_footer_changed_outside_allowed_region", "page_number_scheme_changed"],
+      "mutation_ids": ["M01"]
+    },
+    {
+      "task_id": "M02-report-stale-field-recovery",
+      "phase": 8,
+      "archetype": "technical_report",
+      "source_doc_id": "report_tti_generic_v1",
+      "prompt": "Recover from a stale TOC or field graph while preserving report structure and front matter.",
+      "allowed_regions": ["global_structural"],
+      "forbidden_regions": ["title_page_locked"],
+      "expected_invariants": ["toc_present", "heading_tree_unchanged"],
+      "validator_bundle": ["toc_field_check", "field_inventory_check", "heading_tree_check"],
+      "human_review_axes": ["recovery_quality", "formatting_fidelity"],
+      "auto_fail_conditions": ["title_page_modified"],
+      "mutation_ids": ["M02"]
+    },
+    {
+      "task_id": "M05-contract-numbering-recovery",
+      "phase": 8,
+      "archetype": "legal",
+      "source_doc_id": "legal_contract_msc_core_terms_ew_2025_v1",
+      "prompt": "Recover from clause-numbering corruption without changing defined terms or unrelated clauses.",
+      "allowed_regions": ["damaged_clause_tree"],
+      "forbidden_regions": ["all_other_clauses"],
+      "expected_invariants": ["defined_terms_preserved", "numbering_tree_valid"],
+      "validator_bundle": ["numbering_tree_check", "defined_term_check", "scope_diff_check"],
+      "human_review_axes": ["recovery_quality", "legal_scope_control"],
+      "auto_fail_conditions": ["defined_term_changed", "edit_outside_approved_clause"],
+      "mutation_ids": ["M05"]
+    },
+    {
+      "task_id": "M07-review-state-recovery",
+      "phase": 8,
+      "archetype": "review_state",
+      "source_doc_id": "review_track_changes_sample_v1",
+      "prompt": "Diagnose a mixed review-state problem and recover without accepting or rejecting the wrong changes.",
+      "allowed_regions": ["selected_review_region"],
+      "forbidden_regions": ["all_other_review_regions"],
+      "expected_invariants": ["review_state_preserved", "scope_preserved"],
+      "validator_bundle": ["revision_inventory_check", "comment_inventory_check", "scope_diff_check"],
+      "human_review_axes": ["review_state_integrity", "recovery_quality"],
+      "auto_fail_conditions": ["review_state_corrupted"],
+      "mutation_ids": ["M07"]
+    },
+    {
+      "task_id": "M08-grant-protected-neighbor",
+      "phase": 8,
+      "archetype": "grant",
+      "source_doc_id": "grant_nih_r01_template_v1",
+      "prompt": "Make the requested local grant edit without touching the protected or forbidden neighboring region.",
+      "allowed_regions": ["selected_grant_paragraph"],
+      "forbidden_regions": ["adjacent_protected_region"],
+      "expected_invariants": ["strict_scope_preserved"],
+      "validator_bundle": ["scope_diff_check", "protection_integrity_check"],
+      "human_review_axes": ["scope_control", "safety"],
+      "auto_fail_conditions": ["protected_region_touched"],
+      "mutation_ids": ["M08"]
+    },
+    {
+      "task_id": "M11-biosketch-length-neutral",
+      "phase": 8,
+      "archetype": "grant",
+      "source_doc_id": "grant_biosketch_nonfellowship_2021_v1",
+      "prompt": "Revise a biosketch region while keeping the overall page count unchanged.",
+      "allowed_regions": ["selected_biosketch_region"],
+      "forbidden_regions": ["page_limit_breakage"],
+      "expected_invariants": ["page_count_preserved"],
+      "validator_bundle": ["page_count_check", "scope_diff_check"],
+      "human_review_axes": ["compliance_fit", "length_neutrality"],
+      "auto_fail_conditions": ["page_count_increased"],
+      "mutation_ids": ["M11"]
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://office-agents.local/word-benchmark/resolved-issue.schema.json",
+  "title": "Word Live Review Resolved Issue Entry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "issue_id",
+    "resolved_at",
+    "summary",
+    "resolution_kind",
+    "archive_index_entry",
+    "detailed_report_path"
+  ],
+  "properties": {
+    "issue_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "resolved_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "resolution_kind": {
+      "type": "string",
+      "enum": [
+        "harness_fix",
+        "scoring_fix",
+        "bridge_fix",
+        "tooling_fix",
+        "operator_resolution"
+      ]
+    },
+    "archive_index_entry": {
+      "type": "string"
+    },
+    "detailed_report_path": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

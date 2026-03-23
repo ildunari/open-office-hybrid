@@ -32,7 +32,10 @@
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "benchmark:word:prepare": "node tests/word-benchmark/run-live-word-benchmark.mjs --mode full",
+    "benchmark:word:report": "node tests/word-benchmark/summarize-word-benchmark.mjs",
+    "benchmark:word:smoke": "node tests/word-benchmark/run-live-word-benchmark.mjs --mode core --fixture Generic-report-template.docx --run-id latest-word-benchmark-smoke"
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "catalog:",

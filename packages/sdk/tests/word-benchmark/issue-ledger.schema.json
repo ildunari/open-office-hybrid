@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://office-agents.local/word-benchmark/issue-ledger.schema.json",
+  "title": "Word Live Review Active Issue Entry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "issue_id",
+    "capability_area",
+    "source_document",
+    "task_id",
+    "date_run_reference",
+    "observed_behavior",
+    "expected_behavior",
+    "reproduction_summary",
+    "seen_in",
+    "likely_failure_class",
+    "likely_solution_surface",
+    "status"
+  ],
+  "properties": {
+    "issue_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "capability_area": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_document": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "date_run_reference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "observed_behavior": {
+      "type": "string"
+    },
+    "expected_behavior": {
+      "type": "string"
+    },
+    "reproduction_summary": {
+      "type": "string"
+    },
+    "seen_in": {
+      "type": "string",
+      "enum": [
+        "harness",
+        "live_review",
+        "both"
+      ]
+    },
+    "likely_failure_class": {
+      "type": "string",
+      "minLength": 1
+    },
+    "likely_solution_surface": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "triaged",
+        "blocked",
+        "resolved"
+      ]
+    }
+  }
+}

@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "local": [
+    {
+      "source_doc_id": "report_tti_generic_v1",
+      "file": "fixtures/Generic-report-template.docx",
+      "display_name": "Generic report template",
+      "archetype": "technical_report",
+      "tags": ["local", "checked_in", "starter_suite"],
+      "difficulty_vector": {
+        "navigation": 3,
+        "structure": 4,
+        "field_dependency": 4,
+        "review_state": 1,
+        "layout_fragility": 3,
+        "compliance_risk": 2,
+        "semantic_dependency": 3
+      },
+      "risk_profile": ["template-sensitive", "section-heavy", "toc-relevant"],
+      "sha256": "d436fe997a27ae15ec84dd9bea5e49c4f1565587ea5f0aff5dc61743a75b90b3",
+      "expected_session_fingerprint": {
+        "pageCount": 19,
+        "sectionCount": 9,
+        "tableCount": 5,
+        "changeTrackingMode": "Off",
+        "previewMarkers": ["[Title Style, Initial Caps]", "Acknowledgements", "Report Documentation Page"]
+      }
+    },
+    {
+      "source_doc_id": "legal_contract_msc_core_terms_ew_2025_v1",
+      "file": "fixtures/MSC_-_Core_Terms_-_E_W_-_Word_v2.2A_2025.DOCX",
+      "display_name": "Model Services Contract core terms",
+      "archetype": "legal",
+      "tags": ["local", "checked_in", "starter_suite"],
+      "difficulty_vector": {
+        "navigation": 5,
+        "structure": 5,
+        "field_dependency": 3,
+        "review_state": 3,
+        "layout_fragility": 2,
+        "compliance_risk": 5,
+        "semantic_dependency": 5
+      },
+      "risk_profile": ["legal-numbering", "defined-terms", "high-risk"],
+      "sha256": "43c7e8b70daf21779253921143b6bc71419ec3b59dba1071469cdc5f557a7f8e",
+      "expected_session_fingerprint": {
+        "pageCount": 84,
+        "sectionCount": 2,
+        "tableCount": 3,
+        "changeTrackingMode": "Off",
+        "previewMarkers": ["GLD Standard Form Document", "Model Services Contract", "Category"]
+      }
+    },
+    {
+      "source_doc_id": "grant_nih_r01_template_v1",
+      "file": "fixtures/NIH New R01 Application Template.docx",
+      "display_name": "NIH New R01 application template",
+      "archetype": "grant",
+      "tags": ["local", "checked_in", "starter_suite"],
+      "difficulty_vector": {
+        "navigation": 2,
+        "structure": 3,
+        "field_dependency": 1,
+        "review_state": 3,
+        "layout_fragility": 2,
+        "compliance_risk": 5,
+        "semantic_dependency": 4
+      },
+      "risk_profile": ["grant-boundaries", "review-sensitive", "compliance-heavy"],
+      "sha256": "4678c5c714ee4124ba93a26479ca527115b4a4bd2e37fdc4b8af2c45ff604c07",
+      "expected_session_fingerprint": {
+        "pageCount": 1,
+        "sectionCount": 1,
+        "tableCount": 0,
+        "changeTrackingMode": "TrackAll",
+        "previewMarkers": ["NIH New R01 Program Cover Page", "Principal Investigator", "Program Cover Page"]
+      }
+    },
+    {
+      "source_doc_id": "review_track_changes_sample_v1",
+      "file": "fixtures/Sample-MS-Word-Track-Changes.docx",
+      "display_name": "Sample MS Word track changes document",
+      "archetype": "review_state",
+      "tags": ["local", "checked_in", "starter_suite"],
+      "difficulty_vector": {
+        "navigation": 2,
+        "structure": 2,
+        "field_dependency": 1,
+        "review_state": 5,
+        "layout_fragility": 1,
+        "compliance_risk": 3,
+        "semantic_dependency": 2
+      },
+      "risk_profile": ["tracked-changes", "review-preservation"],
+      "sha256": "c886a012b9d68fc8f94badbc6d692b3b80b0451d87a2208588df781a5a9bccbf",
+      "expected_session_fingerprint": {
+        "pageCount": 2,
+        "sectionCount": 1,
+        "tableCount": 0,
+        "changeTrackingMode": "Off",
+        "previewMarkers": ["MS Word Track Changes Features", "Track Changes", "proofreads your document"]
+      }
+    },
+    {
+      "source_doc_id": "legal_pleading_usdc_complaint_v1",
+      "file": "fixtures/complaint_for_a_civil_case.docx",
+      "display_name": "Complaint for a civil case",
+      "archetype": "legal",
+      "tags": ["local", "checked_in", "starter_suite"],
+      "difficulty_vector": {
+        "navigation": 3,
+        "structure": 4,
+        "field_dependency": 1,
+        "review_state": 1,
+        "layout_fragility": 2,
+        "compliance_risk": 5,
+        "semantic_dependency": 4
+      },
+      "risk_profile": ["pleading-structure", "scoped-legal-edits"],
+      "sha256": "007f462fe3ae66a547646014b0adede3a591564748974494160c56a91a6bb265",
+      "expected_session_fingerprint": {
+        "pageCount": 5,
+        "sectionCount": 1,
+        "tableCount": 1,
+        "changeTrackingMode": "Off",
+        "previewMarkers": ["Complaint for a Civil Case", "United States District Court", "Pro Se 1"]
+      }
+    },
+    {
+      "source_doc_id": "grant_biosketch_nonfellowship_2021_v1",
+      "file": "fixtures/non-fellowship-biosketch-sample-2021.docx",
+      "display_name": "NIH non-fellowship biosketch sample",
+      "archetype": "grant",
+      "tags": ["local", "checked_in", "starter_suite"],
+      "difficulty_vector": {
+        "navigation": 2,
+        "structure": 3,
+        "field_dependency": 1,
+        "review_state": 1,
+        "layout_fragility": 2,
+        "compliance_risk": 4,
+        "semantic_dependency": 4
+      },
+      "risk_profile": ["biosketch-format", "page-limit", "consistency"],
+      "sha256": "5dc8542ad987531e9285ae580b484a4e3cb8f72010be82b389fce92ca9075069",
+      "expected_session_fingerprint": {
+        "pageCount": 3,
+        "sectionCount": 1,
+        "tableCount": 1,
+        "changeTrackingMode": "Off",
+        "previewMarkers": ["BIOGRAPHICAL SKETCH", "Senior/key personnel", "DO NOT EXCEED FIVE PAGES"]
+      }
+    }
+  ],
+  "pending": [
+    {
+      "source_doc_id": "thesis_seed_pending_v1",
+      "display_name": "Pending thesis/dissertation seed",
+      "archetype": "thesis",
+      "pending_fixture": true,
+      "notes": "Scaffolded archetype placeholder for thesis-focused section, TOC, LOF/LOT, and pagination tasks."
+    },
+    {
+      "source_doc_id": "scientific_paper_seed_pending_v1",
+      "display_name": "Pending scientific paper seed",
+      "archetype": "scientific_paper",
+      "pending_fixture": true,
+      "notes": "Scaffolded archetype placeholder for citation-safe and figure/table cross-reference tasks."
+    }
+  ]
+}

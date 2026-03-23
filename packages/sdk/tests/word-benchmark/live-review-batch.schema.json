@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://office-agents.local/word-benchmark/live-review-batch.schema.json",
+  "title": "Word Live Review Batch Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "batch_id",
+    "capability_area",
+    "source_document",
+    "selected_tasks",
+    "batch_intent",
+    "chosen_documents",
+    "per_task_timeline",
+    "diagnosis_summary",
+    "fix_attempted",
+    "rerun_improved",
+    "mismatch_map",
+    "stop_reasons",
+    "quarantined_tasks",
+    "next_action_queue"
+  ],
+  "properties": {
+    "batch_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "capability_area": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_document": {
+      "type": "string",
+      "minLength": 1
+    },
+    "selected_tasks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "batch_intent": {
+      "type": "string"
+    },
+    "chosen_documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source_document",
+          "selection_reason"
+        ],
+        "properties": {
+          "source_document": {
+            "type": "string"
+          },
+          "selection_reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "per_task_timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task_id",
+          "events"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "diagnosis_summary": {
+      "type": "string"
+    },
+    "fix_attempted": {
+      "type": "boolean"
+    },
+    "rerun_improved": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "mismatch_map": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task_id",
+          "mismatch_class"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string"
+          },
+          "mismatch_class": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "stop_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "quarantined_tasks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_action_queue": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

@@ -1,0 +1,106 @@
+export const LIVE_REVIEW_TEXTAREA_SELECTOR = "[data-live-review-textarea]";
+export const LIVE_REVIEW_SEND_BUTTON_SELECTOR = "[data-live-review-send]";
+
+export function buildReviewerPrompt({ capabilityId, taskId, sourceDocument }) {
+  return [
+    `Review task: ${taskId}`,
+    `Capability area: ${capabilityId}`,
+    `Source document: ${sourceDocument}`,
+    "",
+    "Use the `get_document_structure` tool exactly once before answering.",
+    "Return a short summary of the document structure and whether the document appears ready for a scoped review task.",
+    "Do not edit the document.",
+  ].join("\n");
+}
+
+export function buildTaskpanePromptSubmissionScript({ prompt }) {
+  const textareaSelector = JSON.stringify(LIVE_REVIEW_TEXTAREA_SELECTOR);
+  const sendButtonSelector = JSON.stringify(LIVE_REVIEW_SEND_BUTTON_SELECTOR);
+  const promptText = JSON.stringify(prompt);
+
+  return `(async () => {
+    const textarea = document.querySelector(${textareaSelector});
+    if (!(textarea instanceof HTMLTextAreaElement)) {
+      throw new Error("Live review textarea selector not found");
+    }
+
+    const sendButton = document.querySelector(${sendButtonSelector});
+    if (!(sendButton instanceof HTMLButtonElement)) {
+      throw new Error("Live review send button selector not found");
+    }
+
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    )?.set;
+    if (valueSetter) {
+      valueSetter.call(textarea, ${promptText});
+    } else {
+      textarea.value = ${promptText};
+    }
+
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.dispatchEvent(new Event("change", { bubbles: true }));
+    textarea.focus();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    if (sendButton.disabled) {
+      throw new Error("Live review send button is disabled");
+    }
+
+    textarea.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    if (!sendButton.disabled && textarea.value.trim().length > 0) {
+      sendButton.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+        }),
+      );
+    }
+
+    return {
+      submitted: true,
+      promptLength: ${promptText}.length,
+      textareaSelector: ${textareaSelector},
+      sendButtonSelector: ${sendButtonSelector},
+    };
+  })();`;
+}
+
+export function classifyLiveExecutionReceipts({
+  baselineMessageCount,
+  stateSnapshots,
+  newEvents,
+}) {
+  const promptSubmitted = stateSnapshots.some((state) => {
+    const messageCount = state?.sessionStats?.messageCount ?? baselineMessageCount;
+    return Boolean(
+      state?.isStreaming ||
+        state?.activeTaskSummary ||
+        messageCount > baselineMessageCount,
+    );
+  });
+
+  const executionObserved = newEvents.some(
+    (event) => event.event === "tool:started" || event.event === "tool:completed",
+  );
+  const completionObserved = newEvents.some(
+    (event) => event.event === "message:completed",
+  );
+
+  return {
+    promptSubmitted,
+    executionObserved,
+    completionObserved,
+  };
+}

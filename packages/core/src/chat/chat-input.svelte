@@ -113,6 +113,7 @@
     <textarea
       bind:this={textareaRef}
       bind:value={input}
+      data-live-review-textarea
       oninput={autoResize}
       onkeydown={(event) => {
         if (event.key === "Enter" && !event.shiftKey) {
@@ -155,6 +156,7 @@
         <button
           type="button"
           onclick={handleSubmit}
+          data-live-review-send
           disabled={!$runtimeState.providerConfig || !input.trim()}
           class="flex items-center justify-center w-6 h-5 text-(--chat-text-muted) hover:text-(--chat-text-primary) disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
         >
