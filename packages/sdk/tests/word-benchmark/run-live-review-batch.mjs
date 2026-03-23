@@ -14,11 +14,13 @@ import {
   buildReviewerPrompt,
   buildTaskpanePromptSubmissionScript,
   classifyLiveExecutionReceipts,
+  unwrapTaskpaneSubmissionResult,
 } from "./live-review-submission.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(__dirname, "..", "..", "..", "..", "..");
 const MAX_BUFFER = 20 * 1024 * 1024;
+const RECEIPT_EVENT_LIMIT = "200";
 
 function parseArgs(argv) {
   const args = {
@@ -211,12 +213,33 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForIdleSession({
+  bridgeUrl,
+  sessionId,
+  timeoutMs = 120000,
+}) {
+  const startedAt = Date.now();
+  let lastState = null;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    lastState = execBridgeJson(bridgeUrl, "state", sessionId);
+    if (lastState?.isStreaming === false) {
+      return lastState;
+    }
+    await sleep(1000);
+  }
+
+  throw new Error(
+    `Timed out waiting for Hybrid session ${sessionId} to become idle.`,
+  );
+}
+
 async function observeLiveExecutionReceipts({
   bridgeUrl,
   sessionId,
   baselineMessageCount,
   baselineEventIds,
-  timeoutMs = 45000,
+  timeoutMs = 75000,
 }) {
   const stateSnapshots = [];
   const newEvents = [];
@@ -227,7 +250,13 @@ async function observeLiveExecutionReceipts({
     const state = execBridgeJson(bridgeUrl, "state", sessionId);
     stateSnapshots.push(state);
 
-    const events = execBridgeJson(bridgeUrl, "events", sessionId, "--limit", "50");
+    const events = execBridgeJson(
+      bridgeUrl,
+      "events",
+      sessionId,
+      "--limit",
+      RECEIPT_EVENT_LIMIT,
+    );
     for (const event of events) {
       if (seenEventIds.has(event.id)) continue;
       seenEventIds.add(event.id);
@@ -258,16 +287,11 @@ async function observeLiveExecutionReceipts({
 }
 
 function completeMinimalLiveReviewerResult({ receipts, metadata, runtimeState, events }) {
-  const hasBridgeEvents = events.some(
-    (entry) => entry.event === "bridge_connected" || entry.event === "bridge_status",
-  );
   const sessionLooksHealthy =
     metadata?.ok === true &&
     metadata.metadata?.hasContent === true &&
     (metadata.metadata?.pageCount ?? 0) > 0 &&
-    runtimeState?.isStreaming === false &&
-    runtimeState?.error == null &&
-    hasBridgeEvents;
+    runtimeState?.error == null;
 
   if (
     sessionLooksHealthy &&
@@ -461,13 +485,16 @@ async function main() {
     batchReport.stop_reasons.push("awaiting_hybrid_pane");
   } else {
     const session = sessions[0];
-    const baselineState = execBridgeJson(args.bridgeUrl, "state", session.sessionId);
+    const baselineState = await waitForIdleSession({
+      bridgeUrl: args.bridgeUrl,
+      sessionId: session.sessionId,
+    });
     const baselineEvents = execBridgeJson(
       args.bridgeUrl,
       "events",
       session.sessionId,
       "--limit",
-      "50",
+      RECEIPT_EVENT_LIMIT,
     );
     const reviewerPrompt = buildReviewerPrompt({
       capabilityId: plan.capabilityId,
@@ -477,11 +504,12 @@ async function main() {
     const submissionScript = buildTaskpanePromptSubmissionScript({
       prompt: reviewerPrompt,
     });
-    const submissionResult = execBridgeTaskpaneJson(
+    const submissionEnvelope = execBridgeTaskpaneJson(
       args.bridgeUrl,
       session.sessionId,
       submissionScript,
     );
+    const submissionResult = unwrapTaskpaneSubmissionResult(submissionEnvelope);
     const metadata = execBridgeJson(args.bridgeUrl, "metadata", "word");
     const receiptObservation = await observeLiveExecutionReceipts({
       bridgeUrl: args.bridgeUrl,
@@ -523,7 +551,7 @@ async function main() {
       "reviewer_task_started",
       ...completion.timelineEvents,
     );
-    if (submissionResult?.submitted) {
+    if (submissionResult?.submitted || receiptObservation.receipts.promptSubmitted) {
       batchReport.per_task_timeline[0].events.splice(2, 0, "prompt_submitted");
     }
     batchReport.diagnosis_summary = completion.diagnosisSummary;

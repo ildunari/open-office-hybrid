@@ -39,6 +39,7 @@ import {
   LIVE_REVIEW_AUTOMATION_GLOBAL,
   LIVE_REVIEW_SEND_BUTTON_SELECTOR,
   LIVE_REVIEW_TEXTAREA_SELECTOR,
+  unwrapTaskpaneSubmissionResult,
 } from "./word-benchmark/live-review-submission.mjs";
 
 const suiteDir = path.join(
@@ -409,6 +410,33 @@ describe("word benchmark suite", () => {
     expect(completed.timelineEvents).toContain("prompt_submitted");
   });
 
+  it("treats a preflighted session as healthy without requiring a fresh bridge event", () => {
+    const completed = completeMinimalLiveReviewerResult({
+      receipts: {
+        promptSubmitted: true,
+        executionObserved: true,
+        completionObserved: true,
+      },
+      metadata: {
+        ok: true,
+        metadata: {
+          hasContent: true,
+          pageCount: 1,
+        },
+      },
+      runtimeState: {
+        isStreaming: false,
+        error: null,
+        activePlanSummary: null,
+        activeTaskSummary: null,
+      },
+      events: [],
+    });
+
+    expect(completed.failureClassification).toBe("reviewer_task_completed");
+    expect(completed.verdict).toBe("pass");
+  });
+
   it("keeps stable live review selectors in the chat input", () => {
     const chatInputPath = path.join(
       __dirname,
@@ -441,6 +469,7 @@ describe("word benchmark suite", () => {
 
     expect(source).toContain("__OFFICE_AGENTS_AUTOMATION__");
     expect(source).toContain("submitPrompt");
+    expect(source).toContain("freshSession");
     expect(LIVE_REVIEW_AUTOMATION_GLOBAL).toBe(
       "window.__OFFICE_AGENTS_AUTOMATION__",
     );
@@ -456,12 +485,15 @@ describe("word benchmark suite", () => {
 
     expect(script).toContain(LIVE_REVIEW_AUTOMATION_GLOBAL);
     expect(script).toContain("submitPrompt");
+    expect(script).toContain("freshSession: true");
     expect(script).toContain(LIVE_REVIEW_TEXTAREA_SELECTOR);
     expect(script).toContain(LIVE_REVIEW_SEND_BUTTON_SELECTOR);
     expect(script).toContain('new KeyboardEvent("keydown"');
     expect(script).toContain('new MouseEvent("click"');
     expect(script).toContain('submissionMethod: "dom"');
     expect(script).toContain("get_document_structure");
+    expect(prompt).toContain("Do not create a plan.");
+    expect(prompt).toContain("Use exactly one tool call");
   });
 
   it("classifies the live execution receipts from runtime state and events", () => {
@@ -491,9 +523,24 @@ describe("word benchmark suite", () => {
       ],
       newEvents: [
         { event: "message:created" },
-        { event: "tool:started" },
-        { event: "tool:completed" },
-        { event: "message:completed" },
+        {
+          event: "console",
+          payload: {
+            args: ["[Runtime] Agent event:", "tool_execution_start"],
+          },
+        },
+        {
+          event: "console",
+          payload: {
+            args: ["[Runtime] Agent event:", "tool_execution_end"],
+          },
+        },
+        {
+          event: "console",
+          payload: {
+            args: ["[Runtime] Agent event:", "agent_end"],
+          },
+        },
       ],
     });
 
@@ -501,6 +548,26 @@ describe("word benchmark suite", () => {
       promptSubmitted: true,
       executionObserved: true,
       completionObserved: true,
+    });
+  });
+
+  it("unwraps nested bridge exec submission results", () => {
+    expect(
+      unwrapTaskpaneSubmissionResult({
+        ok: true,
+        result: {
+          mode: "unsafe",
+          result: {
+            submitted: true,
+            submissionMethod: "controller",
+            freshSession: true,
+          },
+        },
+      }),
+    ).toEqual({
+      submitted: true,
+      submissionMethod: "controller",
+      freshSession: true,
     });
   });
 

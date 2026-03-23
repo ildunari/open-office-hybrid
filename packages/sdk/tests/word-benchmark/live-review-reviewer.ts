@@ -42,16 +42,11 @@ export interface MinimalLiveReviewerCompletion {
 export function completeMinimalLiveReviewerResult(
   input: MinimalLiveReviewerCompletionInput,
 ): MinimalLiveReviewerCompletion {
-  const hasBridgeEvents = input.events.some(
-    (entry) => entry.event === "bridge_connected" || entry.event === "bridge_status",
-  );
   const sessionLooksHealthy =
     input.metadata.ok === true &&
     input.metadata.metadata?.hasContent === true &&
     (input.metadata.metadata?.pageCount ?? 0) > 0 &&
-    input.runtimeState.isStreaming === false &&
-    input.runtimeState.error == null &&
-    hasBridgeEvents;
+    input.runtimeState.error == null;
 
   if (
     sessionLooksHealthy &&

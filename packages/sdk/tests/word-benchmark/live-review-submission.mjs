@@ -5,12 +5,18 @@ export const LIVE_REVIEW_AUTOMATION_GLOBAL =
 
 export function buildReviewerPrompt({ capabilityId, taskId, sourceDocument }) {
   return [
-    `Review task: ${taskId}`,
-    `Capability area: ${capabilityId}`,
-    `Source document: ${sourceDocument}`,
+    `Live reviewer check for task ${taskId} in capability area ${capabilityId}.`,
+    `Source document: ${sourceDocument}.`,
     "",
-    "Use the `get_document_structure` tool exactly once before answering.",
-    "Return a short summary of the document structure and whether the document appears ready for a scoped review task.",
+    "Read-only check only.",
+    "Do not edit the document.",
+    "Do not create a plan.",
+    "Do not call update_plan.",
+    "Use exactly one tool call: `get_document_structure`.",
+    "Do not call any other tool.",
+    "After that single tool call, respond with exactly two bullets:",
+    "- Bullet 1: a short structure summary.",
+    "- Bullet 2: whether the document appears ready for a scoped review task.",
     "Do not edit the document.",
   ].join("\n");
 }
@@ -31,7 +37,7 @@ export function buildTaskpanePromptSubmissionScript({ prompt }) {
         return value?.[key];
       }, undefined);
     if (automation && typeof automation.submitPrompt === "function") {
-      return automation.submitPrompt(${promptText});
+      return automation.submitPrompt(${promptText}, { freshSession: true });
     }
 
     const textarea = document.querySelector(${textareaSelector});
@@ -93,11 +99,53 @@ export function buildTaskpanePromptSubmissionScript({ prompt }) {
   })();`;
 }
 
+export function unwrapTaskpaneSubmissionResult(executionResult) {
+  if (
+    executionResult &&
+    typeof executionResult === "object" &&
+    executionResult.result &&
+    typeof executionResult.result === "object" &&
+    executionResult.result.result &&
+    typeof executionResult.result.result === "object"
+  ) {
+    return executionResult.result.result;
+  }
+
+  if (
+    executionResult &&
+    typeof executionResult === "object" &&
+    executionResult.result &&
+    typeof executionResult.result === "object"
+  ) {
+    return executionResult.result;
+  }
+
+  return executionResult;
+}
+
 export function classifyLiveExecutionReceipts({
   baselineMessageCount,
   stateSnapshots,
   newEvents,
 }) {
+  const hasConsoleReceipt = (marker) =>
+    newEvents.some(
+      (event) => {
+        if (event.event !== "console") return false;
+        if (
+          typeof event.payloadSummary === "string" &&
+          event.payloadSummary.includes(`"${marker}"`)
+        ) {
+          return true;
+        }
+
+        return (
+          Array.isArray(event.payload?.args) &&
+          event.payload.args[1] === marker
+        );
+      },
+    );
+
   const promptSubmitted = stateSnapshots.some((state) => {
     const messageCount = state?.sessionStats?.messageCount ?? baselineMessageCount;
     return Boolean(
@@ -116,18 +164,20 @@ export function classifyLiveExecutionReceipts({
         event.event === "tool:started" ||
         event.event === "tool:completed" ||
         event.event === "tool:failed",
-    );
+    ) ||
+    hasConsoleReceipt("tool_execution_start") ||
+    hasConsoleReceipt("tool_execution_end");
   const completionObserved =
     stateSnapshots.some((state) => {
-      const messageCount =
-        state?.sessionStats?.messageCount ?? baselineMessageCount;
       return Boolean(
-        messageCount > baselineMessageCount &&
-          state?.isStreaming === false &&
-          state?.activeTaskSummary?.status === "completed",
+        state?.isStreaming === false &&
+          state?.activeTaskSummary?.status === "completed" &&
+          (state?.activeTaskSummary?.toolExecutionCount ?? 0) > 0,
       );
     }) ||
-    newEvents.some((event) => event.event === "message:completed");
+    newEvents.some((event) => event.event === "message:completed") ||
+    hasConsoleReceipt("message_end") ||
+    hasConsoleReceipt("agent_end");
 
   return {
     promptSubmitted,

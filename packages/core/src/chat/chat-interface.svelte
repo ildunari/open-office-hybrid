@@ -40,10 +40,14 @@
   }
 
   type TaskpaneAutomation = {
-    submitPrompt: (prompt: string) => Promise<{
+    submitPrompt: (
+      prompt: string,
+      options?: { freshSession?: boolean },
+    ) => Promise<{
       submitted: boolean;
       promptLength: number;
       submissionMethod: "controller";
+      freshSession: boolean;
     }>;
   };
 
@@ -69,7 +73,7 @@
 
   function getTaskpaneAutomation(): TaskpaneAutomation {
     return {
-      submitPrompt: async (prompt: string) => {
+      submitPrompt: async (prompt: string, options) => {
         const trimmed = prompt.trim();
         if (!trimmed) {
           throw new Error("Automation prompt must not be empty");
@@ -85,11 +89,15 @@
           );
         }
 
-        await controller.sendMessage(trimmed);
+        if (options?.freshSession) {
+          await controller.newSession();
+        }
+        void controller.sendMessage(trimmed);
         return {
           submitted: true,
           promptLength: trimmed.length,
           submissionMethod: "controller",
+          freshSession: Boolean(options?.freshSession),
         };
       },
     };

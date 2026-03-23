@@ -65,6 +65,7 @@ export interface BridgeRuntimeStateLike {
 export interface AppAdapter {
   hostApp?: HostApp;
   tools: AgentTool[];
+  bridgeEventSink?: (event: string, payload: Record<string, unknown>) => void;
   buildSystemPrompt: (skills: SkillMeta[]) => string;
   getDocumentId: () => Promise<string>;
   getDocumentMetadata?: () => Promise<{

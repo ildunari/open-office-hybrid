@@ -48,6 +48,7 @@ interface BridgeAdapter {
   appName?: string;
   appVersion?: string;
   metadataTag?: string;
+  bridgeEventSink?: (event: string, payload: Record<string, unknown>) => void;
   getDocumentId: () => Promise<string>;
   getDocumentMetadata?: () => Promise<{
     metadata: object;
@@ -251,6 +252,21 @@ export function startOfficeBridge(
       payload: serializeForJson(payload),
     } satisfies BridgeEventMessage);
   };
+
+  const bridgeEventSink = (event: string, payload: Record<string, unknown>) => {
+    sendEvent(event, payload);
+    if (
+      event.startsWith("state:") ||
+      event.startsWith("message:") ||
+      event.startsWith("tool:")
+    ) {
+      scheduleMicrotask(() => {
+        refresh().catch(() => undefined);
+      });
+    }
+  };
+
+  options.adapter.bridgeEventSink = bridgeEventSink;
 
   const refresh = async () => {
     const snapshot = await captureSessionSnapshot(
@@ -782,6 +798,9 @@ export function startOfficeBridge(
       state.stopped = true;
       clearReconnectTimer();
       teardown();
+      if (options.adapter.bridgeEventSink === bridgeEventSink) {
+        delete options.adapter.bridgeEventSink;
+      }
       if (state.socket) {
         state.socket.close();
         state.socket = null;
