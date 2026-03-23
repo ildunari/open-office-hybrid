@@ -480,6 +480,8 @@ describe("word benchmark suite", () => {
       capabilityId: "nih_grants",
       taskId: "S03-grant-scope-and-compliance",
       sourceDocument: "grant_nih_r01_template_v1",
+      taskPrompt:
+        "Assess whether the scoped review task can be performed safely without touching unrelated content.",
     });
     const script = buildTaskpanePromptSubmissionScript({ prompt });
 
@@ -494,6 +496,21 @@ describe("word benchmark suite", () => {
     expect(script).toContain("get_document_structure");
     expect(prompt).toContain("Do not create a plan.");
     expect(prompt).toContain("Use exactly one tool call");
+    expect(prompt).toContain("Target task intent:");
+  });
+
+  it("supports manual report task targeting in the live-review runner", () => {
+    const runnerPath = path.join(
+      __dirname,
+      "word-benchmark",
+      "run-live-review-batch.mjs",
+    );
+    const source = readFileSync(runnerPath, "utf8");
+
+    expect(source).toContain("--source-document");
+    expect(source).toContain("--task-id");
+    expect(source).toContain("entryMode: \"orchestrator_led\"");
+    expect(source).toContain("manual_orchestrator_led");
   });
 
   it("classifies the live execution receipts from runtime state and events", () => {

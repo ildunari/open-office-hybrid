@@ -29,6 +29,8 @@ function parseArgs(argv) {
     maxDocs: 2,
     maxTasks: 4,
     planOnly: false,
+    sourceDocument: null,
+    taskId: null,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -38,9 +40,11 @@ function parseArgs(argv) {
     else if (value === "--max-docs") args.maxDocs = Number(argv[index + 1]), index += 1;
     else if (value === "--max-tasks") args.maxTasks = Number(argv[index + 1]), index += 1;
     else if (value === "--plan-only") args.planOnly = true;
+    else if (value === "--source-document") args.sourceDocument = argv[index + 1], index += 1;
+    else if (value === "--task-id") args.taskId = argv[index + 1], index += 1;
   }
 
-  if (!args.capability) {
+  if (!args.capability && !args.sourceDocument) {
     throw new Error("Missing required --capability argument");
   }
 
@@ -156,6 +160,69 @@ function buildPlan({ capabilityId, maxDocs, maxTasks }) {
     maxDocs,
     maxTasksPerDocument: maxTasks,
     documents,
+  };
+}
+
+function buildManualPlan({ sourceDocument, taskId }) {
+  const inputs = loadPlanInputs();
+  const fixture = inputs.fixtures.local.find(
+    (entry) => entry.source_doc_id === sourceDocument,
+  );
+  if (!fixture) {
+    throw new Error(`Unknown source document: ${sourceDocument}`);
+  }
+
+  const allCandidates = [
+    ...inputs.tasks.map((task) => ({
+      taskId: task.task_id,
+      prompt: task.prompt,
+      phase: task.phase,
+      kind: "task",
+      sourceDocument: task.source_doc_id,
+    })),
+    ...inputs.sessions.map((session) => ({
+      taskId: session.session_id,
+      prompt: session.goal,
+      phase: session.phase,
+      kind: "session",
+      sourceDocument: session.source_doc_id,
+    })),
+  ].filter((entry) => entry.sourceDocument === sourceDocument);
+
+  const selectedTask = taskId
+    ? allCandidates.find((entry) => entry.taskId === taskId)
+    : allCandidates.sort((left, right) => right.phase - left.phase)[0];
+
+  if (!selectedTask) {
+    throw new Error(
+      taskId
+        ? `Unknown task ${taskId} for ${sourceDocument}`
+        : `No task candidates found for ${sourceDocument}`,
+    );
+  }
+
+  return {
+    capabilityId: "manual_orchestrator_led",
+    entryMode: "orchestrator_led",
+    maxDocs: 1,
+    maxTasksPerDocument: 1,
+    documents: [
+      {
+        sourceDocument: fixture.source_doc_id,
+        displayName: fixture.display_name,
+        fixtureFile: fixture.file,
+        selectionScore: 1,
+        tasks: [
+          {
+            taskId: selectedTask.taskId,
+            phase: selectedTask.phase,
+            kind: selectedTask.kind,
+            riskScore: Number((selectedTask.phase / 10).toFixed(4)),
+            prompt: selectedTask.prompt,
+          },
+        ],
+      },
+    ],
   };
 }
 
@@ -490,11 +557,16 @@ function createBatchReportSkeleton(plan, document, taskId, batchId) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const plan = buildPlan({
-    capabilityId: args.capability,
-    maxDocs: Math.min(Math.max(args.maxDocs, 1), 3),
-    maxTasks: Math.min(Math.max(args.maxTasks, 1), 4),
-  });
+  const plan = args.sourceDocument
+    ? buildManualPlan({
+        sourceDocument: args.sourceDocument,
+        taskId: args.taskId,
+      })
+    : buildPlan({
+        capabilityId: args.capability,
+        maxDocs: Math.min(Math.max(args.maxDocs, 1), 3),
+        maxTasks: Math.min(Math.max(args.maxTasks, 1), 4),
+      });
 
   const liveReviewRoot = path.join(__dirname, "artifacts", "live-review");
   ensureDir(liveReviewRoot);
@@ -554,6 +626,7 @@ async function main() {
       capabilityId: plan.capabilityId,
       taskId: task.taskId,
       sourceDocument: document.sourceDocument,
+      taskPrompt: task.prompt,
     });
     const submissionScript = buildTaskpanePromptSubmissionScript({
       prompt: reviewerPrompt,

@@ -3,10 +3,16 @@ export const LIVE_REVIEW_SEND_BUTTON_SELECTOR = "[data-live-review-send]";
 export const LIVE_REVIEW_AUTOMATION_GLOBAL =
   "window.__OFFICE_AGENTS_AUTOMATION__";
 
-export function buildReviewerPrompt({ capabilityId, taskId, sourceDocument }) {
+export function buildReviewerPrompt({
+  capabilityId,
+  taskId,
+  sourceDocument,
+  taskPrompt,
+}) {
   return [
     `Live reviewer check for task ${taskId} in capability area ${capabilityId}.`,
     `Source document: ${sourceDocument}.`,
+    taskPrompt ? `Target task intent: ${taskPrompt}` : null,
     "",
     "Read-only check only.",
     "Do not edit the document.",
