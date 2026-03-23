@@ -1,5 +1,7 @@
 export const LIVE_REVIEW_TEXTAREA_SELECTOR = "[data-live-review-textarea]";
 export const LIVE_REVIEW_SEND_BUTTON_SELECTOR = "[data-live-review-send]";
+export const LIVE_REVIEW_AUTOMATION_GLOBAL =
+  "window.__OFFICE_AGENTS_AUTOMATION__";
 
 export function buildReviewerPrompt({ capabilityId, taskId, sourceDocument }) {
   return [
@@ -17,8 +19,21 @@ export function buildTaskpanePromptSubmissionScript({ prompt }) {
   const textareaSelector = JSON.stringify(LIVE_REVIEW_TEXTAREA_SELECTOR);
   const sendButtonSelector = JSON.stringify(LIVE_REVIEW_SEND_BUTTON_SELECTOR);
   const promptText = JSON.stringify(prompt);
+  const automationGlobal = JSON.stringify(LIVE_REVIEW_AUTOMATION_GLOBAL);
 
   return `(async () => {
+    const automation = ${automationGlobal}
+      .split(".")
+      .reduce((value, key, index) => {
+        if (index === 0) {
+          return key === "window" ? window : globalThis[key];
+        }
+        return value?.[key];
+      }, undefined);
+    if (automation && typeof automation.submitPrompt === "function") {
+      return automation.submitPrompt(${promptText});
+    }
+
     const textarea = document.querySelector(${textareaSelector});
     if (!(textarea instanceof HTMLTextAreaElement)) {
       throw new Error("Live review textarea selector not found");
@@ -71,6 +86,7 @@ export function buildTaskpanePromptSubmissionScript({ prompt }) {
     return {
       submitted: true,
       promptLength: ${promptText}.length,
+      submissionMethod: "dom",
       textareaSelector: ${textareaSelector},
       sendButtonSelector: ${sendButtonSelector},
     };
@@ -91,12 +107,27 @@ export function classifyLiveExecutionReceipts({
     );
   });
 
-  const executionObserved = newEvents.some(
-    (event) => event.event === "tool:started" || event.event === "tool:completed",
-  );
-  const completionObserved = newEvents.some(
-    (event) => event.event === "message:completed",
-  );
+  const executionObserved =
+    stateSnapshots.some(
+      (state) => (state?.activeTaskSummary?.toolExecutionCount ?? 0) > 0,
+    ) ||
+    newEvents.some(
+      (event) =>
+        event.event === "tool:started" ||
+        event.event === "tool:completed" ||
+        event.event === "tool:failed",
+    );
+  const completionObserved =
+    stateSnapshots.some((state) => {
+      const messageCount =
+        state?.sessionStats?.messageCount ?? baselineMessageCount;
+      return Boolean(
+        messageCount > baselineMessageCount &&
+          state?.isStreaming === false &&
+          state?.activeTaskSummary?.status === "completed",
+      );
+    }) ||
+    newEvents.some((event) => event.event === "message:completed");
 
   return {
     promptSubmitted,

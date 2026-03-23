@@ -39,6 +39,14 @@
     adapter: AppAdapter;
   }
 
+  type TaskpaneAutomation = {
+    submitPrompt: (prompt: string) => Promise<{
+      submitted: boolean;
+      promptLength: number;
+      submissionMethod: "controller";
+    }>;
+  };
+
   let { adapter }: Props = $props();
 
   const controller = (() => {
@@ -58,6 +66,34 @@
   let inputWrapperRef = $state<HTMLDivElement | null>(null);
 
   let theme = $state<Theme>(loadTheme());
+
+  function getTaskpaneAutomation(): TaskpaneAutomation {
+    return {
+      submitPrompt: async (prompt: string) => {
+        const trimmed = prompt.trim();
+        if (!trimmed) {
+          throw new Error("Automation prompt must not be empty");
+        }
+        if (controller.snapshot.isStreaming) {
+          throw new Error(
+            "Session is already streaming. Wait for the current run to finish before submitting another prompt.",
+          );
+        }
+        if (!controller.snapshot.providerConfig) {
+          throw new Error(
+            "Taskpane provider configuration is missing. Configure the taskpane before running live review automation.",
+          );
+        }
+
+        await controller.sendMessage(trimmed);
+        return {
+          submitted: true,
+          promptLength: trimmed.length,
+          submissionMethod: "controller",
+        };
+      },
+    };
+  }
 
   function loadTheme(): Theme {
     const saved = localStorage.getItem(THEME_KEY) as Theme | null;
@@ -189,7 +225,29 @@
   });
 
   onDestroy(() => {
+    delete (
+      window as typeof window & {
+        __OFFICE_AGENTS_AUTOMATION__?: TaskpaneAutomation;
+      }
+    ).__OFFICE_AGENTS_AUTOMATION__;
     controller.dispose();
+  });
+
+  $effect(() => {
+    if (!import.meta.env.DEV) return;
+    (
+      window as typeof window & {
+        __OFFICE_AGENTS_AUTOMATION__?: TaskpaneAutomation;
+      }
+    ).__OFFICE_AGENTS_AUTOMATION__ = getTaskpaneAutomation();
+
+    return () => {
+      delete (
+        window as typeof window & {
+          __OFFICE_AGENTS_AUTOMATION__?: TaskpaneAutomation;
+        }
+      ).__OFFICE_AGENTS_AUTOMATION__;
+    };
   });
 
   const currentName = $derived(

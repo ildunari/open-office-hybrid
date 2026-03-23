@@ -36,6 +36,7 @@ import {
   buildReviewerPrompt,
   buildTaskpanePromptSubmissionScript,
   classifyLiveExecutionReceipts,
+  LIVE_REVIEW_AUTOMATION_GLOBAL,
   LIVE_REVIEW_SEND_BUTTON_SELECTOR,
   LIVE_REVIEW_TEXTAREA_SELECTOR,
 } from "./word-benchmark/live-review-submission.mjs";
@@ -426,7 +427,26 @@ describe("word benchmark suite", () => {
     expect(LIVE_REVIEW_SEND_BUTTON_SELECTOR).toBe("[data-live-review-send]");
   });
 
-  it("builds the taskpane submission script with the stable selectors", () => {
+  it("exposes a stable dev-only taskpane automation hook", () => {
+    const chatInterfacePath = path.join(
+      __dirname,
+      "..",
+      "..",
+      "core",
+      "src",
+      "chat",
+      "chat-interface.svelte",
+    );
+    const source = readFileSync(chatInterfacePath, "utf8");
+
+    expect(source).toContain("__OFFICE_AGENTS_AUTOMATION__");
+    expect(source).toContain("submitPrompt");
+    expect(LIVE_REVIEW_AUTOMATION_GLOBAL).toBe(
+      "window.__OFFICE_AGENTS_AUTOMATION__",
+    );
+  });
+
+  it("builds the taskpane submission script with the automation hook and selector fallback", () => {
     const prompt = buildReviewerPrompt({
       capabilityId: "nih_grants",
       taskId: "S03-grant-scope-and-compliance",
@@ -434,10 +454,13 @@ describe("word benchmark suite", () => {
     });
     const script = buildTaskpanePromptSubmissionScript({ prompt });
 
+    expect(script).toContain(LIVE_REVIEW_AUTOMATION_GLOBAL);
+    expect(script).toContain("submitPrompt");
     expect(script).toContain(LIVE_REVIEW_TEXTAREA_SELECTOR);
     expect(script).toContain(LIVE_REVIEW_SEND_BUTTON_SELECTOR);
     expect(script).toContain('new KeyboardEvent("keydown"');
     expect(script).toContain('new MouseEvent("click"');
+    expect(script).toContain('submissionMethod: "dom"');
     expect(script).toContain("get_document_structure");
   });
 
@@ -447,12 +470,22 @@ describe("word benchmark suite", () => {
       stateSnapshots: [
         {
           isStreaming: true,
-          activeTaskSummary: { id: "task-1" },
+          activeTaskSummary: {
+            id: "task-1",
+            status: "in_progress",
+            mode: "execute",
+            toolExecutionCount: 0,
+          },
           sessionStats: { messageCount: 1 },
         },
         {
           isStreaming: false,
-          activeTaskSummary: null,
+          activeTaskSummary: {
+            id: "task-1",
+            status: "completed",
+            mode: "completed",
+            toolExecutionCount: 1,
+          },
           sessionStats: { messageCount: 2 },
         },
       ],

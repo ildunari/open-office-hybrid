@@ -428,7 +428,14 @@ export class AgentRuntime {
       stepCount: number;
       activeStepIndex: number;
     } | null;
-    activeTaskSummary: { id: string; status: string; mode: string } | null;
+    activeTaskSummary:
+      | {
+          id: string;
+          status: string;
+          mode: string;
+          toolExecutionCount: number;
+        }
+      | null;
     contextBudget: { usagePct: number; action: string };
     lastVerification: { status: string } | null;
     sessionStats: {
@@ -467,6 +474,7 @@ export class AgentRuntime {
             id: task.id,
             status: task.status,
             mode: task.mode ?? "discuss",
+            toolExecutionCount: task.toolExecutions?.length ?? 0,
           }
         : null,
       contextBudget: s.contextBudgetState ?? { usagePct: 0, action: "none" },
