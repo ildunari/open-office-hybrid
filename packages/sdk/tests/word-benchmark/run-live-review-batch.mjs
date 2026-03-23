@@ -196,6 +196,58 @@ function execBridgeJson(bridgeUrl, ...commandArgs) {
   return JSON.parse(output);
 }
 
+function isRetryableBridgeDisconnect(error) {
+  const message =
+    error instanceof Error ? error.message : String(error ?? "");
+  return (
+    message.includes("Bridge session disconnected: socket closed") ||
+    message.includes("No bridge sessions available") ||
+    message.includes("No sessions connected")
+  );
+}
+
+async function execBridgeJsonWithReconnect(
+  bridgeUrl,
+  commandArgs,
+  {
+    sessionSelector = null,
+    retries = 5,
+    delayMs = 1000,
+  } = {},
+) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return execBridgeJson(bridgeUrl, ...commandArgs);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableBridgeDisconnect(error) || attempt === retries) {
+        throw error;
+      }
+
+      await sleep(delayMs);
+
+      if (sessionSelector) {
+        const sessions = getOfficeBridgeSessions(bridgeUrl)
+          .map((entry) => entry.snapshot)
+          .filter((snapshot) => snapshot?.app === "word");
+        if (sessions.length > 0) {
+          const session = sessions.find(
+            (entry) =>
+              entry.sessionId === sessionSelector ||
+              entry.documentId === sessionSelector,
+          );
+          if (session) {
+            sessionSelector = session.sessionId;
+          }
+        }
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 function execBridgeTaskpaneJson(bridgeUrl, sessionId, code) {
   const output = execFileSync(
     "pnpm",
@@ -247,15 +299,17 @@ async function observeLiveExecutionReceipts({
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    const state = execBridgeJson(bridgeUrl, "state", sessionId);
+    const state = await execBridgeJsonWithReconnect(
+      bridgeUrl,
+      ["state", sessionId],
+      { sessionSelector: sessionId },
+    );
     stateSnapshots.push(state);
 
-    const events = execBridgeJson(
+    const events = await execBridgeJsonWithReconnect(
       bridgeUrl,
-      "events",
-      sessionId,
-      "--limit",
-      RECEIPT_EVENT_LIMIT,
+      ["events", sessionId, "--limit", RECEIPT_EVENT_LIMIT],
+      { sessionSelector: sessionId },
     );
     for (const event of events) {
       if (seenEventIds.has(event.id)) continue;
@@ -268,7 +322,7 @@ async function observeLiveExecutionReceipts({
       stateSnapshots,
       newEvents,
     });
-    if (receipts.completionObserved || (receipts.promptSubmitted && receipts.executionObserved)) {
+    if (receipts.completionObserved) {
       return { stateSnapshots, newEvents, receipts };
     }
 
@@ -510,16 +564,24 @@ async function main() {
       submissionScript,
     );
     const submissionResult = unwrapTaskpaneSubmissionResult(submissionEnvelope);
-    const metadata = execBridgeJson(args.bridgeUrl, "metadata", "word");
+    const metadata = await execBridgeJsonWithReconnect(
+      args.bridgeUrl,
+      ["metadata", "word"],
+      { sessionSelector: session.sessionId },
+    );
     const receiptObservation = await observeLiveExecutionReceipts({
       bridgeUrl: args.bridgeUrl,
       sessionId: session.sessionId,
       baselineMessageCount: baselineState.sessionStats?.messageCount ?? 0,
       baselineEventIds: baselineEvents.map((event) => event.id),
     });
-    const runtimeState =
-      receiptObservation.stateSnapshots.at(-1) ??
-      execBridgeJson(args.bridgeUrl, "state", session.sessionId);
+    const finalState = await execBridgeJsonWithReconnect(
+      args.bridgeUrl,
+      ["state", session.sessionId],
+      { sessionSelector: session.sessionId },
+    );
+    receiptObservation.stateSnapshots.push(finalState);
+    const runtimeState = finalState;
     const events = receiptObservation.newEvents;
     const completion = completeMinimalLiveReviewerResult({
       receipts: receiptObservation.receipts,

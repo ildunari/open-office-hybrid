@@ -175,8 +175,6 @@ export function classifyLiveExecutionReceipts({
           (state?.activeTaskSummary?.toolExecutionCount ?? 0) > 0,
       );
     }) ||
-    newEvents.some((event) => event.event === "message:completed") ||
-    hasConsoleReceipt("message_end") ||
     hasConsoleReceipt("agent_end");
 
   return {
