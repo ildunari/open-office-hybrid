@@ -12,6 +12,7 @@ export interface LiveReviewReviewerSignal {
   verdict: "pass" | "fail" | "inconclusive";
   execution_status: string;
   failure_classification: string;
+  execution_classification?: string;
 }
 
 export interface ClassifyHarnessVsLiveReviewMismatchOptions {
@@ -44,6 +45,16 @@ export function classifyHarnessVsLiveReviewMismatch(
 ): LiveReviewMismatchResult {
   const score = loadJson(path.join(options.taskArtifactDir, "score.json"));
   loadJson(path.join(options.taskArtifactDir, "inspect.json"));
+
+  if (
+    options.reviewerReport.execution_classification === "reviewer_only_success"
+  ) {
+    return {
+      mismatchClass: "aligned",
+      likelyFailureSurface: "none",
+      boundedFixAllowedInV1: false,
+    };
+  }
 
   if (
     harnessPassed(score) &&

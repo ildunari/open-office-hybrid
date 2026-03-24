@@ -955,6 +955,8 @@ async function runTask({
         verdict: reviewerReport.verdict,
         execution_status: reviewerReport.execution_status,
         failure_classification: reviewerReport.failure_classification,
+        execution_classification:
+          receiptObservation.receipts.executionClassification,
       },
     });
     if (mismatch.mismatchClass !== "aligned") {

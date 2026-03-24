@@ -535,6 +535,24 @@ describe("word benchmark suite", () => {
         boundedFixAllowedInV1: true,
       }),
     );
+
+    expect(
+      classifyHarnessVsLiveReviewMismatch({
+        taskArtifactDir: taskDir,
+        reviewerReport: {
+          verdict: "pass",
+          execution_status: "completed",
+          failure_classification: "reviewer_task_completed",
+          execution_classification: "reviewer_only_success",
+        },
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        mismatchClass: "aligned",
+        likelyFailureSurface: "none",
+        boundedFixAllowedInV1: false,
+      }),
+    );
   });
 
   it("completes a minimal live reviewer result", () => {
@@ -1028,6 +1046,99 @@ describe("word benchmark suite", () => {
 
     expect(noWriteLoop.executionClassification).toBe("no_write_loop");
     expect(noWriteLoop.noWriteLoopSuspected).toBe(true);
+  });
+
+  it("keeps failed-write and write-without-reread live classifications distinct", () => {
+    const failedWrite = classifyLiveExecutionReceipts({
+      baselineMessageCount: 0,
+      stateSnapshots: [
+        {
+          mode: "blocked",
+          waitingState: null,
+          isStreaming: false,
+          activeTaskSummary: {
+            id: "task-edit",
+            status: "failed",
+            mode: "blocked",
+            toolExecutionCount: 1,
+          },
+          degradedGuardrails: [],
+          sessionStats: { messageCount: 1 },
+        },
+      ],
+      newEvents: [
+        {
+          event: "tool:failed",
+          ts: 1,
+          payload: { toolName: "execute_office_js" },
+        },
+      ],
+    });
+
+    expect(failedWrite.executionClassification).toBe(
+      "write_attempted_but_failed",
+    );
+    expect(failedWrite.writeAttemptedButFailed).toBe(true);
+    expect(failedWrite.writeSucceededWithoutReread).toBe(false);
+
+    const writeWithoutReread = classifyLiveExecutionReceipts({
+      baselineMessageCount: 0,
+      stateSnapshots: [
+        {
+          mode: "completed",
+          waitingState: null,
+          isStreaming: false,
+          activeTaskSummary: {
+            id: "task-edit",
+            status: "completed",
+            mode: "completed",
+            toolExecutionCount: 1,
+          },
+          degradedGuardrails: [],
+          sessionStats: { messageCount: 2 },
+        },
+      ],
+      newEvents: [
+        {
+          event: "tool:completed",
+          ts: 1,
+          payload: { toolName: "execute_office_js" },
+        },
+      ],
+    });
+
+    expect(writeWithoutReread.executionClassification).toBe(
+      "write_succeeded_without_reread",
+    );
+    expect(writeWithoutReread.writeAttemptedButFailed).toBe(false);
+    expect(writeWithoutReread.writeSucceededWithoutReread).toBe(true);
+  });
+
+  it("requires fresh task-attributed evidence before claiming live completion", () => {
+    const staleTask = classifyLiveExecutionReceipts({
+      baselineMessageCount: 2,
+      stateSnapshots: [
+        {
+          mode: "completed",
+          waitingState: null,
+          isStreaming: false,
+          activeTaskSummary: {
+            id: "older-task",
+            status: "completed",
+            mode: "completed",
+            toolExecutionCount: 1,
+          },
+          degradedGuardrails: [],
+          sessionStats: { messageCount: 2 },
+        },
+      ],
+      newEvents: [],
+    });
+
+    expect(staleTask.promptSubmitted).toBe(false);
+    expect(staleTask.executionObserved).toBe(false);
+    expect(staleTask.completionObserved).toBe(false);
+    expect(staleTask.executionClassification).toBe("no_execution_signal");
   });
 
   it("unwraps nested bridge exec submission results", () => {
