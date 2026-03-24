@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { buildSkillsPromptSection, parseSkillMeta } from "../src/skills";
 import {
   buildLocalDoctrinePromptSection,
   selectLocalDoctrineContributors,
 } from "../src/skills/local-doctrine";
-import { buildSkillsPromptSection, parseSkillMeta } from "../src/skills";
 
 describe("parseSkillMeta", () => {
   it("parses valid frontmatter with name and description", () => {
@@ -91,9 +91,7 @@ describe("buildSkillsPromptSection", () => {
   });
 
   it("includes instruction text about reading skill files", () => {
-    const result = buildSkillsPromptSection([
-      { name: "s", description: "d" },
-    ]);
+    const result = buildSkillsPromptSection([{ name: "s", description: "d" }]);
     expect(result).toContain(
       "Use the read tool to load a skill's file when the task matches",
     );
@@ -113,8 +111,14 @@ describe("selectLocalDoctrineContributors", () => {
       "word-mastery-v3",
       "openword-best-practices",
     ]);
-    expect(contributors[1]?.canonicalPath).toBe("skills/word-mastery-v3/SKILL.md");
-    expect(contributors.some((item) => item.canonicalPath.includes("skills/word-mastery/SKILL.md"))).toBe(false);
+    expect(contributors[1]?.canonicalPath).toBe(
+      "skills/word-mastery-v3/SKILL.md",
+    );
+    expect(
+      contributors.some((item) =>
+        item.canonicalPath.includes("skills/word-mastery/SKILL.md"),
+      ),
+    ).toBe(false);
   });
 
   it("selects the Claude prompt doctrine for Claude Word mutation runs", () => {
@@ -159,8 +163,10 @@ describe("buildLocalDoctrinePromptSection", () => {
 
     expect(result).toContain("<active_doctrine");
     expect(result).toContain('provider_family="gpt"');
-    expect(result).toContain("<skill id=\"gpt-prompt-architect\"");
-    expect(result).toContain('canonical_path="skills/word-mastery-v3/SKILL.md"');
+    expect(result).toContain('<skill id="gpt-prompt-architect"');
+    expect(result).toContain(
+      'canonical_path="skills/word-mastery-v3/SKILL.md"',
+    );
     expect(result).toContain("Scope discipline.");
     expect(result).toContain("Use named styles for every recurring element.");
     expect(result).toContain("Use OOXML replacement for mixed-run formatting");
