@@ -1031,10 +1031,12 @@ export class AgentRuntime {
   private deriveExecutionDiagnostics(task: TaskRecord | null) {
     const executions = task?.toolExecutions ?? [];
     const noWriteRecoveryAttemptCount = task?.noWriteRecoveryCount ?? 0;
-    const successfulWrite = executions.find(
-      (execution) =>
-        WORD_WRITE_TOOL_NAMES.has(execution.toolName) && !execution.isError,
-    );
+    const latestSuccessfulWrite = [...executions]
+      .reverse()
+      .find(
+        (execution) =>
+          WORD_WRITE_TOOL_NAMES.has(execution.toolName) && !execution.isError,
+      );
     const firstRead = executions.find(
       (execution) =>
         WORD_READ_TOOL_NAMES.has(execution.toolName) && !execution.isError,
@@ -1043,8 +1045,8 @@ export class AgentRuntime {
       if (execution.isError || !WORD_READ_TOOL_NAMES.has(execution.toolName)) {
         return false;
       }
-      return successfulWrite
-        ? execution.timestamp < successfulWrite.timestamp
+      return latestSuccessfulWrite
+        ? execution.timestamp < latestSuccessfulWrite.timestamp
         : true;
     }).length;
     const preWriteInspectionCount = executions.filter((execution) => {
@@ -1055,16 +1057,16 @@ export class AgentRuntime {
       ) {
         return false;
       }
-      return successfulWrite
-        ? execution.timestamp < successfulWrite.timestamp
+      return latestSuccessfulWrite
+        ? execution.timestamp < latestSuccessfulWrite.timestamp
         : true;
     }).length;
     const scopeReadCount = executions.filter((execution) => {
       if (execution.isError || !WORD_READ_TOOL_NAMES.has(execution.toolName)) {
         return false;
       }
-      return successfulWrite
-        ? execution.timestamp < successfulWrite.timestamp
+      return latestSuccessfulWrite
+        ? execution.timestamp < latestSuccessfulWrite.timestamp
         : true;
     }).length;
     const writeCount = executions.filter(
@@ -1075,12 +1077,12 @@ export class AgentRuntime {
       (execution) =>
         WORD_WRITE_TOOL_NAMES.has(execution.toolName) && execution.isError,
     ).length;
-    const postWriteRereadCount = successfulWrite
+    const postWriteRereadCount = latestSuccessfulWrite
       ? executions.filter(
           (execution) =>
             !execution.isError &&
             WORD_READ_TOOL_NAMES.has(execution.toolName) &&
-            execution.timestamp >= successfulWrite.timestamp,
+            execution.timestamp >= latestSuccessfulWrite.timestamp,
         ).length
       : 0;
     const activePlan = this.planManager.getActivePlan();
@@ -1092,7 +1094,7 @@ export class AgentRuntime {
       ) ||
         activePlan?.activeStepId === "step-write" ||
         activePlan?.activeStepId === "step-verify" ||
-        successfulWrite,
+        latestSuccessfulWrite,
     );
 
     return {
@@ -1103,7 +1105,7 @@ export class AgentRuntime {
       failedWriteCount,
       postWriteRereadCount,
       firstReadAt: firstRead?.timestamp,
-      firstWriteAt: successfulWrite?.timestamp,
+      firstWriteAt: latestSuccessfulWrite?.timestamp,
       planAdvancedBeyondInspection,
       noWriteRecoveryAttemptCount,
       noWriteRecoveryBudgetRemaining: Math.max(

@@ -1469,6 +1469,86 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("anchors reread progress to the latest successful Word write", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.planManager.replacePlan(
+      buildDefaultPlan(
+        "Rewrite the introduction and preserve formatting.",
+        classification,
+      ),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-1",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "before",
+      timestamp: 1,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-2",
+      toolName: "execute_office_js",
+      isError: false,
+      resultText: "first write",
+      timestamp: 2,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-3",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "after first write",
+      timestamp: 3,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-4",
+      toolName: "execute_office_js",
+      isError: false,
+      resultText: "second write",
+      timestamp: 4,
+    });
+
+    const diagnostics = internals.deriveExecutionDiagnostics(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.taskTracker.setExecutionDiagnostics(diagnostics);
+    internals.planManager.syncWithExecution(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "execute",
+    });
+
+    expect(diagnostics).toEqual(
+      expect.objectContaining({
+        writeCount: 2,
+        postWriteRereadCount: 0,
+        firstWriteAt: 4,
+      }),
+    );
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(2);
+    runtime.dispose();
+  });
+
   it("marks completed plans as done in the runtime summary", async () => {
     const runtime = new AgentRuntime(
       createAdapter({
