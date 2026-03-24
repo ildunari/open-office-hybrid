@@ -9,6 +9,7 @@ const WORD_READ_TOOL_NAMES = new Set([
   "get_paragraph_ooxml",
 ]);
 const WORD_WRITE_TOOL_NAMES = new Set(["execute_office_js"]);
+export const LIVE_REVIEW_RECEIPT_GRACE_MS = 10_000;
 
 export function buildReviewerPrompt({
   capabilityId,
@@ -275,4 +276,33 @@ export function classifyLiveExecutionReceipts({
     writeSucceededWithoutReread,
     executionClassification,
   };
+}
+
+export function shouldContinueReceiptObservation({
+  receipts,
+  stateSnapshots,
+  elapsedMs,
+  completionObservedAtMs,
+  timeoutMs,
+}) {
+  if (elapsedMs >= timeoutMs || !receipts.completionObserved) {
+    return false;
+  }
+
+  if (receipts.executionObserved) {
+    return false;
+  }
+
+  const reviewerPhaseObserved = stateSnapshots.some(
+    (state) => state?.promptProvenance?.phase === "reviewer_live_review",
+  );
+  if (!reviewerPhaseObserved || !receipts.promptSubmitted) {
+    return false;
+  }
+
+  if (completionObservedAtMs == null) {
+    return true;
+  }
+
+  return elapsedMs - completionObservedAtMs < LIVE_REVIEW_RECEIPT_GRACE_MS;
 }

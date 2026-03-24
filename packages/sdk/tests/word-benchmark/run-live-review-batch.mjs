@@ -27,6 +27,7 @@ import {
   buildReviewerPrompt,
   buildTaskpanePromptSubmissionScript,
   classifyLiveExecutionReceipts,
+  shouldContinueReceiptObservation,
   unwrapTaskpaneSubmissionResult,
 } from "./live-review-submission.mjs";
 
@@ -503,6 +504,7 @@ async function observeLiveExecutionReceipts({
   const newEvents = [];
   const seenEventIds = new Set(baselineEventIds);
   const startedAt = Date.now();
+  let completionObservedAtMs = null;
 
   while (Date.now() - startedAt < timeoutMs) {
     const state = await execBridgeJsonWithReconnect(
@@ -528,7 +530,21 @@ async function observeLiveExecutionReceipts({
       stateSnapshots,
       newEvents,
     });
-    if (receipts.completionObserved) {
+    const elapsedMs = Date.now() - startedAt;
+    if (receipts.completionObserved && completionObservedAtMs == null) {
+      completionObservedAtMs = elapsedMs;
+    }
+
+    if (
+      receipts.completionObserved &&
+      !shouldContinueReceiptObservation({
+        receipts,
+        stateSnapshots,
+        elapsedMs,
+        completionObservedAtMs,
+        timeoutMs,
+      })
+    ) {
       return { stateSnapshots, newEvents, receipts };
     }
 

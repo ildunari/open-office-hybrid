@@ -37,6 +37,7 @@ import {
   buildReviewerPrompt,
   buildTaskpanePromptSubmissionScript,
   classifyLiveExecutionReceipts,
+  shouldContinueReceiptObservation,
   LIVE_REVIEW_AUTOMATION_GLOBAL,
   LIVE_REVIEW_SEND_BUTTON_SELECTOR,
   LIVE_REVIEW_TEXTAREA_SELECTOR,
@@ -1140,6 +1141,66 @@ describe("word benchmark suite", () => {
     expect(staleTask.executionObserved).toBe(false);
     expect(staleTask.completionObserved).toBe(false);
     expect(staleTask.executionClassification).toBe("no_execution_signal");
+  });
+
+  it("keeps polling briefly when reviewer completion lands before the tool receipt", () => {
+    const continuePolling = shouldContinueReceiptObservation({
+      receipts: {
+        promptSubmitted: true,
+        executionObserved: false,
+        completionObserved: true,
+      },
+      stateSnapshots: [
+        {
+          promptProvenance: { phase: "reviewer_live_review" },
+        },
+      ],
+      elapsedMs: 3_000,
+      completionObservedAtMs: 2_000,
+      timeoutMs: 75_000,
+    });
+
+    expect(continuePolling).toBe(true);
+  });
+
+  it("stops polling once the reviewer receipt grace window expires", () => {
+    const continuePolling = shouldContinueReceiptObservation({
+      receipts: {
+        promptSubmitted: true,
+        executionObserved: false,
+        completionObserved: true,
+      },
+      stateSnapshots: [
+        {
+          promptProvenance: { phase: "reviewer_live_review" },
+        },
+      ],
+      elapsedMs: 13_500,
+      completionObservedAtMs: 2_000,
+      timeoutMs: 75_000,
+    });
+
+    expect(continuePolling).toBe(false);
+  });
+
+  it("does not keep polling non-reviewer completions that still lack execution receipts", () => {
+    const continuePolling = shouldContinueReceiptObservation({
+      receipts: {
+        promptSubmitted: true,
+        executionObserved: false,
+        completionObserved: true,
+      },
+      stateSnapshots: [
+        {
+          promptProvenance: { phase: "mutation" },
+        },
+      ],
+      elapsedMs: 3_000,
+      completionObservedAtMs: 2_000,
+      timeoutMs: 75_000,
+    });
+
+    expect(continuePolling).toBe(false);
   });
 
   it("keeps long-running live mutation monitoring active only while fresh task-attributed progress continues", () => {
