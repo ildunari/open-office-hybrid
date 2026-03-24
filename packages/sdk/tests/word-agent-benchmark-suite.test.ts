@@ -599,6 +599,11 @@ describe("word benchmark suite", () => {
         {
           sessionId: "word:other",
           documentId: "doc-other",
+          app: "word",
+          appName: "OpenWord Hybrid",
+          host: {
+            href: "https://localhost:3003/taskpane.html",
+          },
           documentMetadata: {
             pageCount: 3,
             sectionCount: 1,
@@ -609,6 +614,11 @@ describe("word benchmark suite", () => {
         {
           sessionId: "word:report",
           documentId: "doc-report",
+          app: "word",
+          appName: "OpenWord Hybrid",
+          host: {
+            href: "https://localhost:3003/taskpane.html",
+          },
           documentMetadata: {
             pageCount: 19,
             sectionCount: 9,
@@ -630,6 +640,11 @@ describe("word benchmark suite", () => {
           {
             sessionId: "word:a",
             documentId: "doc-a",
+            app: "word",
+            appName: "OpenWord Hybrid",
+            host: {
+              href: "https://localhost:3003/taskpane.html",
+            },
             documentMetadata: {
               pageCount: 19,
               sectionCount: 9,
@@ -640,6 +655,11 @@ describe("word benchmark suite", () => {
           {
             sessionId: "word:b",
             documentId: "doc-b",
+            app: "word",
+            appName: "OpenWord Hybrid",
+            host: {
+              href: "https://localhost:3003/taskpane.html",
+            },
             documentMetadata: {
               pageCount: 19,
               sectionCount: 9,
@@ -652,6 +672,31 @@ describe("word benchmark suite", () => {
     ).toThrow(/multiple word sessions match/i);
   });
 
+  it("fails live-review session resolution when only a non-Hybrid Word session is available", () => {
+    expect(() =>
+      resolveLiveReviewSession({
+        sourceDocument: "report_tti_generic_v1",
+        sessions: [
+          {
+            sessionId: "word:dev",
+            documentId: "doc-dev",
+            app: "word",
+            appName: "OpenWord Dev",
+            host: {
+              href: "https://localhost:3002/taskpane.html",
+            },
+            documentMetadata: {
+              pageCount: 19,
+              sectionCount: 9,
+              tableCount: 5,
+              changeTrackingMode: "Off",
+            },
+          },
+        ],
+      }),
+    ).toThrow(/hybrid word session/i);
+  });
+
   it("supports explicit live-review session targeting", () => {
     const session = resolveLiveReviewSession({
       sourceDocument: "report_tti_generic_v1",
@@ -660,17 +705,39 @@ describe("word benchmark suite", () => {
         {
           sessionId: "word:other",
           documentId: "doc-other",
+          app: "word",
+          appName: "OpenWord Hybrid",
+          host: {
+            href: "https://localhost:3003/taskpane.html",
+          },
           documentMetadata: {},
         },
         {
           sessionId: "word:target",
           documentId: "doc-target",
+          app: "word",
+          appName: "OpenWord Hybrid",
+          host: {
+            href: "https://localhost:3003/taskpane.html",
+          },
           documentMetadata: {},
         },
       ],
     });
 
     expect(session.sessionId).toBe("word:target");
+  });
+
+  it("uses the resolved session id for metadata capture too", () => {
+    const runnerPath = path.join(
+      __dirname,
+      "word-benchmark",
+      "run-live-review-batch.mjs",
+    );
+    const source = readFileSync(runnerPath, "utf8");
+
+    expect(source).toContain('["metadata", session.sessionId]');
+    expect(source).not.toContain('["metadata", "word"]');
   });
 
   it("classifies the live execution receipts from runtime state and events", () => {
