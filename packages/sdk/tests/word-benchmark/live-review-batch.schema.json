@@ -69,7 +69,8 @@
         "additionalProperties": false,
         "required": [
           "task_id",
-          "events"
+          "events",
+          "execution_classification"
         ],
         "properties": {
           "task_id": {
@@ -80,6 +81,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "execution_classification": {
+            "type": "string"
           }
         }
       }

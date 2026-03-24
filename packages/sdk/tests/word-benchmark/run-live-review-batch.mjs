@@ -239,7 +239,11 @@ export function resolveLiveReviewSession({
   );
 }
 
-function buildPreflightStop({
+function createTaskIdentity(sourceDocument, taskId) {
+  return `${sourceDocument}:${taskId}`;
+}
+
+export function buildPreflightStop({
   clone,
   runtime,
   timeline,
@@ -251,6 +255,8 @@ function buildPreflightStop({
   observation,
 }) {
   timeline.events.push(stopReason);
+  timeline.execution_classification = failureClassification;
+  batchReport.diagnosis_summary = observation;
   batchReport.stop_reasons.push(stopReason);
   batchReport.next_action_queue = [stopReason];
 
@@ -269,11 +275,16 @@ function buildPreflightStop({
       verdict: "fail",
       confidence: 0.9,
     },
-    cloneArtifact: {
-      clone_id: clone.cloneId,
-      clone_path: clone.clonePath,
-      task_id: runtime.selectedTasks[0],
-    },
+    cloneArtifact: buildCloneArtifact({
+      capabilityId: runtime.capabilityArea,
+      sourceDocument: runtime.sourceDocument,
+      taskId: runtime.selectedTasks[0],
+      clone,
+      readinessState,
+      executionStatus,
+      bridgeSessionId: runtime.bridgeSessionId ?? "pending",
+      wordDocumentId: runtime.wordDocumentId ?? "pending",
+    }),
   };
 }
 
@@ -542,7 +553,7 @@ function createReviewerReportSkeleton({
   cloneId,
 }) {
   return {
-    task_identity: `${sourceDocument}:${taskId}`,
+    task_identity: createTaskIdentity(sourceDocument, taskId),
     capability_area: capabilityId,
     source_document: sourceDocument,
     task_id: taskId,
@@ -570,7 +581,7 @@ function createReviewerReportSkeleton({
   };
 }
 
-function createBatchReportSkeleton(plan, document, batchId) {
+export function createBatchReportSkeleton(plan, document, batchId) {
   return {
     batch_id: batchId,
     capability_area: plan.capabilityId,
@@ -598,14 +609,49 @@ function createBatchReportSkeleton(plan, document, batchId) {
   };
 }
 
-function buildExecutionDiagnosticReport({
+export function buildCloneArtifact({
+  capabilityId,
+  sourceDocument,
+  taskId,
+  clone,
+  readinessState,
+  executionStatus,
+  bridgeSessionId = "pending",
+  wordDocumentId = "pending",
+}) {
+  return {
+    task_identity: createTaskIdentity(sourceDocument, taskId),
+    capability_area: capabilityId,
+    source_document: sourceDocument,
+    task_id: taskId,
+    clone_id: clone.cloneId,
+    clone_path: clone.clonePath,
+    readiness_state: readinessState,
+    execution_status: executionStatus,
+    bridge_session_id: bridgeSessionId,
+    word_document_id: wordDocumentId,
+  };
+}
+
+export function buildExecutionDiagnosticReport({
+  capabilityId,
+  sourceDocument,
+  cloneId,
+  bridgeSessionId,
+  wordDocumentId,
   task,
   receiptObservation,
   finalState,
 }) {
   return {
+    task_identity: createTaskIdentity(sourceDocument, task.taskId),
+    capability_area: capabilityId,
+    source_document: sourceDocument,
     task_id: task.taskId,
+    clone_id: cloneId,
     captured_at: new Date().toISOString(),
+    bridge_session_id: bridgeSessionId,
+    word_document_id: wordDocumentId,
     execution_classification:
       receiptObservation.receipts.executionClassification,
     prompt_submitted: receiptObservation.receipts.promptSubmitted,
@@ -935,16 +981,29 @@ async function runTask({
   writeJson(
     path.join(batchDir, `${task.taskId}-execution-diagnostic.json`),
     buildExecutionDiagnosticReport({
+      capabilityId,
+      sourceDocument: document.sourceDocument,
+      cloneId: clone.cloneId,
+      bridgeSessionId: runtime.bridgeSessionId ?? "unknown",
+      wordDocumentId: runtime.wordDocumentId ?? "unknown",
       task,
       receiptObservation,
       finalState,
     }),
   );
-  writeJson(path.join(batchDir, `${task.taskId}-task-clone.json`), {
-    clone_id: clone.cloneId,
-    clone_path: clone.clonePath,
-    task_id: task.taskId,
-  });
+  writeJson(
+    path.join(batchDir, `${task.taskId}-task-clone.json`),
+    buildCloneArtifact({
+      capabilityId,
+      sourceDocument: document.sourceDocument,
+      taskId: task.taskId,
+      clone,
+      readinessState: reviewerReport.readiness_state,
+      executionStatus: reviewerReport.execution_status,
+      bridgeSessionId: reviewerReport.bridge_session_id,
+      wordDocumentId: reviewerReport.word_document_id,
+    }),
+  );
 }
 
 async function main() {
