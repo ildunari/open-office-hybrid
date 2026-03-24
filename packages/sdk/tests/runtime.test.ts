@@ -7,7 +7,7 @@ import {
   type RuntimeAdapter,
   type RuntimeState,
 } from "../src/runtime";
-import { inferTaskClassification } from "../src/planning";
+import { buildDefaultPlan, inferTaskClassification } from "../src/planning";
 import {
   getLatestTaskRecord,
   listThreadSummaries,
@@ -144,6 +144,7 @@ function runtimeInternals(runtime: AgentRuntime) {
       }) => void;
       setMode: (mode: string) => void;
       setExecutionDiagnostics: (diagnostics: Record<string, unknown>) => void;
+      completeTask: (summary?: string) => Record<string, unknown> | null;
       setHandoff: (handoff: Record<string, unknown> | null) => void;
       persist: (sessionId: string) => Promise<unknown>;
     };
@@ -1070,11 +1071,10 @@ describe("AgentRuntime", () => {
       "Rewrite the introduction and preserve formatting.",
     );
     internals.planManager.replacePlan(
-      createPlan({
-        userRequest: "Rewrite the introduction and preserve formatting.",
+      buildDefaultPlan(
+        "Rewrite the introduction and preserve formatting.",
         classification,
-        approvalRequired: false,
-      }),
+      ),
     );
     internals.taskTracker.beginTask(
       "Rewrite the introduction and preserve formatting.",
@@ -1119,6 +1119,62 @@ describe("AgentRuntime", () => {
     expect(interrupted).toBe(false);
     expect(state.mode).toBe("execute");
     expect(state.activeTask?.executionDiagnostics?.firstWriteAt).toBe(2);
+    runtime.dispose();
+  });
+
+  it("marks completed plans as done in the runtime summary", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.planManager.replacePlan(
+      createPlan({
+        userRequest: "Rewrite the introduction and preserve formatting.",
+        classification,
+        approvalRequired: false,
+      }),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.taskTracker.setExecutionDiagnostics({
+      preWriteReadCount: 1,
+      preWriteInspectionCount: 1,
+      scopeReadCount: 1,
+      writeCount: 1,
+      failedWriteCount: 0,
+      postWriteRereadCount: 1,
+      firstReadAt: 1,
+      firstWriteAt: 2,
+      planAdvancedBeyondInspection: true,
+    });
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "execute",
+    });
+
+    internals.taskTracker.completeTask("done");
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "completed",
+    });
+
+    expect(runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex).toBe(
+      -1,
+    );
     runtime.dispose();
   });
 });

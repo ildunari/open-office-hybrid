@@ -334,6 +334,35 @@ function summarizeJson(value: unknown): string {
     : serialized;
 }
 
+function inferPlanStepIndex(
+  plan: ExecutionPlan | null,
+  task: TaskRecord | null,
+): number {
+  if (!plan) return -1;
+  if (task?.status === "completed" || task?.mode === "completed") return -1;
+  if (task?.mode === "verify") {
+    return plan.steps.findIndex((step) => step.kind === "verify");
+  }
+
+  const diagnostics = task?.executionDiagnostics;
+  if (diagnostics?.writeCount && diagnostics.writeCount > 0) {
+    if (diagnostics.postWriteRereadCount > 0) {
+      const verifyIndex = plan.steps.findIndex((step) => step.kind === "verify");
+      return verifyIndex >= 0 ? verifyIndex : plan.steps.length - 1;
+    }
+    return plan.steps.findIndex((step) => step.kind === "write");
+  }
+
+  if (diagnostics?.scopeReadCount && diagnostics.scopeReadCount > 0) {
+    const analyzeIndex = plan.steps.findIndex((step) => step.kind === "analyze");
+    return analyzeIndex >= 0 ? analyzeIndex : 0;
+  }
+
+  return plan.activeStepId
+    ? plan.steps.findIndex((step) => step.id === plan.activeStepId)
+    : -1;
+}
+
 export class AgentRuntime {
   private agent: Agent | null = null;
   private unsubscribeAgent: (() => void) | null = null;
@@ -476,9 +505,7 @@ export class AgentRuntime {
             id: plan.id,
             status: plan.status,
             stepCount: plan.steps.length,
-            activeStepIndex: plan.activeStepId
-              ? plan.steps.findIndex((step) => step.id === plan.activeStepId)
-              : -1,
+            activeStepIndex: inferPlanStepIndex(plan, task),
           }
         : null,
       activeTaskSummary: task

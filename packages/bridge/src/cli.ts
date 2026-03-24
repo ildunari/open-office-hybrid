@@ -983,7 +983,9 @@ async function commandState(cli: Cli) {
   if (flag(cli, "compact")) {
     const plan = rs.activePlanSummary;
     const planStr = plan
-      ? `plan:step${plan.activeStepIndex + 1}/${plan.stepCount}`
+      ? plan.activeStepIndex >= 0
+        ? `plan:step${plan.activeStepIndex + 1}/${plan.stepCount}`
+        : "plan:done"
       : "no-plan";
     const tokens = rs.sessionStats.inputTokens + rs.sessionStats.outputTokens;
     console.log(
@@ -1188,7 +1190,9 @@ async function commandSummary(cli: Cli) {
   }
   const plan = rs.activePlanSummary;
   const planStr = plan
-    ? `plan:step${plan.activeStepIndex + 1}/${plan.stepCount}`
+    ? plan.activeStepIndex >= 0
+      ? `plan:step${plan.activeStepIndex + 1}/${plan.stepCount}`
+      : "plan:done"
     : "no-plan";
   const tokens = rs.sessionStats.inputTokens + rs.sessionStats.outputTokens;
   const cost = rs.sessionStats.totalCost;
