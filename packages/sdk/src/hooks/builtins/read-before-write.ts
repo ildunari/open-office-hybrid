@@ -62,14 +62,83 @@ const LOCAL_WORD_MUTATION_PATTERNS = [
   /insertComment\s*\(/i,
 ];
 
+function resolveParagraphIndexExpression(
+  expression: string,
+  numericBindings: Map<string, number>,
+): number | null {
+  const normalized = expression.trim();
+  if (/^-?\d+$/.test(normalized)) {
+    return Number(normalized);
+  }
+  return numericBindings.get(normalized) ?? null;
+}
+
 function inferParagraphWriteScope(code: string): string | null {
+  const numericBindings = new Map<string, number>();
+  for (const match of code.matchAll(
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(-?\d+)\s*;/g,
+  )) {
+    numericBindings.set(match[1], Number(match[2]));
+  }
+
+  const paragraphCollectionAliases = new Set<string>(["paragraphs"]);
+  for (const match of code.matchAll(
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:context\.document\.)?body\.paragraphs\s*;/g,
+  )) {
+    paragraphCollectionAliases.add(match[1]);
+  }
+
   const directParagraphMatch =
-    /paragraphs\.items\s*\[\s*(\d+)\s*\]\s*\.(?:insertText|insertParagraph|insertHtml|insertOoxml|clear|delete)\s*\(/i.exec(
-      code,
+    /\b((?:context\.document\.)?body\.paragraphs|[A-Za-z_$][\w$]*)\.items\s*\[\s*([^\]]+?)\s*\]\s*\.(?:insertText|insertParagraph|insertHtml|insertOoxml|clear|delete)\s*\(/gi;
+  for (const match of code.matchAll(directParagraphMatch)) {
+    const collectionName = match[1];
+    if (
+      collectionName !== "body.paragraphs" &&
+      collectionName !== "context.document.body.paragraphs" &&
+      !paragraphCollectionAliases.has(collectionName)
+    ) {
+      continue;
+    }
+    const resolvedIndex = resolveParagraphIndexExpression(
+      match[2],
+      numericBindings,
     );
-  if (directParagraphMatch) {
-    const paragraphIndex = Number(directParagraphMatch[1]) + 1;
+    if (resolvedIndex == null) {
+      continue;
+    }
+    const paragraphIndex = resolvedIndex + 1;
     return `word:para:${paragraphIndex}-${paragraphIndex}`;
+  }
+
+  const paragraphAliases = new Map<string, number>();
+  const paragraphAliasAssignment =
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*|(?:context\.document\.)?body\.paragraphs)\.items\s*\[\s*([^\]]+?)\s*\]\s*;/g;
+  for (const match of code.matchAll(paragraphAliasAssignment)) {
+    const sourceCollection = match[2];
+    if (
+      sourceCollection !== "body.paragraphs" &&
+      sourceCollection !== "context.document.body.paragraphs" &&
+      !paragraphCollectionAliases.has(sourceCollection)
+    ) {
+      continue;
+    }
+    const resolvedIndex = resolveParagraphIndexExpression(
+      match[3],
+      numericBindings,
+    );
+    if (resolvedIndex == null) {
+      continue;
+    }
+    paragraphAliases.set(match[1], resolvedIndex + 1);
+  }
+
+  const paragraphAliasUse =
+    /\b([A-Za-z_$][\w$]*)\s*\.(?:insertText|insertParagraph|insertHtml|insertOoxml|clear|delete)\s*\(/g;
+  for (const match of code.matchAll(paragraphAliasUse)) {
+    const paragraphIndex = paragraphAliases.get(match[1]);
+    if (paragraphIndex != null) {
+      return `word:para:${paragraphIndex}-${paragraphIndex}`;
+    }
   }
 
   return null;

@@ -96,6 +96,25 @@ describe("read-before-write guards", () => {
     expect(hasReadCoverage(new Set(["word:para:5-8"]), writeScope)).toBe(false);
   });
 
+  it("infers alias-style paragraph writes to the same concrete Word scope", () => {
+    const writeScope = scopeKeyFromParams("execute_office_js", {
+      code: `
+        const paragraphs = context.document.body.paragraphs;
+        paragraphs.load("items");
+        await context.sync();
+        const p = paragraphs.items[3];
+        p.insertText("Updated", "Replace");
+        await context.sync();
+      `,
+    });
+
+    expect(writeScope).toBe("word:para:4-4");
+    expect(hasReadCoverage(new Set(["word:para:4-4"]), writeScope)).toBe(true);
+    expect(hasReadCoverage(new Set(["word:para:0-2"]), writeScope)).toBe(
+      false,
+    );
+  });
+
   it("returns truthful read-before-write messages for local and broad Word writes", () => {
     const localResult = readBeforeWritePreHook.execute({
       toolName: "execute_office_js",
