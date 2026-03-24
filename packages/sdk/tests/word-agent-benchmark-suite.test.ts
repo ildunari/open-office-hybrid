@@ -37,10 +37,10 @@ import {
   buildReviewerPrompt,
   buildTaskpanePromptSubmissionScript,
   classifyLiveExecutionReceipts,
-  shouldContinueReceiptObservation,
   LIVE_REVIEW_AUTOMATION_GLOBAL,
   LIVE_REVIEW_SEND_BUTTON_SELECTOR,
   LIVE_REVIEW_TEXTAREA_SELECTOR,
+  shouldContinueReceiptObservation,
   unwrapTaskpaneSubmissionResult,
 } from "./word-benchmark/live-review-submission.mjs";
 import {
@@ -854,6 +854,55 @@ describe("word benchmark suite", () => {
         error: null,
       }),
     ).toBe("blocked");
+  });
+
+  it("stops multistep live benchmark sessions after a blocked or waiting step", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+
+    expect(
+      runner.shouldContinueBenchmarkSessionPlan({
+        outcome: "completed",
+      }),
+    ).toBe(true);
+    expect(
+      runner.shouldContinueBenchmarkSessionPlan({
+        outcome: "blocked",
+      }),
+    ).toBe(false);
+    expect(
+      runner.shouldContinueBenchmarkSessionPlan({
+        outcome: "waiting_on_user",
+      }),
+    ).toBe(false);
+  });
+
+  it("prefers refresh_session runtime state when waiting for a live session to settle", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+
+    const refreshed = runner.extractRuntimeStateFromRefreshPayload({
+      runtimeState: {
+        mode: "completed",
+        taskPhase: "completed",
+      },
+    });
+    const nested = runner.extractRuntimeStateFromRefreshPayload({
+      snapshot: {
+        runtimeState: {
+          mode: "blocked",
+          taskPhase: "blocked",
+        },
+      },
+    });
+
+    expect(refreshed).toEqual({
+      mode: "completed",
+      taskPhase: "completed",
+    });
+    expect(nested).toEqual({
+      mode: "blocked",
+      taskPhase: "blocked",
+    });
+    expect(runner.extractRuntimeStateFromRefreshPayload(null)).toBeNull();
   });
 
   it("reuses the shared live-review helpers in the runner", () => {

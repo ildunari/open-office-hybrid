@@ -241,6 +241,35 @@ function runBridgeCliJsonAllowFailure(args) {
   };
 }
 
+export function extractRuntimeStateFromRefreshPayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  if (payload.runtimeState && typeof payload.runtimeState === "object") {
+    return payload.runtimeState;
+  }
+  if (
+    payload.snapshot &&
+    typeof payload.snapshot === "object" &&
+    payload.snapshot.runtimeState &&
+    typeof payload.snapshot.runtimeState === "object"
+  ) {
+    return payload.snapshot.runtimeState;
+  }
+  return null;
+}
+
+function readFreshRuntimeState(bridgeUrl, sessionId) {
+  try {
+    const refreshed = runBridgeCliJson(buildBridgeRefreshArgs(bridgeUrl, sessionId));
+    const refreshedState = extractRuntimeStateFromRefreshPayload(refreshed);
+    if (refreshedState) {
+      return refreshedState;
+    }
+  } catch {
+    // Fall back to the regular state endpoint below.
+  }
+  return runBridgeCliJson(buildBridgeStateJsonArgs(bridgeUrl, sessionId));
+}
+
 export function ensureBridgeCliBuilt({
   repoRoot: activeRepoRoot = repoRoot,
   execFileSyncImpl = execFileSync,
@@ -258,6 +287,10 @@ export function ensureBridgeCliBuilt({
 
 export function buildBridgeStateJsonArgs(bridgeUrl, sessionId) {
   return ["--url", bridgeUrl, "state", sessionId, "--json"];
+}
+
+export function buildBridgeRefreshArgs(bridgeUrl, sessionId) {
+  return ["--url", bridgeUrl, "rpc", sessionId, "refresh_session"];
 }
 
 export function buildBridgeTaskpanePromptArgs({ bridgeUrl, sessionId, code }) {
@@ -764,7 +797,7 @@ async function waitForSettledSession(bridgeUrl, sessionId, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const state = runBridgeCliJson(["--url", bridgeUrl, "state", sessionId]);
+      const state = readFreshRuntimeState(bridgeUrl, sessionId);
       if (sessionLooksSettled(state)) {
         return state;
       }
@@ -775,6 +808,13 @@ async function waitForSettledSession(bridgeUrl, sessionId, timeoutMs = 30000) {
   }
   throw new Error(
     `Session ${sessionId} did not settle within ${timeoutMs}ms before prompt submission.`,
+  );
+}
+
+export function shouldContinueBenchmarkSessionPlan(promptSummary) {
+  const outcome = promptSummary?.outcome ?? "error";
+  return !["blocked", "waiting_on_user", "timed_out", "error"].includes(
+    outcome,
   );
 }
 
@@ -1338,6 +1378,9 @@ async function main() {
                 promptSummary,
                 timestamp: new Date().toISOString(),
               });
+              if (!shouldContinueBenchmarkSessionPlan(promptSummary)) {
+                break;
+              }
             }
 
             await captureArtifacts(args.bridgeUrl, resolved.sessionId, sessionPaths);
