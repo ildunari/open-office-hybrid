@@ -65,7 +65,11 @@ import {
   type TaskRecord,
   type TaskThreadSummary,
 } from "./planning";
-import { buildPromptContract } from "./prompt-contract";
+import {
+  buildPromptContract,
+  inferPromptPhase,
+  inferProviderFamily,
+} from "./prompt-contract";
 import {
   applyProxyToModel,
   buildCustomModel,
@@ -129,6 +133,7 @@ import {
   snapshotVfs,
   writeFile,
 } from "./vfs";
+import { buildLocalDoctrinePromptSection } from "./skills/local-doctrine";
 
 export interface RuntimeAdapter {
   hostApp?: HostApp;
@@ -2629,8 +2634,10 @@ export class AgentRuntime {
   }
 
   private async buildPromptContent(content: string, attachments?: string[]) {
-    let promptContent = content;
+    const promptParts: string[] = [];
 
+    const providerFamily = inferProviderFamily(this.state.providerConfig);
+    const phase = inferPromptPhase(content, this.state.mode, this.state.activeTask);
     const promptContract = buildPromptContract({
       providerConfig: this.state.providerConfig,
       mode: this.state.mode,
@@ -2638,7 +2645,16 @@ export class AgentRuntime {
       content,
       hostApp: this.adapter.hostApp,
     });
-    promptContent = `${promptContract}\n\n${promptContent}`;
+    promptParts.push(promptContract);
+
+    const localDoctrine = buildLocalDoctrinePromptSection({
+      hostApp: this.adapter.hostApp,
+      providerFamily,
+      phase,
+    });
+    if (localDoctrine) {
+      promptParts.push(localDoctrine);
+    }
 
     if (this.adapter.getDocumentMetadata) {
       try {
@@ -2647,7 +2663,9 @@ export class AgentRuntime {
           this.lastDocumentMetadata = meta.metadata;
           this.lastDocumentMetadataUpdatedAt = Date.now();
           const tag = this.adapter.metadataTag || "doc_context";
-          promptContent = `<${tag}>\n${JSON.stringify(meta.metadata, null, 2)}\n</${tag}>\n\n${content}`;
+          promptParts.push(
+            `<${tag}>\n${JSON.stringify(meta.metadata, null, 2)}\n</${tag}>`,
+          );
           if (meta.nameMap) {
             this.update({ nameMap: meta.nameMap });
           }
@@ -2661,11 +2679,11 @@ export class AgentRuntime {
       const paths = attachments
         .map((name) => `/home/user/uploads/${name}`)
         .join("\n");
-      promptContent = `<attachments>\n${paths}\n</attachments>\n\n${promptContent}`;
+      promptParts.push(`<attachments>\n${paths}\n</attachments>`);
     }
 
     if (this.state.activePlan) {
-      promptContent = `${this.planManager.formatPlanForPrompt(this.state.activePlan)}\n\n${promptContent}`;
+      promptParts.push(this.planManager.formatPlanForPrompt(this.state.activePlan));
     }
 
     const contextUsagePct =
@@ -2679,7 +2697,9 @@ export class AgentRuntime {
     const contextAction =
       this.contextManager.getActionForUsage(contextUsagePct);
     if (contextAction !== "none") {
-      promptContent = `<context_budget action="${contextAction}" usage_pct="${contextUsagePct}" />\n\n${promptContent}`;
+      promptParts.push(
+        `<context_budget action="${contextAction}" usage_pct="${contextUsagePct}" />`,
+      );
     }
     this.update({
       contextBudgetState: { action: contextAction, usagePct: contextUsagePct },
@@ -2693,10 +2713,11 @@ export class AgentRuntime {
       const noteText = hookNotes
         .map((note) => `[${note.level.toUpperCase()}] ${note.text}`)
         .join("\n");
-      promptContent = `<hook_notes>\n${noteText}\n</hook_notes>\n\n${promptContent}`;
+      promptParts.push(`<hook_notes>\n${noteText}\n</hook_notes>`);
     }
 
-    return promptContent;
+    promptParts.push(content);
+    return promptParts.join("\n\n");
   }
 
   private async executeActiveTask(

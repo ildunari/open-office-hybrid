@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  buildLocalDoctrinePromptSection,
+  selectLocalDoctrineContributors,
+} from "../src/skills/local-doctrine";
 import { buildSkillsPromptSection, parseSkillMeta } from "../src/skills";
 
 describe("parseSkillMeta", () => {
@@ -93,5 +97,72 @@ describe("buildSkillsPromptSection", () => {
     expect(result).toContain(
       "Use the read tool to load a skill's file when the task matches",
     );
+  });
+});
+
+describe("selectLocalDoctrineContributors", () => {
+  it("selects a bounded GPT Word mutation doctrine set with the v3 Word source", () => {
+    const contributors = selectLocalDoctrineContributors({
+      hostApp: "word",
+      providerFamily: "gpt",
+      phase: "mutation",
+    });
+
+    expect(contributors.map((item) => item.id)).toEqual([
+      "gpt-prompt-architect",
+      "word-mastery-v3",
+      "openword-best-practices",
+    ]);
+    expect(contributors[1]?.canonicalPath).toBe("skills/word-mastery-v3/SKILL.md");
+    expect(contributors.some((item) => item.canonicalPath.includes("skills/word-mastery/SKILL.md"))).toBe(false);
+  });
+
+  it("selects the Claude prompt doctrine for Claude Word mutation runs", () => {
+    const contributors = selectLocalDoctrineContributors({
+      hostApp: "word",
+      providerFamily: "claude",
+      phase: "mutation",
+    });
+
+    expect(contributors.map((item) => item.id)).toEqual([
+      "prompt-architect",
+      "word-mastery-v3",
+      "openword-best-practices",
+    ]);
+  });
+
+  it("does not inject Word doctrine for non-editing or non-Word runs", () => {
+    expect(
+      selectLocalDoctrineContributors({
+        hostApp: "word",
+        providerFamily: "gpt",
+        phase: "reviewer_live_review",
+      }),
+    ).toEqual([]);
+    expect(
+      selectLocalDoctrineContributors({
+        hostApp: "powerpoint",
+        providerFamily: "gpt",
+        phase: "mutation",
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("buildLocalDoctrinePromptSection", () => {
+  it("renders active doctrine excerpts for Word mutation runs", () => {
+    const result = buildLocalDoctrinePromptSection({
+      hostApp: "word",
+      providerFamily: "gpt",
+      phase: "mutation",
+    });
+
+    expect(result).toContain("<active_doctrine");
+    expect(result).toContain('provider_family="gpt"');
+    expect(result).toContain("<skill id=\"gpt-prompt-architect\"");
+    expect(result).toContain('canonical_path="skills/word-mastery-v3/SKILL.md"');
+    expect(result).toContain("Scope discipline.");
+    expect(result).toContain("Use named styles for every recurring element.");
+    expect(result).toContain("Use OOXML replacement for mixed-run formatting");
   });
 });

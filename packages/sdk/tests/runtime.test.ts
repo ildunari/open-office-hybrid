@@ -297,11 +297,55 @@ describe("AgentRuntime", () => {
     const prompt = await (runtime as any).buildPromptContent(request);
 
     expect(prompt).toContain("<prompt_contract");
+    expect(prompt).toContain("<active_doctrine");
     expect(prompt).toContain('provider_family="gpt"');
     expect(prompt).toContain('phase="mutation"');
+    expect(prompt).toContain("<skill id=\"gpt-prompt-architect\"");
+    expect(prompt).toContain('canonical_path="skills/word-mastery-v3/SKILL.md"');
     expect(prompt).toContain("Scope discipline matters");
     expect(prompt).toContain("one bounded Word write");
+    expect(prompt).toContain("Use named styles for every recurring element.");
     expect(prompt).not.toContain("Use XML-tagged sections");
+    runtime.dispose();
+  });
+
+  it("preserves prompt contracts and active doctrine when document metadata is present", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+        getDocumentMetadata: async () => ({
+          metadata: { title: "Draft", paragraphCount: 4 },
+        }),
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-5",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "medium",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request = "Rewrite the introduction and preserve formatting.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "execute",
+    });
+    internals.update({
+      mode: "execute",
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const prompt = await (runtime as any).buildPromptContent(request);
+
+    expect(prompt).toContain("<prompt_contract");
+    expect(prompt).toContain("<active_doctrine");
+    expect(prompt).toContain("<doc_context>");
+    expect(prompt).toContain('"title": "Draft"');
     runtime.dispose();
   });
 

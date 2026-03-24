@@ -11,7 +11,7 @@ export type PromptPhase =
   | "resume"
   | "discuss";
 
-function inferProviderFamily(
+export function inferProviderFamily(
   config: ProviderConfig | null | undefined,
 ): PromptProviderFamily {
   if (!config) return "generic";
@@ -51,7 +51,7 @@ function inferProviderFamily(
   return "generic";
 }
 
-function inferPromptPhase(
+export function inferPromptPhase(
   content: string,
   mode: RuntimeMode,
   task: TaskRecord | null | undefined,
