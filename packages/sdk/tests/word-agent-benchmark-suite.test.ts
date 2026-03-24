@@ -735,6 +735,127 @@ describe("word benchmark suite", () => {
     expect(source).toContain("manual_orchestrator_led");
   });
 
+  it("resolves the live word benchmark repo root from the current worktree", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+
+    expect(runner.resolveLiveWordBenchmarkPaths).toBeTypeOf("function");
+
+    const resolved = runner.resolveLiveWordBenchmarkPaths();
+
+    expect(resolved.repoRoot).toBe(path.join(__dirname, "..", "..", ".."));
+    expect(resolved.bridgeCliPath).toBe(
+      path.join(
+        __dirname,
+        "..",
+        "..",
+        "..",
+        "packages",
+        "bridge",
+        "dist",
+        "cli.js",
+      ),
+    );
+  });
+
+  it("builds the bridge CLI with workspace-aware pnpm arguments", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+    const calls: Array<{
+      command: string;
+      args: string[];
+      options: { cwd?: string; encoding?: string; maxBuffer?: number };
+    }> = [];
+
+    runner.ensureBridgeCliBuilt({
+      repoRoot: "/tmp/worktree-root",
+      execFileSyncImpl: (command: string, args: string[], options: any) => {
+        calls.push({ command, args, options });
+        return "";
+      },
+    });
+
+    expect(calls).toEqual([
+      {
+        command: "pnpm",
+        args: [
+          "--dir",
+          "/tmp/worktree-root",
+          "--filter",
+          "@office-agents/bridge",
+          "build",
+        ],
+        options: expect.objectContaining({
+          cwd: "/tmp/worktree-root",
+        }),
+      },
+    ]);
+  });
+
+  it("requests JSON without compact mode when the live benchmark runner reads bridge state", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+
+    expect(
+      runner.buildBridgeStateJsonArgs(
+        "https://localhost:4018",
+        "word:session-1",
+      ),
+    ).toEqual([
+      "--url",
+      "https://localhost:4018",
+      "state",
+      "word:session-1",
+      "--json",
+    ]);
+  });
+
+  it("submits live benchmark prompts through taskpane exec instead of a missing prompt command", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+
+    const args = runner.buildBridgeTaskpanePromptArgs({
+      bridgeUrl: "https://localhost:4018",
+      sessionId: "word:session-1",
+      code: "return true;",
+    });
+
+    expect(args).toEqual([
+      "--url",
+      "https://localhost:4018",
+      "exec",
+      "word:session-1",
+      "--unsafe",
+      "--code",
+      "return true;",
+    ]);
+  });
+
+  it("derives live benchmark prompt outcomes from runtime state truthfully", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+
+    expect(
+      runner.summarizeBenchmarkPromptOutcome({
+        mode: "completed",
+        taskPhase: "completed",
+        waitingState: null,
+        error: null,
+      }),
+    ).toBe("completed");
+    expect(
+      runner.summarizeBenchmarkPromptOutcome({
+        mode: "blocked",
+        taskPhase: "blocked",
+        waitingState: "clarification",
+        error: null,
+      }),
+    ).toBe("waiting_on_user");
+    expect(
+      runner.summarizeBenchmarkPromptOutcome({
+        mode: "blocked",
+        taskPhase: "blocked",
+        waitingState: null,
+        error: null,
+      }),
+    ).toBe("blocked");
+  });
+
   it("reuses the shared live-review helpers in the runner", () => {
     const runnerPath = path.join(
       __dirname,
