@@ -26,6 +26,8 @@ Validation surface findings, tools, and concurrency guidance.
 ### Constraints
 - Never target the Dev add-in.
 - Prefer explicit `word:<session-id>` or `--document <document-id>` routing.
+- For mutable live Word fixtures, use OneDrive-backed copies under `/Users/Kosta/Library/CloudStorage/OneDrive-BrownUniversity/Brown University/Temp`.
+- If a checked-in repo fixture is the source document, copy it into that OneDrive temp directory before live validation instead of mutating the repo copy in place.
 - If no Hybrid session is connected, continue code/test validation and defer live assertions until the session is available.
 
 ## Validation Concurrency
