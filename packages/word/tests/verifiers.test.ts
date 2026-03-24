@@ -324,6 +324,58 @@ describe("word verifier helpers", () => {
     );
   });
 
+  it("passes write progress verification only after a successful write is reread", async () => {
+    const suites = getWordVerificationSuites();
+    const progressSuite = suites.find((suite) => suite.id === "word:write-progress");
+
+    expect(
+      await progressSuite?.verify({
+        app: "word",
+        mode: "verify",
+        request: "Rewrite the introduction and preserve formatting.",
+        plan: {
+          classification: {
+            complexity: "moderate",
+            risk: "medium",
+            needsPlan: true,
+            rationale: "Mutation-heavy",
+          },
+        } as any,
+        task: {
+          id: "task-3",
+          userRequest: "Rewrite the introduction and preserve formatting.",
+          status: "completed",
+          mode: "execute",
+          toolCallIds: [],
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        toolExecutions: [
+          {
+            toolCallId: "tc-write",
+            toolName: "execute_office_js",
+            isError: false,
+            resultText: "ok",
+            timestamp: 2,
+          },
+          {
+            toolCallId: "tc-reread",
+            toolName: "get_document_text",
+            isError: false,
+            resultText: "updated text",
+            timestamp: 3,
+          },
+        ],
+        promptNotes: [],
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        status: "passed",
+        retryable: false,
+      }),
+    );
+  });
+
   it("binds corpus-derived review and formatting scenarios to the stricter verifier expectations", async () => {
     const suites = getWordVerificationSuites();
     const revisionSuite = suites.find((suite) => suite.id === "word:revision-safe");

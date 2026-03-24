@@ -5,6 +5,7 @@ import type {
   PlanStep,
   StepStatus,
   TaskClassification,
+  TaskRecord,
 } from "./types";
 
 export interface PlanManagerOptions {
@@ -72,6 +73,87 @@ export class PlanManager {
 
     this.activePlan = {
       ...this.activePlan,
+      steps,
+      milestones: syncMilestones(this.activePlan.milestones, steps),
+      updatedAt: Date.now(),
+    };
+    return this.activePlan;
+  }
+
+  syncWithExecution(
+    task: Pick<TaskRecord, "mode" | "status" | "executionDiagnostics"> | null,
+  ): ExecutionPlan | null {
+    if (!this.activePlan) return null;
+
+    const diagnostics = task?.executionDiagnostics;
+    const hasRead = Boolean(
+      diagnostics?.scopeReadCount ||
+        diagnostics?.preWriteReadCount ||
+        diagnostics?.firstReadAt,
+    );
+    const movedBeyondInspection = Boolean(
+      diagnostics?.planAdvancedBeyondInspection ||
+        diagnostics?.writeCount ||
+        diagnostics?.failedWriteCount,
+    );
+    const hasSuccessfulWrite = Boolean(diagnostics?.writeCount);
+    const hasPostWriteReread = Boolean(diagnostics?.postWriteRereadCount);
+
+    const steps = this.activePlan.steps.map((step) => {
+      let status: StepStatus = step.status;
+
+      switch (step.kind) {
+        case "read":
+          status = hasRead ? "completed" : "pending";
+          break;
+        case "analyze":
+          status = movedBeyondInspection
+            ? "completed"
+            : hasRead
+              ? "active"
+              : "pending";
+          break;
+        case "write":
+          status = hasSuccessfulWrite
+            ? "completed"
+            : movedBeyondInspection
+              ? "active"
+              : "pending";
+          break;
+        case "verify":
+          status = hasPostWriteReread
+            ? "completed"
+            : hasSuccessfulWrite || task?.mode === "verify"
+              ? "active"
+              : "pending";
+          break;
+      }
+
+      return step.status === status
+        ? step
+        : {
+            ...step,
+            status,
+            completedAt:
+              status === "completed"
+                ? (step.completedAt ?? Date.now())
+                : undefined,
+          };
+    });
+
+    const activeStep =
+      steps.find((step) => step.status === "active") ??
+      steps.find((step) => step.status === "pending") ??
+      null;
+    const planCompleted =
+      steps.length > 0 && steps.every((step) => step.status === "completed");
+
+    this.activePlan = {
+      ...this.activePlan,
+      status:
+        planCompleted || task?.status === "completed" ? "completed" : "active",
+      activeStepId:
+        task?.status === "completed" ? null : (activeStep?.id ?? null),
       steps,
       milestones: syncMilestones(this.activePlan.milestones, steps),
       updatedAt: Date.now(),

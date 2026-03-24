@@ -163,6 +163,7 @@ function runtimeInternals(runtime: AgentRuntime) {
     planManager: {
       replacePlan: (plan: ReturnType<typeof createPlan>) => void;
       getActivePlan: () => ReturnType<typeof createPlan> | null;
+      syncWithExecution: (task: Record<string, unknown> | null) => unknown;
       persist: (sessionId: string) => Promise<unknown>;
     };
     deriveExecutionDiagnostics: (
@@ -1341,6 +1342,130 @@ describe("AgentRuntime", () => {
     expect(interrupted).toBe(false);
     expect(state.mode).toBe("execute");
     expect(state.activeTask?.executionDiagnostics?.firstWriteAt).toBe(2);
+    runtime.dispose();
+  });
+
+  it("advances plan steps from inspection to write and verify based on real tool activity", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.planManager.replacePlan(
+      buildDefaultPlan(
+        "Rewrite the introduction and preserve formatting.",
+        classification,
+      ),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-1",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 1,
+    });
+    internals.taskTracker.setExecutionDiagnostics(
+      internals.deriveExecutionDiagnostics(
+        internals.taskTracker.getCurrentTask() as any,
+      ) as any,
+    );
+    internals.planManager.syncWithExecution(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "execute",
+    });
+
+    let plan = runtime.getState().activePlan;
+    expect(plan?.steps.map((step) => step.status)).toEqual([
+      "completed",
+      "active",
+      "pending",
+      "pending",
+    ]);
+    expect(runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex).toBe(
+      1,
+    );
+
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-2",
+      toolName: "execute_office_js",
+      isError: false,
+      resultText: "ok",
+      timestamp: 2,
+    });
+    internals.taskTracker.setExecutionDiagnostics(
+      internals.deriveExecutionDiagnostics(
+        internals.taskTracker.getCurrentTask() as any,
+      ) as any,
+    );
+    internals.planManager.syncWithExecution(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "execute",
+    });
+
+    plan = runtime.getState().activePlan;
+    expect(plan?.steps.map((step) => step.status)).toEqual([
+      "completed",
+      "completed",
+      "completed",
+      "active",
+    ]);
+    expect(runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex).toBe(
+      2,
+    );
+
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-3",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 3,
+    });
+    internals.taskTracker.setExecutionDiagnostics(
+      internals.deriveExecutionDiagnostics(
+        internals.taskTracker.getCurrentTask() as any,
+      ) as any,
+    );
+    internals.planManager.syncWithExecution(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "verify",
+    });
+
+    plan = runtime.getState().activePlan;
+    expect(plan?.steps.map((step) => step.status)).toEqual([
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+    ]);
+    expect(runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex).toBe(
+      3,
+    );
     runtime.dispose();
   });
 

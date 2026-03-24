@@ -1475,7 +1475,11 @@ export class AgentRuntime {
           this.taskTracker.getCurrentTask(),
         );
         this.taskTracker.setExecutionDiagnostics(diagnostics);
-        this.update({ activeTask: this.taskTracker.getCurrentTask() });
+        this.planManager.syncWithExecution(this.taskTracker.getCurrentTask());
+        this.update({
+          activePlan: this.planManager.getActivePlan(),
+          activeTask: this.taskTracker.getCurrentTask(),
+        });
 
         if (event.isError) {
           this.emitBridgeEvent("tool:failed", {
@@ -2737,6 +2741,7 @@ export class AgentRuntime {
       >["status"],
       verification.retryable,
     );
+    this.planManager.syncWithExecution(this.taskTracker.getCurrentTask());
 
     const verificationFailed =
       verification.status === "failed" || verification.status === "retryable";
@@ -2780,6 +2785,7 @@ export class AgentRuntime {
       handoff,
       lastVerification: verification,
       degradedGuardrails,
+      activePlan: this.planManager.getActivePlan(),
       activeTask: this.taskTracker.getCurrentTask(),
     });
 
