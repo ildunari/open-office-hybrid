@@ -347,14 +347,18 @@ function inferPlanStepIndex(
   const diagnostics = task?.executionDiagnostics;
   if (diagnostics?.writeCount && diagnostics.writeCount > 0) {
     if (diagnostics.postWriteRereadCount > 0) {
-      const verifyIndex = plan.steps.findIndex((step) => step.kind === "verify");
+      const verifyIndex = plan.steps.findIndex(
+        (step) => step.kind === "verify",
+      );
       return verifyIndex >= 0 ? verifyIndex : plan.steps.length - 1;
     }
     return plan.steps.findIndex((step) => step.kind === "write");
   }
 
   if (diagnostics?.scopeReadCount && diagnostics.scopeReadCount > 0) {
-    const analyzeIndex = plan.steps.findIndex((step) => step.kind === "analyze");
+    const analyzeIndex = plan.steps.findIndex(
+      (step) => step.kind === "analyze",
+    );
     return analyzeIndex >= 0 ? analyzeIndex : 0;
   }
 
@@ -1031,7 +1035,9 @@ export class AgentRuntime {
       if (execution.isError || !WORD_READ_TOOL_NAMES.has(execution.toolName)) {
         return false;
       }
-      return successfulWrite ? execution.timestamp < successfulWrite.timestamp : true;
+      return successfulWrite
+        ? execution.timestamp < successfulWrite.timestamp
+        : true;
     }).length;
     const preWriteInspectionCount = executions.filter((execution) => {
       if (execution.isError) return false;
@@ -1041,13 +1047,17 @@ export class AgentRuntime {
       ) {
         return false;
       }
-      return successfulWrite ? execution.timestamp < successfulWrite.timestamp : true;
+      return successfulWrite
+        ? execution.timestamp < successfulWrite.timestamp
+        : true;
     }).length;
     const scopeReadCount = executions.filter((execution) => {
       if (execution.isError || !WORD_READ_TOOL_NAMES.has(execution.toolName)) {
         return false;
       }
-      return successfulWrite ? execution.timestamp < successfulWrite.timestamp : true;
+      return successfulWrite
+        ? execution.timestamp < successfulWrite.timestamp
+        : true;
     }).length;
     const writeCount = executions.filter(
       (execution) =>
@@ -1109,6 +1119,9 @@ export class AgentRuntime {
     this.update({ activeTask: this.taskTracker.getCurrentTask() });
     const activeTask = this.taskTracker.getCurrentTask();
     if (!activeTask || diagnostics.firstWriteAt) {
+      return false;
+    }
+    if (diagnostics.failedWriteCount > 0) {
       return false;
     }
 

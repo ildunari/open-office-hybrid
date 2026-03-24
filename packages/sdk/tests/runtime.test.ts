@@ -2,12 +2,12 @@ import "fake-indexeddb/auto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildDefaultPlan, inferTaskClassification } from "../src/planning";
 import {
   AgentRuntime,
   type RuntimeAdapter,
   type RuntimeState,
 } from "../src/runtime";
-import { buildDefaultPlan, inferTaskClassification } from "../src/planning";
 import {
   getLatestTaskRecord,
   listThreadSummaries,
@@ -94,7 +94,10 @@ function createPlan(
 function runtimeInternals(runtime: AgentRuntime) {
   return runtime as unknown as {
     taskClassifier: { classify: (message: string) => Promise<unknown> };
-    estimateScopeRisk: (message: string, classification: unknown) => Promise<{
+    estimateScopeRisk: (
+      message: string,
+      classification: unknown,
+    ) => Promise<{
       level: "none" | "low" | "medium" | "high";
       destructive: boolean;
       requiresApproval: boolean;
@@ -172,7 +175,12 @@ function runtimeInternals(runtime: AgentRuntime) {
 
 const corpusScenarioMap = JSON.parse(
   readFileSync(
-    path.join(__dirname, "fixtures", "docx-corpus", "docx-corpus.scenarios.json"),
+    path.join(
+      __dirname,
+      "fixtures",
+      "docx-corpus",
+      "docx-corpus.scenarios.json",
+    ),
     "utf8",
   ),
 ) as {
@@ -676,29 +684,39 @@ describe("AgentRuntime", () => {
             timestamp: number;
           }) => void;
         };
-        hookRegistry: { addPromptNotes: (notes: Array<{ text: string; level: "info"; source: { hookName: string } }>) => void };
+        hookRegistry: {
+          addPromptNotes: (
+            notes: Array<{
+              text: string;
+              level: "info";
+              source: { hookName: string };
+            }>,
+          ) => void;
+        };
         syncAdapterVerifiers: (adapter: RuntimeAdapter) => void;
       }
-    ).syncAdapterVerifiers(createAdapter({
-      getVerificationSuites: () => [
-        {
-          id: "note-suite",
-          label: "Note suite",
-          appliesTo: () => true,
-          verify: (context) => ({
-            suiteId: "note-suite",
+    ).syncAdapterVerifiers(
+      createAdapter({
+        getVerificationSuites: () => [
+          {
+            id: "note-suite",
             label: "Note suite",
-            expectedEffect: "Hook notes are visible.",
-            observedEffect: context.promptNotes.join(", "),
-            status: context.promptNotes.includes("Fresh hook note")
-              ? "passed"
-              : "retryable",
-            evidence: context.promptNotes,
-            retryable: !context.promptNotes.includes("Fresh hook note"),
-          }),
-        },
-      ],
-    }));
+            appliesTo: () => true,
+            verify: (context) => ({
+              suiteId: "note-suite",
+              label: "Note suite",
+              expectedEffect: "Hook notes are visible.",
+              observedEffect: context.promptNotes.join(", "),
+              status: context.promptNotes.includes("Fresh hook note")
+                ? "passed"
+                : "retryable",
+              evidence: context.promptNotes,
+              retryable: !context.promptNotes.includes("Fresh hook note"),
+            }),
+          },
+        ],
+      }),
+    );
 
     const internals = runtime as unknown as {
       taskTracker: {
@@ -758,7 +776,10 @@ describe("AgentRuntime", () => {
           scenario.stressArea,
         ),
       )
-      .map((scenario) => `Inspect ${scenario.file} and summarize risks without changing the document.`);
+      .map(
+        (scenario) =>
+          `Inspect ${scenario.file} and summarize risks without changing the document.`,
+      );
 
     for (const request of requests) {
       const classification = inferTaskClassification(request);
@@ -817,9 +838,9 @@ describe("AgentRuntime", () => {
       expandToolCalls: false,
     });
 
-    const internals = runtimeInternals(runtime) as typeof runtimeInternals extends (
-      runtime: AgentRuntime,
-    ) => infer R
+    const internals = runtimeInternals(
+      runtime,
+    ) as typeof runtimeInternals extends (runtime: AgentRuntime) => infer R
       ? R & {
           buildHandoff: (
             task: Record<string, unknown>,
@@ -858,7 +879,9 @@ describe("AgentRuntime", () => {
 
     expect(taskRecord?.task.approvalPending).toBe(true);
     expect(taskRecord?.task.mode).toBe("awaiting_approval");
-    expect(vfsFiles.some((file) => file.path === "/.oa/context/requirements.json")).toBe(true);
+    expect(
+      vfsFiles.some((file) => file.path === "/.oa/context/requirements.json"),
+    ).toBe(true);
     expect(threads.length).toBeGreaterThan(0);
     runtime.dispose();
   });
@@ -1038,7 +1061,9 @@ describe("AgentRuntime", () => {
     internals.update({
       isStreaming: true,
       mode: "execute",
-      lastPromptNotes: ["Large range detected; work from a bounded working set."],
+      lastPromptNotes: [
+        "Large range detected; work from a bounded working set.",
+      ],
       activePlan: internals.planManager.getActivePlan(),
       activeTask: internals.taskTracker.getCurrentTask() as any,
     });
@@ -1052,9 +1077,90 @@ describe("AgentRuntime", () => {
     expect(state.handoff?.nextRecommendedAction).toContain(
       "Inspection budget exhausted before first write",
     );
+    expect(state.activeTask?.executionDiagnostics?.noWriteLoopDetected).toBe(
+      true,
+    );
+    runtime.dispose();
+  });
+
+  it("does not collapse failed Word writes into a no-write inspection loop", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.planManager.replacePlan(
+      buildDefaultPlan(
+        "Rewrite the introduction and preserve formatting.",
+        classification,
+      ),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-1",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 1,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-2",
+      toolName: "execute_office_js",
+      isError: true,
+      resultText: '{"error":"Selection became invalid"}',
+      timestamp: 2,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-3",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 3,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-4",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 4,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-5",
+      toolName: "get_ooxml",
+      isError: false,
+      resultText: "ok",
+      timestamp: 5,
+    });
+    internals.update({
+      isStreaming: true,
+      mode: "execute",
+      lastPromptNotes: ["Preserve formatting after the edit."],
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+    (runtime as any).isStreaming = true;
+
+    const interrupted = await internals.maybeInterruptNoWriteLoop();
+    const state = runtime.getState();
+
+    expect(interrupted).toBe(false);
+    expect(state.mode).toBe("execute");
+    expect(state.activeTask?.executionDiagnostics?.failedWriteCount).toBe(1);
     expect(
       state.activeTask?.executionDiagnostics?.noWriteLoopDetected,
-    ).toBe(true);
+    ).not.toBe(true);
     runtime.dispose();
   });
 
@@ -1172,9 +1278,9 @@ describe("AgentRuntime", () => {
       mode: "completed",
     });
 
-    expect(runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex).toBe(
-      -1,
-    );
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(-1);
     runtime.dispose();
   });
 });

@@ -34,6 +34,34 @@ const WRITE_TOOLS = new Set([
   "duplicate_slide",
 ]);
 
+const WORD_LOCAL_WRITE_SCOPE = "word:local";
+
+const BROAD_WORD_MUTATION_PATTERNS = [
+  /(?:context\.document\.)?body\.search\s*\(/i,
+  /(?:context\.document\.)?body\.getRange\s*\(/i,
+  /(?:context\.document\.)?body\.(?:insertParagraph|insertTable|insertOoxml|insertFileFromBase64|insertBreak)\s*\(/i,
+  /(?:context\.document\.)?body\.clear\s*\(/i,
+  /context\.document\.sections\b/i,
+  /getHeader\s*\(/i,
+  /getFooter\s*\(/i,
+  /changeTrackingMode\s*=/i,
+  /getTrackedChanges\s*\(/i,
+  /\bacceptAll\s*\(/i,
+  /\brejectAll\s*\(/i,
+  /(?:context\.document\.)?body\.(?:contentControls|inlinePictures)\b/i,
+];
+
+const LOCAL_WORD_MUTATION_PATTERNS = [
+  /paragraphs\.items\s*\[/i,
+  /tables\.items\s*\[/i,
+  /contentControls\.items\s*\[/i,
+  /getSelection\s*\(/i,
+  /getBookmarkRange\s*\(/i,
+  /paragraphs\.(?:getFirst|getLast)\s*\(/i,
+  /tables\.(?:getFirst|getLast)\s*\(/i,
+  /insertComment\s*\(/i,
+];
+
 function isWordTool(toolName: string): boolean {
   return (
     toolName.startsWith("get_document") ||
@@ -82,6 +110,24 @@ export function scopeKeyFromParams(
       const index = params.paragraphIndex ?? params.index ?? "all";
       return `word:para:${index}-${index}`;
     }
+    if (toolName === "execute_office_js") {
+      const code = String(params.code ?? params.jsCode ?? "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (
+        code &&
+        BROAD_WORD_MUTATION_PATTERNS.some((pattern) => pattern.test(code))
+      ) {
+        return "word:all";
+      }
+      if (
+        !code ||
+        LOCAL_WORD_MUTATION_PATTERNS.some((pattern) => pattern.test(code))
+      ) {
+        return WORD_LOCAL_WRITE_SCOPE;
+      }
+      return WORD_LOCAL_WRITE_SCOPE;
+    }
     return "word:all";
   }
 
@@ -104,11 +150,14 @@ export function scopeKeyFromParams(
   return "all";
 }
 
-function parseWordScope(scope: string):
-  | { kind: "all" }
+function parseWordScope(
+  scope: string,
+):
+  | { kind: "all" | "local" }
   | { kind: "para" | "child"; start: number; end: number | null }
   | null {
   if (scope === "word:all") return { kind: "all" };
+  if (scope === WORD_LOCAL_WRITE_SCOPE) return { kind: "local" };
   const match = /^word:(para|child):(-?\d+)-(end|-?\d+)$/.exec(scope);
   if (!match) return null;
   return {
@@ -127,7 +176,10 @@ function rangeContains(
   return outer.start <= inner.start && outerEnd >= innerEnd;
 }
 
-export function hasReadCoverage(readScopes: Set<string>, writeScope: string): boolean {
+export function hasReadCoverage(
+  readScopes: Set<string>,
+  writeScope: string,
+): boolean {
   if (readScopes.has(writeScope) || readScopes.has("all")) {
     return true;
   }
@@ -141,12 +193,16 @@ export function hasReadCoverage(readScopes: Set<string>, writeScope: string): bo
     if (appPrefix === "word") {
       const readWordScope = parseWordScope(scope);
       const writeWordScope = parseWordScope(writeScope);
+      if (!readWordScope || !writeWordScope) {
+        continue;
+      }
+      if (writeWordScope.kind === "local") {
+        return true;
+      }
       if (
-        readWordScope &&
-        writeWordScope &&
+        (readWordScope.kind === "para" || readWordScope.kind === "child") &&
+        (writeWordScope.kind === "para" || writeWordScope.kind === "child") &&
         readWordScope.kind === writeWordScope.kind &&
-        readWordScope.kind !== "all" &&
-        writeWordScope.kind !== "all" &&
         rangeContains(readWordScope, writeWordScope)
       ) {
         return true;
@@ -190,13 +246,19 @@ export const readBeforeWritePreHook: PreHookDefinition = {
   execute: (ctx) => {
     const writeScope = scopeKeyFromParams(ctx.toolName, ctx.params);
     if (!hasReadCoverage(ctx.sessionState.readScopes, writeScope)) {
+      const scopeMessage =
+        writeScope === "word:all"
+          ? "Detected a broad Word write. Read a broad document or structure scope first."
+          : writeScope === WORD_LOCAL_WRITE_SCOPE
+            ? "Read the target Word scope first, then perform the bounded write."
+            : `Attempted write scope: ${writeScope}`;
       return {
         action: "abort",
         errorMessage:
           "You must read the target content before modifying it. " +
           "Use get_document_text, get_document_structure, get_ooxml, " +
           "get_cell_ranges, get_range_as_csv, search_data, or the appropriate " +
-          `read tool first. (Attempted write scope: ${writeScope})`,
+          `read tool first. ${scopeMessage}`,
       };
     }
 

@@ -124,7 +124,8 @@ export function getWordVerificationSuites(): VerificationSuite[] {
             execution.toolName === "execute_office_js" && execution.isError,
         );
         const hadPostWriteReread = hasPostWriteReread(context.toolExecutions);
-        const loopReason = context.task?.executionDiagnostics?.noWriteLoopReason;
+        const loopReason =
+          context.task?.executionDiagnostics?.noWriteLoopReason;
 
         if (successfulWrites.length === 0) {
           return {
@@ -170,7 +171,9 @@ export function getWordVerificationSuites(): VerificationSuite[] {
           observedEffect:
             "A successful Word write was followed by a reread of the affected scope.",
           status: "passed",
-          evidence: context.toolExecutions.map((execution) => execution.toolName),
+          evidence: context.toolExecutions.map(
+            (execution) => execution.toolName,
+          ),
           retryable: false,
         };
       },
@@ -192,10 +195,10 @@ export function getWordVerificationSuites(): VerificationSuite[] {
           observedEffect: hadFingerprintMismatch
             ? "A post-write reread detected formatting drift in the edited scope."
             : !hadWrite
-            ? "No Word write detected to verify."
-            : hadPostWriteReread
-              ? "Word write was followed by a reread of nearby document state."
-              : "Word write executed without a reread of the affected document state.",
+              ? "No Word write detected to verify."
+              : hadPostWriteReread
+                ? "Word write was followed by a reread of nearby document state."
+                : "Word write executed without a reread of the affected document state.",
           status: hadFingerprintMismatch
             ? "failed"
             : hadWrite && hadPostWriteReread
@@ -205,7 +208,8 @@ export function getWordVerificationSuites(): VerificationSuite[] {
             ...context.toolExecutions.map((execution) => execution.toolName),
             ...context.promptNotes,
           ],
-          retryable: !hadFingerprintMismatch && !(hadWrite && hadPostWriteReread),
+          retryable:
+            !hadFingerprintMismatch && !(hadWrite && hadPostWriteReread),
         };
       },
     },
