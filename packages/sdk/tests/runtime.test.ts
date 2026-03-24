@@ -1002,7 +1002,7 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
-  it("blocks a Word mutation task that keeps reading without a write", async () => {
+  it("uses same-run steering recovery before blocking a Word mutation task that keeps reading without a write", async () => {
     const runtime = new AgentRuntime(
       createAdapter({
         hostApp: "word",
@@ -1067,6 +1067,116 @@ describe("AgentRuntime", () => {
       activePlan: internals.planManager.getActivePlan(),
       activeTask: internals.taskTracker.getCurrentTask() as any,
     });
+    const promptCalls: string[] = [];
+    (runtime as any).agent = {
+      state: { messages: [] },
+      prompt: async (promptContent: string) => {
+        promptCalls.push(promptContent);
+      },
+      abort: () => {},
+    };
+    (runtime as any).isStreaming = true;
+
+    const interrupted = await internals.maybeInterruptNoWriteLoop();
+    await (runtime as any).handleAgentEvent({ type: "agent_end" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const state = runtime.getState();
+
+    expect(interrupted).toBe(true);
+    expect(state.mode).toBe("execute");
+    expect(state.handoff).toBeNull();
+    expect(state.activeTask?.executionDiagnostics?.noWriteLoopDetected).toBe(
+      true,
+    );
+    expect(
+      state.activeTask?.executionDiagnostics?.noWriteRecoveryAttemptCount,
+    ).toBe(1);
+    expect(
+      state.activeTask?.executionDiagnostics?.noWriteRecoveryBudgetRemaining,
+    ).toBe(0);
+    expect(promptCalls).toHaveLength(1);
+    expect(promptCalls[0]).toContain(
+      "Inspection budget exhausted before first write",
+    );
+    expect(promptCalls[0]).toContain(
+      "Perform exactly one bounded Word write now and reread that same scope immediately.",
+    );
+    expect(
+      state.lastPromptNotes.some((note) =>
+        note.includes(
+          "Perform exactly one bounded Word write now and reread that same scope immediately.",
+        ),
+      ),
+    ).toBe(true);
+    runtime.dispose();
+  });
+
+  it("blocks a Word mutation task after the no-write recovery budget is exhausted", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the whole document and fix formatting issues.",
+    );
+    internals.planManager.replacePlan(
+      createPlan({
+        userRequest: "Rewrite the whole document and fix formatting issues.",
+        classification,
+        approvalRequired: false,
+      }),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the whole document and fix formatting issues.",
+      classification,
+      {
+        mode: "execute",
+        constraints: ["Preserve formatting."],
+        expectedEffects: ["Write and reread the affected scope."],
+      },
+    );
+    (internals.taskTracker.getCurrentTask() as any).noWriteRecoveryCount = 1;
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-1",
+      toolName: "get_document_structure",
+      isError: false,
+      resultText: "ok",
+      timestamp: 1,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-2",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 2,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-3",
+      toolName: "get_ooxml",
+      isError: false,
+      resultText: "ok",
+      timestamp: 3,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-4",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 4,
+    });
+    internals.update({
+      isStreaming: true,
+      mode: "execute",
+      lastPromptNotes: [
+        "Large range detected; work from a bounded working set.",
+      ],
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
     (runtime as any).isStreaming = true;
 
     const interrupted = await internals.maybeInterruptNoWriteLoop();
@@ -1077,9 +1187,15 @@ describe("AgentRuntime", () => {
     expect(state.handoff?.nextRecommendedAction).toContain(
       "Inspection budget exhausted before first write",
     );
-    expect(state.activeTask?.executionDiagnostics?.noWriteLoopDetected).toBe(
-      true,
+    expect(state.handoff?.nextRecommendedAction).toContain(
+      "Recovery budget exhausted after 1 same-run recovery attempt.",
     );
+    expect(
+      state.activeTask?.executionDiagnostics?.noWriteRecoveryAttemptCount,
+    ).toBe(1);
+    expect(
+      state.activeTask?.executionDiagnostics?.noWriteRecoveryBudgetRemaining,
+    ).toBe(0);
     runtime.dispose();
   });
 

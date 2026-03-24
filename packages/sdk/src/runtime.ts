@@ -269,6 +269,7 @@ const GENERIC_INSPECTION_TOOL_NAMES = new Set(["bash", "read"]);
 const NO_WRITE_LOOP_READ_LIMIT = 4;
 const NO_WRITE_LOOP_INSPECTION_LIMIT = 6;
 const NO_WRITE_LOOP_MS_LIMIT = 45_000;
+const NO_WRITE_LOOP_RECOVERY_LIMIT = 1;
 
 function createCapabilityBoundary(
   mode: CapabilityBoundaryMode,
@@ -395,8 +396,14 @@ export class AgentRuntime {
   private listeners: Set<StateListener> = new Set();
   private lastDocumentMetadata: object | null = null;
   private lastDocumentMetadataUpdatedAt: number | null = null;
-  private interruptedStreamingReason: "inspection_budget_exhausted" | null =
-    null;
+  private interruptedStreamingReason:
+    | "inspection_budget_exhausted"
+    | "inspection_budget_recovery"
+    | null = null;
+  private pendingNoWriteRecovery: {
+    content: string;
+    attachments?: string[];
+  } | null = null;
   private state: RuntimeState;
 
   constructor(adapter: RuntimeAdapter) {
@@ -1023,6 +1030,7 @@ export class AgentRuntime {
 
   private deriveExecutionDiagnostics(task: TaskRecord | null) {
     const executions = task?.toolExecutions ?? [];
+    const noWriteRecoveryAttemptCount = task?.noWriteRecoveryCount ?? 0;
     const successfulWrite = executions.find(
       (execution) =>
         WORD_WRITE_TOOL_NAMES.has(execution.toolName) && !execution.isError,
@@ -1097,7 +1105,23 @@ export class AgentRuntime {
       firstReadAt: firstRead?.timestamp,
       firstWriteAt: successfulWrite?.timestamp,
       planAdvancedBeyondInspection,
+      noWriteRecoveryAttemptCount,
+      noWriteRecoveryBudgetRemaining: Math.max(
+        0,
+        NO_WRITE_LOOP_RECOVERY_LIMIT - noWriteRecoveryAttemptCount,
+      ),
     };
+  }
+
+  private async resumePendingNoWriteRecovery() {
+    const recovery = this.pendingNoWriteRecovery;
+    if (!recovery || !this.agent) return;
+    this.pendingNoWriteRecovery = null;
+    await this.executeActiveTask(
+      this.agent,
+      recovery.content,
+      recovery.attachments,
+    );
   }
 
   private isMutationCapableWordTask(task: TaskRecord | null): boolean {
@@ -1147,23 +1171,75 @@ export class AgentRuntime {
 
     const reason =
       `Inspection budget exhausted before first write after ${diagnostics.preWriteInspectionCount} inspection operations` +
-      `${elapsedMs > 0 ? ` and ${Math.round(elapsedMs / 1000)}s` : ""}. ` +
+      `${elapsedMs > 0 ? ` and ${Math.round(elapsedMs / 1000)}s` : ""}.`;
+    const steeringInstruction =
+      "Perform exactly one bounded Word write now and reread that same scope immediately.";
+    const recoveryCount = activeTask.noWriteRecoveryCount ?? 0;
+    if (recoveryCount < NO_WRITE_LOOP_RECOVERY_LIMIT && this.agent) {
+      const nextRecoveryCount = recoveryCount + 1;
+      const recoveryReason = `${reason} ${steeringInstruction} Same-run recovery attempt ${nextRecoveryCount} of ${NO_WRITE_LOOP_RECOVERY_LIMIT}.`;
+      this.taskTracker.setNoWriteRecoveryCount(nextRecoveryCount);
+      this.taskTracker.setExecutionDiagnostics({
+        ...diagnostics,
+        noWriteLoopDetected: true,
+        noWriteLoopReason: recoveryReason,
+        noWriteRecoveryAttemptCount: nextRecoveryCount,
+        noWriteRecoveryBudgetRemaining: Math.max(
+          0,
+          NO_WRITE_LOOP_RECOVERY_LIMIT - nextRecoveryCount,
+        ),
+      });
+      this.appendPolicyTrace({
+        event: "task_resumed",
+        outcome: "allowed",
+        reason: recoveryReason,
+      });
+      this.pendingNoWriteRecovery = {
+        content: activeTask.userRequest,
+        attachments: activeTask.attachments?.map(
+          (path) => path.split("/").pop() ?? path,
+        ),
+      };
+      this.hookRegistry.addPromptNotes([
+        {
+          level: "warning",
+          text: recoveryReason,
+          source: { hookName: "runtime.no-write-recovery" },
+        },
+      ]);
+      this.interruptedStreamingReason = "inspection_budget_recovery";
+      this.update({
+        activeTask: this.taskTracker.getCurrentTask(),
+        error: null,
+      });
+      await this.persistSessionState();
+      this.agent.abort();
+      return true;
+    }
+
+    const exhaustedReason =
+      `${reason} Recovery budget exhausted after ${recoveryCount} same-run recovery attempt${recoveryCount === 1 ? "" : "s"}. ` +
       "Narrow to a bounded first write, reread the affected scope immediately, then continue.";
     this.interruptedStreamingReason = "inspection_budget_exhausted";
     this.appendPolicyTrace({
       event: "task_paused",
       outcome: "blocked",
-      reason,
+      reason: exhaustedReason,
     });
 
     this.taskTracker.setExecutionDiagnostics({
       ...diagnostics,
       noWriteLoopDetected: true,
-      noWriteLoopReason: reason,
+      noWriteLoopReason: exhaustedReason,
+      noWriteRecoveryAttemptCount: recoveryCount,
+      noWriteRecoveryBudgetRemaining: Math.max(
+        0,
+        NO_WRITE_LOOP_RECOVERY_LIMIT - recoveryCount,
+      ),
     });
     const handoff = await this.buildHandoff(
       this.taskTracker.getCurrentTask()!,
-      reason,
+      exhaustedReason,
     );
     this.taskTracker.setHandoff(handoff);
     this.taskTracker.setMode("blocked");
@@ -1447,7 +1523,11 @@ export class AgentRuntime {
         this.streamingMessageId = null;
         this.update({ isStreaming: false });
         if (this.interruptedStreamingReason) {
+          const interruptedReason = this.interruptedStreamingReason;
           this.interruptedStreamingReason = null;
+          if (interruptedReason === "inspection_budget_recovery") {
+            void this.resumePendingNoWriteRecovery();
+          }
           break;
         }
         this.onStreamingEnd();
@@ -1556,6 +1636,7 @@ export class AgentRuntime {
 
   abort() {
     this.agent?.abort();
+    this.pendingNoWriteRecovery = null;
     this.isStreaming = false;
     this.update({ isStreaming: false });
   }
@@ -1874,6 +1955,7 @@ export class AgentRuntime {
     this.planManager.hydrate(null);
     this.taskTracker.reset();
     this.patternRegistry.deactivateAll();
+    this.pendingNoWriteRecovery = null;
     if (this.currentSessionId) {
       const rootThread = this.buildRootThread(null, null);
       await Promise.all([
