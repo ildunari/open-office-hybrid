@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import {
+  createHash,
+} from "node:crypto";
+import {
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -7,9 +10,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  assessWordBenchmarkLongRunProgress,
   classifyWordBenchmarkFailure,
   matchWordBenchmarkFixtures,
   summarizeWordBenchmarkRun,
@@ -19,6 +23,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(__dirname, "..", "..", "..", "..", "..");
 const bridgeCliPath = path.join(repoRoot, "packages", "bridge", "dist", "cli.js");
 const MAX_BUFFER = 20 * 1024 * 1024;
+const LONG_RUN_PROGRESS_THRESHOLD_MS = 45_000;
+const LONG_RUN_PROGRESS_POLL_MS = 5_000;
 
 function parseArgs(argv) {
   const args = {
@@ -213,6 +219,195 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function hashContent(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function extractToolPayload(result) {
+  if (result?.ok === false) {
+    return null;
+  }
+  if (result && typeof result === "object" && "result" in result) {
+    return result.result;
+  }
+  return result ?? null;
+}
+
+function captureDocumentReadbackHash(bridgeUrl, sessionId, outputPath = null) {
+  try {
+    const response = runBridgeCliJson([
+      "--url",
+      bridgeUrl,
+      "tool",
+      sessionId,
+      "get_document_text",
+    ]);
+    const payload = extractToolPayload(response);
+    const serialized = JSON.stringify(payload ?? null);
+    if (outputPath) {
+      writeJson(outputPath, {
+        sessionId,
+        capturedAt: new Date().toISOString(),
+        payload,
+      });
+    }
+    return hashContent(serialized);
+  } catch {
+    return null;
+  }
+}
+
+function captureSessionScreenshotHash(bridgeUrl, sessionId, outputPath) {
+  try {
+    execBridgeCli([
+      "--url",
+      bridgeUrl,
+      "screenshot",
+      sessionId,
+      "--pages",
+      "1",
+      "--out",
+      outputPath,
+    ]);
+    return existsSync(outputPath)
+      ? hashContent(readFileSync(outputPath))
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function sampleLongRunProgress({
+  startedAt,
+  state,
+  sameSessionReadbackHash = null,
+  sameSessionScreenshotHash = null,
+}) {
+  return {
+    elapsedMs: Math.max(0, Date.now() - startedAt),
+    toolExecutionCount: state?.activeTaskSummary?.toolExecutionCount ?? 0,
+    outputTokens: state?.sessionStats?.outputTokens ?? 0,
+    messageCount: state?.sessionStats?.messageCount ?? 0,
+    sameSessionReadbackHash,
+    sameSessionScreenshotHash,
+  };
+}
+
+function parsePromptProcessResult({ ok, stdout, stderr, error }) {
+  const trimmedStdout = (stdout ?? "").trim();
+  if (trimmedStdout.length > 0) {
+    try {
+      return JSON.parse(trimmedStdout);
+    } catch {
+      // Fall through to error handling below.
+    }
+  }
+  if (!ok) {
+    throw error ?? new Error((stderr ?? "").trim() || "Bridge prompt failed");
+  }
+  return JSON.parse(stdout);
+}
+
+async function runBridgePromptWithMonitoring({
+  bridgeUrl,
+  sessionId,
+  prompt,
+  promptTimeoutMs,
+  startedAt,
+  progressSamples,
+  taskPaths,
+}) {
+  const child = spawn(
+    "node",
+    [
+      bridgeCliPath,
+      "--url",
+      bridgeUrl,
+      "prompt",
+      sessionId,
+      "--prompt",
+      prompt,
+      "--timeout",
+      String(promptTimeoutMs),
+      "--json",
+    ],
+    {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString("utf8");
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString("utf8");
+  });
+
+  const completion = new Promise((resolve) => {
+    child.on("close", (code, signal) => {
+      resolve({
+        ok: code === 0,
+        stdout,
+        stderr,
+        signal,
+        error:
+          code === 0
+            ? null
+            : new Error(
+                stderr.trim() ||
+                  `Bridge prompt exited with code ${code ?? "unknown"}`,
+              ),
+      });
+    });
+  });
+
+  let forcedStop = null;
+  while (child.exitCode == null) {
+    await sleep(LONG_RUN_PROGRESS_POLL_MS);
+    if (child.exitCode != null) break;
+
+    let state = null;
+    try {
+      state = runBridgeCliJson(["--url", bridgeUrl, "state", sessionId, "--compact"]);
+    } catch {
+      continue;
+    }
+
+    progressSamples.push(
+      sampleLongRunProgress({
+        startedAt,
+        state,
+      }),
+    );
+    const assessment = assessWordBenchmarkLongRunProgress(progressSamples, {
+      longRunThresholdMs: LONG_RUN_PROGRESS_THRESHOLD_MS,
+    });
+    if (assessment.isLongRun && !assessment.canKeepRunning) {
+      forcedStop = {
+        outcome: "blocked",
+        reason:
+          "Stopped long-running live mutation monitoring after task-attributed progress stalled.",
+      };
+      appendActionLog(taskPaths, {
+        type: "long_run_progress_stalled",
+        assessment,
+        timestamp: new Date().toISOString(),
+      });
+      child.kill("SIGTERM");
+      break;
+    }
+  }
+
+  const processResult = await completion;
+  if (forcedStop) {
+    return forcedStop;
+  }
+  return parsePromptProcessResult(processResult);
+}
+
 function buildSessionFingerprints(bridgeUrl) {
   const sessions = fetchLiveWordSessions(bridgeUrl);
   return sessions.map((snapshot, index) => {
@@ -330,6 +525,14 @@ function getMetadataCore(payload) {
   return payload?.metadata ?? payload?.snapshot?.documentMetadata ?? payload ?? {};
 }
 
+function promptSummaryHasMissingLongRunEvidence(promptSummary) {
+  return Boolean(
+    promptSummary?.longRunEvidence?.isLongRun &&
+      promptSummary?.outcome === "completed" &&
+      promptSummary?.longRunEvidence?.canClaimSuccess === false,
+  );
+}
+
 function buildValidatorResults(task, promptSummary, beforeMetadata, afterMetadata) {
   const before = getMetadataCore(beforeMetadata);
   const after = getMetadataCore(afterMetadata);
@@ -348,6 +551,10 @@ function buildValidatorResults(task, promptSummary, beforeMetadata, afterMetadat
       ) {
         status = "failed";
         evidence = "Prompt execution failed before validators could complete.";
+      } else if (promptSummaryHasMissingLongRunEvidence(promptSummary)) {
+        status = "failed";
+        evidence =
+          "Long-running live mutation completed without same-session readback or screenshot-change evidence.";
       } else if (
         promptSummary.outcome === "waiting_on_user" ||
         promptSummary.outcome === "blocked"
@@ -389,6 +596,7 @@ function scoreFromPromptSummary(task, promptSummary, validatorResults) {
   const triggeredAutoFail =
     promptSummary.outcome === "error" ||
     promptSummary.outcome === "timed_out" ||
+    promptSummaryHasMissingLongRunEvidence(promptSummary) ||
     failedValidatorCount > 0;
 
   const completionMap = {
@@ -409,7 +617,9 @@ function scoreFromPromptSummary(task, promptSummary, validatorResults) {
       scope_localization: failedValidatorCount === 0 ? 0.9 : 0.35,
       word_native_integrity: failedValidatorCount === 0 ? 0.9 : 0.35,
       formatting_layout_fidelity: 0.8,
-      completion_coverage: completion,
+      completion_coverage: promptSummaryHasMissingLongRunEvidence(promptSummary)
+        ? 0.2
+        : completion,
       safety_ambiguity_handling:
         promptSummary.outcome === "waiting_on_user" ? 0.9 : 0.8,
     },
@@ -489,18 +699,80 @@ async function runPromptTaskWithPolicy(
   let lastError = null;
   for (let attempt = 1; attempt <= policy.maxPromptAttempts; attempt++) {
     try {
-      const result = runBridgeCliJsonAllowFailure([
+      const startedAt = Date.now();
+      const beforeReadbackPath = path.join(
+        taskPaths.taskDir,
+        `before-readback-attempt-${attempt}.json`,
+      );
+      const afterReadbackPath = path.join(
+        taskPaths.taskDir,
+        `after-readback-attempt-${attempt}.json`,
+      );
+      const afterScreenshotPath = path.join(
+        taskPaths.taskDir,
+        `after-attempt-${attempt}.png`,
+      );
+      const baselineState = runBridgeCliJson([
         "--url",
         bridgeUrl,
-        "prompt",
+        "state",
         sessionId,
-        "--prompt",
-        prompt,
-        "--timeout",
-        String(policy.promptTimeoutMs),
-        "--json",
+        "--compact",
       ]);
-      return result.value;
+      const progressSamples = [
+        sampleLongRunProgress({
+          startedAt,
+          state: baselineState,
+          sameSessionReadbackHash: captureDocumentReadbackHash(
+            bridgeUrl,
+            sessionId,
+            beforeReadbackPath,
+          ),
+          sameSessionScreenshotHash: captureSessionScreenshotHash(
+            bridgeUrl,
+            sessionId,
+            taskPaths.screenshotPath,
+          ),
+        }),
+      ];
+      const promptSummary = await runBridgePromptWithMonitoring({
+        bridgeUrl,
+        sessionId,
+        prompt,
+        promptTimeoutMs: policy.promptTimeoutMs,
+        startedAt,
+        progressSamples,
+        taskPaths,
+      });
+      const finalState = runBridgeCliJson([
+        "--url",
+        bridgeUrl,
+        "state",
+        sessionId,
+        "--compact",
+      ]);
+      progressSamples.push(
+        sampleLongRunProgress({
+          startedAt,
+          state: finalState,
+          sameSessionReadbackHash: captureDocumentReadbackHash(
+            bridgeUrl,
+            sessionId,
+            afterReadbackPath,
+          ),
+          sameSessionScreenshotHash: captureSessionScreenshotHash(
+            bridgeUrl,
+            sessionId,
+            afterScreenshotPath,
+          ),
+        }),
+      );
+      return {
+        ...promptSummary,
+        longRunEvidence: assessWordBenchmarkLongRunProgress(progressSamples, {
+          longRunThresholdMs: LONG_RUN_PROGRESS_THRESHOLD_MS,
+        }),
+      };
     } catch (error) {
       lastError = error;
       const normalizedError = normalizeError(error);

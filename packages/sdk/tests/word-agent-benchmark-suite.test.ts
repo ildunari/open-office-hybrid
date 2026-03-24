@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  assessWordBenchmarkLongRunProgress,
   type BridgeSessionFingerprint,
   buildHumanReviewStub,
   buildWordBenchmarkTaskExecutionPlan,
@@ -1139,6 +1140,90 @@ describe("word benchmark suite", () => {
     expect(staleTask.executionObserved).toBe(false);
     expect(staleTask.completionObserved).toBe(false);
     expect(staleTask.executionClassification).toBe("no_execution_signal");
+  });
+
+  it("keeps long-running live mutation monitoring active only while fresh task-attributed progress continues", () => {
+    const stalledLongRun = assessWordBenchmarkLongRunProgress([
+      {
+        elapsedMs: 46_000,
+        toolExecutionCount: 3,
+        outputTokens: 220,
+        messageCount: 4,
+      },
+      {
+        elapsedMs: 52_000,
+        toolExecutionCount: 3,
+        outputTokens: 220,
+        messageCount: 4,
+      },
+    ]);
+
+    expect(stalledLongRun.isLongRun).toBe(true);
+    expect(stalledLongRun.canKeepRunning).toBe(false);
+
+    const progressingLongRun = assessWordBenchmarkLongRunProgress([
+      {
+        elapsedMs: 46_000,
+        toolExecutionCount: 3,
+        outputTokens: 220,
+        messageCount: 4,
+      },
+      {
+        elapsedMs: 52_000,
+        toolExecutionCount: 4,
+        outputTokens: 310,
+        messageCount: 5,
+      },
+    ]);
+
+    expect(progressingLongRun.canKeepRunning).toBe(true);
+    expect(progressingLongRun.taskAttributedForwardProgressObserved).toBe(true);
+  });
+
+  it("requires same-session live readback or screenshot change evidence before claiming long-run mutation success", () => {
+    const unsupportedSuccess = assessWordBenchmarkLongRunProgress([
+      {
+        elapsedMs: 46_000,
+        toolExecutionCount: 2,
+        outputTokens: 120,
+        messageCount: 3,
+        sameSessionReadbackHash: "before",
+        sameSessionScreenshotHash: "screen-a",
+      },
+      {
+        elapsedMs: 57_000,
+        toolExecutionCount: 5,
+        outputTokens: 420,
+        messageCount: 6,
+        sameSessionReadbackHash: "before",
+        sameSessionScreenshotHash: "screen-a",
+      },
+    ]);
+
+    expect(unsupportedSuccess.canClaimSuccess).toBe(false);
+    expect(unsupportedSuccess.sameSessionSuccessEvidenceObserved).toBe(false);
+
+    const supportedByReadback = assessWordBenchmarkLongRunProgress([
+      {
+        elapsedMs: 46_000,
+        toolExecutionCount: 2,
+        outputTokens: 120,
+        messageCount: 3,
+        sameSessionReadbackHash: "before",
+        sameSessionScreenshotHash: "screen-a",
+      },
+      {
+        elapsedMs: 57_000,
+        toolExecutionCount: 5,
+        outputTokens: 420,
+        messageCount: 6,
+        sameSessionReadbackHash: "after",
+        sameSessionScreenshotHash: "screen-a",
+      },
+    ]);
+
+    expect(supportedByReadback.canClaimSuccess).toBe(true);
+    expect(supportedByReadback.sameSessionReadbackChanged).toBe(true);
   });
 
   it("unwraps nested bridge exec submission results", () => {

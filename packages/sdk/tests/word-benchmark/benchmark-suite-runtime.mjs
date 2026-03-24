@@ -26,6 +26,70 @@ export function classifyWordBenchmarkFailure(message) {
   return { kind: "other", message: normalized };
 }
 
+export function assessWordBenchmarkLongRunProgress(
+  samples,
+  options = {},
+) {
+  const longRunThresholdMs = options.longRunThresholdMs ?? 45_000;
+  const orderedSamples = samples
+    .filter(
+      (sample) =>
+        Number.isFinite(sample?.elapsedMs) &&
+        Number.isFinite(sample?.toolExecutionCount) &&
+        Number.isFinite(sample?.outputTokens) &&
+        Number.isFinite(sample?.messageCount),
+    )
+    .sort((left, right) => left.elapsedMs - right.elapsedMs);
+  const finalSample = orderedSamples[orderedSamples.length - 1] ?? null;
+  const isLongRun = (finalSample?.elapsedMs ?? 0) >= longRunThresholdMs;
+
+  let taskAttributedForwardProgressObserved = false;
+  let recentForwardProgressObserved = false;
+  for (let i = 1; i < orderedSamples.length; i++) {
+    const previous = orderedSamples[i - 1];
+    const current = orderedSamples[i];
+    const progressed =
+      current.toolExecutionCount > previous.toolExecutionCount ||
+      current.outputTokens > previous.outputTokens ||
+      current.messageCount > previous.messageCount;
+    if (progressed) {
+      taskAttributedForwardProgressObserved = true;
+      if (i === orderedSamples.length - 1) {
+        recentForwardProgressObserved = true;
+      }
+    }
+  }
+
+  const distinctReadbackHashes = new Set(
+    orderedSamples
+      .map((sample) => sample.sameSessionReadbackHash)
+      .filter((value) => typeof value === "string" && value.length > 0),
+  );
+  const distinctScreenshotHashes = new Set(
+    orderedSamples
+      .map((sample) => sample.sameSessionScreenshotHash)
+      .filter((value) => typeof value === "string" && value.length > 0),
+  );
+  const sameSessionReadbackChanged = distinctReadbackHashes.size > 1;
+  const sameSessionScreenshotChanged = distinctScreenshotHashes.size > 1;
+  const sameSessionSuccessEvidenceObserved =
+    sameSessionReadbackChanged || sameSessionScreenshotChanged;
+
+  return {
+    isLongRun,
+    taskAttributedForwardProgressObserved,
+    recentForwardProgressObserved,
+    sameSessionReadbackChanged,
+    sameSessionScreenshotChanged,
+    sameSessionSuccessEvidenceObserved,
+    canKeepRunning: !isLongRun || recentForwardProgressObserved,
+    canClaimSuccess:
+      !isLongRun ||
+      (taskAttributedForwardProgressObserved &&
+        sameSessionSuccessEvidenceObserved),
+  };
+}
+
 function fixtureMatchScore(fixture, session) {
   const expected = fixture.expected_session_fingerprint;
   if (!expected) return -Infinity;

@@ -194,6 +194,26 @@ export interface WordBenchmarkTaskRunPolicy {
   requireSettledSession: boolean;
 }
 
+export interface WordBenchmarkLongRunProgressSample {
+  elapsedMs: number;
+  toolExecutionCount: number;
+  outputTokens: number;
+  messageCount: number;
+  sameSessionReadbackHash?: string | null;
+  sameSessionScreenshotHash?: string | null;
+}
+
+export interface WordBenchmarkLongRunProgressAssessment {
+  isLongRun: boolean;
+  taskAttributedForwardProgressObserved: boolean;
+  recentForwardProgressObserved: boolean;
+  sameSessionReadbackChanged: boolean;
+  sameSessionScreenshotChanged: boolean;
+  sameSessionSuccessEvidenceObserved: boolean;
+  canKeepRunning: boolean;
+  canClaimSuccess: boolean;
+}
+
 export interface WordBenchmarkValidatorDefinition {
   id: string;
   requiredArtifacts: string[];
@@ -334,6 +354,76 @@ export function buildWordBenchmarkTaskRunPolicy(
   };
 }
 
+export function assessWordBenchmarkLongRunProgress(
+  samples: WordBenchmarkLongRunProgressSample[],
+  options?: { longRunThresholdMs?: number },
+): WordBenchmarkLongRunProgressAssessment {
+  const longRunThresholdMs = options?.longRunThresholdMs ?? 45_000;
+  const orderedSamples = samples
+    .filter(
+      (sample) =>
+        Number.isFinite(sample.elapsedMs) &&
+        Number.isFinite(sample.toolExecutionCount) &&
+        Number.isFinite(sample.outputTokens) &&
+        Number.isFinite(sample.messageCount),
+    )
+    .sort((left, right) => left.elapsedMs - right.elapsedMs);
+  const finalSample = orderedSamples[orderedSamples.length - 1] ?? null;
+  const isLongRun = (finalSample?.elapsedMs ?? 0) >= longRunThresholdMs;
+
+  let taskAttributedForwardProgressObserved = false;
+  let recentForwardProgressObserved = false;
+  for (let i = 1; i < orderedSamples.length; i++) {
+    const previous = orderedSamples[i - 1];
+    const current = orderedSamples[i];
+    const progressed =
+      current.toolExecutionCount > previous.toolExecutionCount ||
+      current.outputTokens > previous.outputTokens ||
+      current.messageCount > previous.messageCount;
+    if (progressed) {
+      taskAttributedForwardProgressObserved = true;
+      if (i === orderedSamples.length - 1) {
+        recentForwardProgressObserved = true;
+      }
+    }
+  }
+
+  const distinctReadbackHashes = new Set(
+    orderedSamples
+      .map((sample) => sample.sameSessionReadbackHash)
+      .filter(
+        (value): value is string =>
+          typeof value === "string" && value.length > 0,
+      ),
+  );
+  const distinctScreenshotHashes = new Set(
+    orderedSamples
+      .map((sample) => sample.sameSessionScreenshotHash)
+      .filter(
+        (value): value is string =>
+          typeof value === "string" && value.length > 0,
+      ),
+  );
+  const sameSessionReadbackChanged = distinctReadbackHashes.size > 1;
+  const sameSessionScreenshotChanged = distinctScreenshotHashes.size > 1;
+  const sameSessionSuccessEvidenceObserved =
+    sameSessionReadbackChanged || sameSessionScreenshotChanged;
+
+  return {
+    isLongRun,
+    taskAttributedForwardProgressObserved,
+    recentForwardProgressObserved,
+    sameSessionReadbackChanged,
+    sameSessionScreenshotChanged,
+    sameSessionSuccessEvidenceObserved,
+    canKeepRunning: !isLongRun || recentForwardProgressObserved,
+    canClaimSuccess:
+      !isLongRun ||
+      (taskAttributedForwardProgressObserved &&
+        sameSessionSuccessEvidenceObserved),
+  };
+}
+
 function fixtureMatchScore(
   fixture: WordBenchmarkFixture,
   session: BridgeSessionFingerprint,
@@ -359,7 +449,9 @@ function fixtureMatchScore(
   return score;
 }
 
-function labelForScore(overallScore: number): TaskRunScoreOutput["overallLabel"] {
+function labelForScore(
+  overallScore: number,
+): TaskRunScoreOutput["overallLabel"] {
   if (overallScore < 3) return "fail";
   if (overallScore <= 3.7) return "passable";
   if (overallScore <= 4.3) return "strong";
@@ -374,7 +466,9 @@ export function loadWordBenchmarkSuite(
   const fixtures = parseJsonFile<FixtureRegistryFile>(
     path.join(baseDir, "fixtures.registry.json"),
   );
-  const core = parseJsonFile<TaskPackFile>(path.join(baseDir, "core-suite.json"));
+  const core = parseJsonFile<TaskPackFile>(
+    path.join(baseDir, "core-suite.json"),
+  );
   const adversarial = parseJsonFile<TaskPackFile>(
     path.join(baseDir, "adversarial-suite.json"),
   );
@@ -469,7 +563,10 @@ export function scoreBenchmarkTaskRun(
     input.dimensions.safety_ambiguity_handling *
       weights.safety_ambiguity_handling;
 
-  const variancePenalty = Math.min(input.repeatability.scoreVariance * 0.6, 0.35);
+  const variancePenalty = Math.min(
+    input.repeatability.scoreVariance * 0.6,
+    0.35,
+  );
   const recoveryPenalty =
     {
       RC0: 0,
@@ -482,7 +579,10 @@ export function scoreBenchmarkTaskRun(
   const repeatBonus = input.repeatability.repeatCount >= 5 ? 0.03 : 0;
   const normalizedScore = Math.max(
     0,
-    Math.min(1, weightedDimensionScore - variancePenalty - recoveryPenalty + repeatBonus),
+    Math.min(
+      1,
+      weightedDimensionScore - variancePenalty - recoveryPenalty + repeatBonus,
+    ),
   );
   const overallScore = Math.round((1 + normalizedScore * 4) * 100) / 100;
   const highRiskRecoveryCapApplied =
@@ -493,8 +593,7 @@ export function scoreBenchmarkTaskRun(
     overallScore: finalScore,
     overallLabel: labelForScore(finalScore),
     autoFailApplied: false,
-    weightedDimensionScore:
-      Math.round(weightedDimensionScore * 1000) / 1000,
+    weightedDimensionScore: Math.round(weightedDimensionScore * 1000) / 1000,
     status: "scored",
     highRiskRecoveryCapApplied,
   };
@@ -629,11 +728,9 @@ export function evaluateWordBenchmarkTaskArtifacts(
     };
   }
   if (
-    [
-      "agent_run_recorded",
-      "prompt_finished",
-      "validation_finished",
-    ].includes(runMetadata.executionStatus ?? "") &&
+    ["agent_run_recorded", "prompt_finished", "validation_finished"].includes(
+      runMetadata.executionStatus ?? "",
+    ) &&
     actionLog.length > 0
   ) {
     return { status: "awaiting_validation", missingArtifacts: [] };
@@ -693,21 +790,25 @@ export function summarizeWordBenchmarkRun(
           "run-metadata.json",
         );
         const errorMessage = existsSync(runMetadataPath)
-          ? parseJsonFile<{ error?: { message?: string } }>(runMetadataPath).error
-              ?.message
+          ? parseJsonFile<{ error?: { message?: string } }>(runMetadataPath)
+              .error?.message
           : undefined;
         const failure = classifyWordBenchmarkFailure(errorMessage);
         failureCounts[failure.kind] += 1;
         failedTaskGroups[failure.kind].push(`${fixtureName}/${taskName}`);
-      }
-      else if (artifactStatus.status === "ready") readyTasks++;
+      } else if (artifactStatus.status === "ready") readyTasks++;
       else pendingTasks++;
     }
 
     return {
       fixtureName,
       hasBaselineSmoke: existsSync(
-        path.join(fixtureDir, "baseline-smoke", "benchmark-baseline", "summary.txt"),
+        path.join(
+          fixtureDir,
+          "baseline-smoke",
+          "benchmark-baseline",
+          "summary.txt",
+        ),
       ),
       taskCount: taskDirs.length,
       pendingTasks,
@@ -721,17 +822,26 @@ export function summarizeWordBenchmarkRun(
   return {
     runDir,
     fixtureCount: fixtureSummaries.length,
-    taskCount: fixtureSummaries.reduce((sum, fixture) => sum + fixture.taskCount, 0),
+    taskCount: fixtureSummaries.reduce(
+      (sum, fixture) => sum + fixture.taskCount,
+      0,
+    ),
     pendingTasks: fixtureSummaries.reduce(
       (sum, fixture) => sum + fixture.pendingTasks,
       0,
     ),
-    readyTasks: fixtureSummaries.reduce((sum, fixture) => sum + fixture.readyTasks, 0),
+    readyTasks: fixtureSummaries.reduce(
+      (sum, fixture) => sum + fixture.readyTasks,
+      0,
+    ),
     awaitingHumanReviewTasks: fixtureSummaries.reduce(
       (sum, fixture) => sum + fixture.awaitingHumanReviewTasks,
       0,
     ),
-    failedTasks: fixtureSummaries.reduce((sum, fixture) => sum + fixture.failedTasks, 0),
+    failedTasks: fixtureSummaries.reduce(
+      (sum, fixture) => sum + fixture.failedTasks,
+      0,
+    ),
     completedTasks: fixtureSummaries.reduce(
       (sum, fixture) => sum + fixture.completedTasks,
       0,
