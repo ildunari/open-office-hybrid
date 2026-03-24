@@ -1,0 +1,46 @@
+{
+  "milestone": "prompt-framework-hardening",
+  "validator": "user-testing",
+  "result": "overridden_pass",
+  "overrideReason": "Auto validator startup is failing with the same worker-exit issue, so prompt-framework assertions were validated from targeted automated evidence and substitute review. A live Hybrid session was not connected on bridge 4018 for optional end-to-end confirmation.",
+  "assertions": {
+    "VAL-PROMPT-001": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/runtime.test.ts provider/phase prompt contract cases",
+        "commit 5285ccc795ee2411eacdf3d3d54b7449812062fa",
+        "follow-up fix eff629f9d3b9f1f9b5cf946dd1cf0b787a4889ac"
+      ]
+    },
+    "VAL-PROMPT-002": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/runtime.test.ts mutation/reviewer/blocked/resume phase cases",
+        "packages/sdk/tests/skills.test.ts doctrine activation cases",
+        "commits 5285ccc795ee2411eacdf3d3d54b7449812062fa and 1861b50c059a67254bcd296e98245e333bceaf88"
+      ]
+    },
+    "VAL-PROMPT-003": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/skills.test.ts canonical word-mastery-v3 and provider doctrine routing",
+        "packages/sdk/tests/runtime.test.ts doctrine injection coverage",
+        "commit 1861b50c059a67254bcd296e98245e333bceaf88"
+      ]
+    },
+    "VAL-PROMPT-004": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/runtime.test.ts prompt provenance ordering/runtime-note assertions",
+        "packages/core/tests/diagnostics.test.ts and diagnostics-panel.test.ts",
+        "packages/bridge/tests/session-summary.test.ts and server.test.ts",
+        "commit d581e14d3c27ed651cacbad6c9039a31d1b95977"
+      ]
+    }
+  },
+  "blockedByEnvironment": [
+    "No connected Hybrid Word session on https://localhost:4018 for optional bridge-first live confirmation."
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": []
+}

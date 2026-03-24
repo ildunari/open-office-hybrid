@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://office-agents.local/word-benchmark/live-review-task-clone.schema.json",
+  "title": "Word Live Review Task Clone",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_identity",
+    "capability_area",
+    "source_document",
+    "task_id",
+    "clone_id",
+    "clone_path",
+    "readiness_state",
+    "execution_status",
+    "bridge_session_id",
+    "word_document_id"
+  ],
+  "properties": {
+    "task_identity": { "type": "string", "minLength": 1 },
+    "capability_area": { "type": "string", "minLength": 1 },
+    "source_document": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "clone_id": { "type": "string", "minLength": 1 },
+    "clone_path": { "type": "string", "minLength": 1 },
+    "readiness_state": { "type": "string", "minLength": 1 },
+    "execution_status": { "type": "string", "minLength": 1 },
+    "bridge_session_id": { "type": "string", "minLength": 1 },
+    "word_document_id": { "type": "string", "minLength": 1 }
+  }
+}

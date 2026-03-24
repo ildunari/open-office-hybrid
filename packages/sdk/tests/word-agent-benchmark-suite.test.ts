@@ -1,38 +1,38 @@
-import path from "node:path";
 import {
   existsSync,
-  mkdtempSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  classifyWordBenchmarkFailure,
-  buildWordBenchmarkTaskRunPolicy,
-  buildWordBenchmarkTaskExecutionPlan,
+  assessWordBenchmarkLongRunProgress,
+  type BridgeSessionFingerprint,
   buildHumanReviewStub,
+  buildWordBenchmarkTaskExecutionPlan,
+  buildWordBenchmarkTaskRunPolicy,
+  classifyWordBenchmarkFailure,
   evaluateWordBenchmarkTaskArtifacts,
   loadWordBenchmarkSuite,
   planArtifactPaths,
   scoreBenchmarkTaskRun,
   summarizeWordBenchmarkRun,
-  type BridgeSessionFingerprint,
 } from "./word-benchmark/benchmark-suite";
+import { classifyHarnessVsLiveReviewMismatch } from "./word-benchmark/live-review-compare";
 import {
   appendActiveIssueEntry,
   appendResolvedIssueEntry,
   initializeLiveReviewIssueArtifacts,
 } from "./word-benchmark/live-review-issues";
 import { buildCapabilityLiveReviewPlan } from "./word-benchmark/live-review-planner";
-import { resolveLiveReviewSession } from "./word-benchmark/run-live-review-batch.mjs";
+import { completeMinimalLiveReviewerResult } from "./word-benchmark/live-review-reviewer";
 import {
   advanceLiveReviewBatch,
   createLiveReviewBatchRuntime,
 } from "./word-benchmark/live-review-runtime";
-import { classifyHarnessVsLiveReviewMismatch } from "./word-benchmark/live-review-compare";
-import { completeMinimalLiveReviewerResult } from "./word-benchmark/live-review-reviewer";
 import {
   buildReviewerPrompt,
   buildTaskpanePromptSubmissionScript,
@@ -40,13 +40,17 @@ import {
   LIVE_REVIEW_AUTOMATION_GLOBAL,
   LIVE_REVIEW_SEND_BUTTON_SELECTOR,
   LIVE_REVIEW_TEXTAREA_SELECTOR,
+  shouldContinueReceiptObservation,
   unwrapTaskpaneSubmissionResult,
 } from "./word-benchmark/live-review-submission.mjs";
+import {
+  buildExecutionDiagnosticReport,
+  buildPreflightStop,
+  createBatchReportSkeleton,
+  resolveLiveReviewSession,
+} from "./word-benchmark/run-live-review-batch.mjs";
 
-const suiteDir = path.join(
-  __dirname,
-  "word-benchmark",
-);
+const suiteDir = path.join(__dirname, "word-benchmark");
 
 function loadJsonFixture<T>(...parts: string[]) {
   const filePath = path.join(suiteDir, ...parts);
@@ -72,6 +76,14 @@ describe("word benchmark suite", () => {
       required: string[];
       properties: Record<string, unknown>;
     }>("resolved-issue.schema.json");
+    const executionDiagnosticSchema = loadJsonFixture<{
+      required: string[];
+      properties: Record<string, unknown>;
+    }>("live-review-execution-diagnostic.schema.json");
+    const cloneSchema = loadJsonFixture<{
+      required: string[];
+      properties: Record<string, unknown>;
+    }>("live-review-task-clone.schema.json");
 
     expect(reviewerSchema.required).toEqual(
       expect.arrayContaining([
@@ -103,6 +115,17 @@ describe("word benchmark suite", () => {
       ]),
     );
     expect(batchSchema.properties.per_task_timeline).toBeDefined();
+    expect(batchSchema.properties.per_task_timeline).toEqual(
+      expect.objectContaining({
+        items: expect.objectContaining({
+          required: expect.arrayContaining([
+            "task_id",
+            "events",
+            "execution_classification",
+          ]),
+        }),
+      }),
+    );
 
     expect(issueLedgerSchema.required).toEqual(
       expect.arrayContaining([
@@ -129,6 +152,141 @@ describe("word benchmark suite", () => {
       ]),
     );
     expect(resolvedIssueSchema.properties.archive_index_entry).toBeDefined();
+
+    expect(executionDiagnosticSchema.required).toEqual(
+      expect.arrayContaining([
+        "task_identity",
+        "capability_area",
+        "source_document",
+        "task_id",
+        "clone_id",
+        "bridge_session_id",
+        "word_document_id",
+        "execution_classification",
+        "prompt_submitted",
+        "execution_observed",
+        "completion_observed",
+      ]),
+    );
+    expect(
+      executionDiagnosticSchema.properties.degraded_guardrails,
+    ).toBeDefined();
+
+    expect(cloneSchema.required).toEqual(
+      expect.arrayContaining([
+        "task_identity",
+        "capability_area",
+        "source_document",
+        "task_id",
+        "clone_id",
+        "clone_path",
+        "readiness_state",
+        "execution_status",
+      ]),
+    );
+    expect(cloneSchema.properties.bridge_session_id).toBeDefined();
+  });
+
+  it("records preflight-stopped batches with branch-specific reviewer and clone artifacts", () => {
+    const batchReport = createBatchReportSkeleton(
+      {
+        capabilityId: "nih_grants",
+        documents: [],
+      },
+      {
+        sourceDocument: "grant_nih_r01_template_v1",
+        selectionReason: "manual",
+        tasks: [{ taskId: "M08-grant-protected-neighbor" }],
+      },
+      "batch-001",
+    );
+    const timeline = batchReport.per_task_timeline[0];
+
+    const preflightStop = buildPreflightStop({
+      clone: {
+        cloneId: "clone-M08-grant-protected-neighbor-1",
+        clonePath: "/tmp/clone.docx",
+      },
+      runtime: createLiveReviewBatchRuntime({
+        batchId: "batch-001",
+        capabilityArea: "nih_grants",
+        sourceDocument: "grant_nih_r01_template_v1",
+        selectedTasks: ["M08-grant-protected-neighbor"],
+      }),
+      timeline,
+      batchReport,
+      failureClassification: "preflight_blocked_no_hybrid_session",
+      readinessState: "pane_open_required",
+      executionStatus: "paused_for_pane",
+      stopReason: "awaiting_hybrid_pane",
+      observation:
+        "No connected Hybrid Word pane/session was available at preflight.",
+    });
+
+    expect(timeline.execution_classification).toBe(
+      "preflight_blocked_no_hybrid_session",
+    );
+    expect(batchReport.diagnosis_summary).toContain(
+      "No connected Hybrid Word pane/session",
+    );
+    expect(preflightStop.reviewerReport.failure_classification).toBe(
+      "preflight_blocked_no_hybrid_session",
+    );
+    expect(preflightStop.cloneArtifact).toEqual(
+      expect.objectContaining({
+        task_identity: "grant_nih_r01_template_v1:M08-grant-protected-neighbor",
+        capability_area: "nih_grants",
+        source_document: "grant_nih_r01_template_v1",
+        readiness_state: "pane_open_required",
+        execution_status: "paused_for_pane",
+      }),
+    );
+  });
+
+  it("builds execution diagnostics with task, clone, and session identity fields", () => {
+    const diagnostic = buildExecutionDiagnosticReport({
+      capabilityId: "nih_grants",
+      sourceDocument: "grant_nih_r01_template_v1",
+      cloneId: "clone-M08-grant-protected-neighbor-1",
+      bridgeSessionId: "word:hybrid-1",
+      wordDocumentId: "doc-123",
+      task: { taskId: "M08-grant-protected-neighbor" },
+      receiptObservation: {
+        receipts: {
+          executionClassification: "reviewer_only_success",
+          promptSubmitted: true,
+          executionObserved: true,
+          completionObserved: true,
+          readCount: 1,
+          writeCount: 0,
+          failedWriteCount: 0,
+          firstReadTs: 123,
+          firstWriteTs: null,
+          postWriteRereadObserved: false,
+          noWriteLoopSuspected: false,
+          reviewerOnlySuccess: true,
+          writeAttemptedButFailed: false,
+          writeSucceededWithoutReread: false,
+        },
+      },
+      finalState: {
+        mode: "completed",
+        waitingState: null,
+        lastVerification: { status: "passed" },
+        degradedGuardrails: [],
+      },
+    });
+
+    expect(diagnostic).toEqual(
+      expect.objectContaining({
+        task_identity: "grant_nih_r01_template_v1:M08-grant-protected-neighbor",
+        capability_area: "nih_grants",
+        source_document: "grant_nih_r01_template_v1",
+        clone_id: "clone-M08-grant-protected-neighbor-1",
+        bridge_session_id: "word:hybrid-1",
+        word_document_id: "doc-123",
+      }),
+    );
   });
 
   it("builds a capability-led live review plan", () => {
@@ -157,14 +315,18 @@ describe("word benchmark suite", () => {
       "T39-grant-approved-region",
       "T11-grant-template-rewrite",
     ]);
-    expect(plan.documents[0].tasks.every((task) => task.riskScore >= 0)).toBe(true);
+    expect(plan.documents[0].tasks.every((task) => task.riskScore >= 0)).toBe(
+      true,
+    );
     expect(plan.documents.every((entry) => entry.tasks.length <= 4)).toBe(true);
     expect(plan.maxDocs).toBe(2);
     expect(plan.maxTasksPerDocument).toBe(4);
   });
 
   it("writes active and resolved live review issue records", () => {
-    const rootDir = mkdtempSync(path.join(os.tmpdir(), "word-live-review-issues-"));
+    const rootDir = mkdtempSync(
+      path.join(os.tmpdir(), "word-live-review-issues-"),
+    );
 
     initializeLiveReviewIssueArtifacts(rootDir);
 
@@ -173,10 +335,13 @@ describe("word benchmark suite", () => {
       capabilityArea: "nih_grants",
       sourceDocument: "grant_nih_r01_template_v1",
       taskId: "M08-grant-protected-neighbor",
-      dateRunReference: "lrb-nih_grants-grant_nih_r01_template_v1-2026-03-22T23-59-00Z",
-      observedBehavior: "Protected neighboring content changed during a scoped edit.",
+      dateRunReference:
+        "lrb-nih_grants-grant_nih_r01_template_v1-2026-03-22T23-59-00Z",
+      observedBehavior:
+        "Protected neighboring content changed during a scoped edit.",
       expectedBehavior: "Only the selected grant paragraph changes.",
-      reproductionSummary: "Run the task on a fresh clone with the Hybrid pane open.",
+      reproductionSummary:
+        "Run the task on a fresh clone with the Hybrid pane open.",
       seenIn: "both",
       likelyFailureClass: "scope_violation",
       likelySolutionSurface: "harness_scope_diff",
@@ -193,7 +358,8 @@ describe("word benchmark suite", () => {
       resolvedAt: "2026-03-22T23:59:30.000Z",
       summary: "Scope diff handling now keeps the protected region stable.",
       resolutionKind: "harness_fix",
-      detailedReportBody: "# LRI-001\n\nResolved by tightening harness-side scope diff checks.\n",
+      detailedReportBody:
+        "# LRI-001\n\nResolved by tightening harness-side scope diff checks.\n",
     });
 
     const resolvedIndex = readFileSync(resolvedPaths.indexPath, "utf8");
@@ -206,24 +372,11 @@ describe("word benchmark suite", () => {
 
   it("commits the live review scaffold files in repo", () => {
     expect(
-      existsSync(
-        path.join(
-          suiteDir,
-          "artifacts",
-          "live-review",
-          "README.md",
-        ),
-      ),
+      existsSync(path.join(suiteDir, "artifacts", "live-review", "README.md")),
     ).toBe(true);
     expect(
       existsSync(
-        path.join(
-          suiteDir,
-          "artifacts",
-          "live-review",
-          "issues",
-          "ACTIVE.md",
-        ),
+        path.join(suiteDir, "artifacts", "live-review", "issues", "ACTIVE.md"),
       ),
     ).toBe(true);
     expect(
@@ -297,11 +450,16 @@ describe("word benchmark suite", () => {
   });
 
   it("classifies harness versus live review mismatches", () => {
-    const rootDir = mkdtempSync(path.join(os.tmpdir(), "word-live-review-compare-"));
+    const rootDir = mkdtempSync(
+      path.join(os.tmpdir(), "word-live-review-compare-"),
+    );
     const taskDir = path.join(rootDir, "task");
     mkdirSync(taskDir, { recursive: true });
 
-    writeFileSync(path.join(taskDir, "inspect.json"), JSON.stringify({ sections: 1 }));
+    writeFileSync(
+      path.join(taskDir, "inspect.json"),
+      JSON.stringify({ sections: 1 }),
+    );
 
     writeFileSync(
       path.join(taskDir, "score.json"),
@@ -379,6 +537,24 @@ describe("word benchmark suite", () => {
         boundedFixAllowedInV1: true,
       }),
     );
+
+    expect(
+      classifyHarnessVsLiveReviewMismatch({
+        taskArtifactDir: taskDir,
+        reviewerReport: {
+          verdict: "pass",
+          execution_status: "completed",
+          failure_classification: "reviewer_task_completed",
+          execution_classification: "reviewer_only_success",
+        },
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        mismatchClass: "aligned",
+        likelyFailureSurface: "none",
+        boundedFixAllowedInV1: false,
+      }),
+    );
   });
 
   it("completes a minimal live reviewer result", () => {
@@ -402,10 +578,7 @@ describe("word benchmark suite", () => {
         activePlanSummary: null,
         activeTaskSummary: null,
       },
-      events: [
-        { event: "bridge_connected" },
-        { event: "bridge_status" },
-      ],
+      events: [{ event: "bridge_connected" }, { event: "bridge_status" }],
     });
 
     expect(completed.readinessState).toBe("completed");
@@ -558,8 +731,178 @@ describe("word benchmark suite", () => {
 
     expect(source).toContain("--source-document");
     expect(source).toContain("--task-id");
-    expect(source).toContain("entryMode: \"orchestrator_led\"");
+    expect(source).toContain('entryMode: "orchestrator_led"');
     expect(source).toContain("manual_orchestrator_led");
+  });
+
+  it("resolves the live word benchmark repo root from the current worktree", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+
+    expect(runner.resolveLiveWordBenchmarkPaths).toBeTypeOf("function");
+
+    const resolved = runner.resolveLiveWordBenchmarkPaths();
+
+    expect(resolved.repoRoot).toBe(path.join(__dirname, "..", "..", ".."));
+    expect(resolved.bridgeCliPath).toBe(
+      path.join(
+        __dirname,
+        "..",
+        "..",
+        "..",
+        "packages",
+        "bridge",
+        "dist",
+        "cli.js",
+      ),
+    );
+  });
+
+  it("builds the bridge CLI with workspace-aware pnpm arguments", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+    const calls: Array<{
+      command: string;
+      args: string[];
+      options: { cwd?: string; encoding?: string; maxBuffer?: number };
+    }> = [];
+
+    runner.ensureBridgeCliBuilt({
+      repoRoot: "/tmp/worktree-root",
+      execFileSyncImpl: (command: string, args: string[], options: any) => {
+        calls.push({ command, args, options });
+        return "";
+      },
+    });
+
+    expect(calls).toEqual([
+      {
+        command: "pnpm",
+        args: [
+          "--dir",
+          "/tmp/worktree-root",
+          "--filter",
+          "@office-agents/bridge",
+          "build",
+        ],
+        options: expect.objectContaining({
+          cwd: "/tmp/worktree-root",
+        }),
+      },
+    ]);
+  });
+
+  it("requests JSON without compact mode when the live benchmark runner reads bridge state", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+
+    expect(
+      runner.buildBridgeStateJsonArgs(
+        "https://localhost:4018",
+        "word:session-1",
+      ),
+    ).toEqual([
+      "--url",
+      "https://localhost:4018",
+      "state",
+      "word:session-1",
+      "--json",
+    ]);
+  });
+
+  it("submits live benchmark prompts through taskpane exec instead of a missing prompt command", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+
+    const args = runner.buildBridgeTaskpanePromptArgs({
+      bridgeUrl: "https://localhost:4018",
+      sessionId: "word:session-1",
+      code: "return true;",
+    });
+
+    expect(args).toEqual([
+      "--url",
+      "https://localhost:4018",
+      "exec",
+      "word:session-1",
+      "--unsafe",
+      "--code",
+      "return true;",
+    ]);
+  });
+
+  it("derives live benchmark prompt outcomes from runtime state truthfully", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+
+    expect(
+      runner.summarizeBenchmarkPromptOutcome({
+        mode: "completed",
+        taskPhase: "completed",
+        waitingState: null,
+        error: null,
+      }),
+    ).toBe("completed");
+    expect(
+      runner.summarizeBenchmarkPromptOutcome({
+        mode: "blocked",
+        taskPhase: "blocked",
+        waitingState: "clarification",
+        error: null,
+      }),
+    ).toBe("waiting_on_user");
+    expect(
+      runner.summarizeBenchmarkPromptOutcome({
+        mode: "blocked",
+        taskPhase: "blocked",
+        waitingState: null,
+        error: null,
+      }),
+    ).toBe("blocked");
+  });
+
+  it("stops multistep live benchmark sessions after a blocked or waiting step", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+
+    expect(
+      runner.shouldContinueBenchmarkSessionPlan({
+        outcome: "completed",
+      }),
+    ).toBe(true);
+    expect(
+      runner.shouldContinueBenchmarkSessionPlan({
+        outcome: "blocked",
+      }),
+    ).toBe(false);
+    expect(
+      runner.shouldContinueBenchmarkSessionPlan({
+        outcome: "waiting_on_user",
+      }),
+    ).toBe(false);
+  });
+
+  it("prefers refresh_session runtime state when waiting for a live session to settle", async () => {
+    const runner = await import("./word-benchmark/run-live-word-benchmark.mjs");
+
+    const refreshed = runner.extractRuntimeStateFromRefreshPayload({
+      runtimeState: {
+        mode: "completed",
+        taskPhase: "completed",
+      },
+    });
+    const nested = runner.extractRuntimeStateFromRefreshPayload({
+      snapshot: {
+        runtimeState: {
+          mode: "blocked",
+          taskPhase: "blocked",
+        },
+      },
+    });
+
+    expect(refreshed).toEqual({
+      mode: "completed",
+      taskPhase: "completed",
+    });
+    expect(nested).toEqual({
+      mode: "blocked",
+      taskPhase: "blocked",
+    });
+    expect(runner.extractRuntimeStateFromRefreshPayload(null)).toBeNull();
   });
 
   it("reuses the shared live-review helpers in the runner", () => {
@@ -599,6 +942,11 @@ describe("word benchmark suite", () => {
         {
           sessionId: "word:other",
           documentId: "doc-other",
+          app: "word",
+          appName: "OpenWord Hybrid",
+          host: {
+            href: "https://localhost:3003/taskpane.html",
+          },
           documentMetadata: {
             pageCount: 3,
             sectionCount: 1,
@@ -609,6 +957,11 @@ describe("word benchmark suite", () => {
         {
           sessionId: "word:report",
           documentId: "doc-report",
+          app: "word",
+          appName: "OpenWord Hybrid",
+          host: {
+            href: "https://localhost:3003/taskpane.html",
+          },
           documentMetadata: {
             pageCount: 19,
             sectionCount: 9,
@@ -630,6 +983,11 @@ describe("word benchmark suite", () => {
           {
             sessionId: "word:a",
             documentId: "doc-a",
+            app: "word",
+            appName: "OpenWord Hybrid",
+            host: {
+              href: "https://localhost:3003/taskpane.html",
+            },
             documentMetadata: {
               pageCount: 19,
               sectionCount: 9,
@@ -640,6 +998,11 @@ describe("word benchmark suite", () => {
           {
             sessionId: "word:b",
             documentId: "doc-b",
+            app: "word",
+            appName: "OpenWord Hybrid",
+            host: {
+              href: "https://localhost:3003/taskpane.html",
+            },
             documentMetadata: {
               pageCount: 19,
               sectionCount: 9,
@@ -652,6 +1015,31 @@ describe("word benchmark suite", () => {
     ).toThrow(/multiple word sessions match/i);
   });
 
+  it("fails live-review session resolution when only a non-Hybrid Word session is available", () => {
+    expect(() =>
+      resolveLiveReviewSession({
+        sourceDocument: "report_tti_generic_v1",
+        sessions: [
+          {
+            sessionId: "word:dev",
+            documentId: "doc-dev",
+            app: "word",
+            appName: "OpenWord Dev",
+            host: {
+              href: "https://localhost:3002/taskpane.html",
+            },
+            documentMetadata: {
+              pageCount: 19,
+              sectionCount: 9,
+              tableCount: 5,
+              changeTrackingMode: "Off",
+            },
+          },
+        ],
+      }),
+    ).toThrow(/hybrid word session/i);
+  });
+
   it("supports explicit live-review session targeting", () => {
     const session = resolveLiveReviewSession({
       sourceDocument: "report_tti_generic_v1",
@@ -660,17 +1048,39 @@ describe("word benchmark suite", () => {
         {
           sessionId: "word:other",
           documentId: "doc-other",
+          app: "word",
+          appName: "OpenWord Hybrid",
+          host: {
+            href: "https://localhost:3003/taskpane.html",
+          },
           documentMetadata: {},
         },
         {
           sessionId: "word:target",
           documentId: "doc-target",
+          app: "word",
+          appName: "OpenWord Hybrid",
+          host: {
+            href: "https://localhost:3003/taskpane.html",
+          },
           documentMetadata: {},
         },
       ],
     });
 
     expect(session.sessionId).toBe("word:target");
+  });
+
+  it("uses the resolved session id for metadata capture too", () => {
+    const runnerPath = path.join(
+      __dirname,
+      "word-benchmark",
+      "run-live-review-batch.mjs",
+    );
+    const source = readFileSync(runnerPath, "utf8");
+
+    expect(source).toContain('["metadata", session.sessionId]');
+    expect(source).not.toContain('["metadata", "word"]');
   });
 
   it("classifies the live execution receipts from runtime state and events", () => {
@@ -810,6 +1220,243 @@ describe("word benchmark suite", () => {
     expect(noWriteLoop.noWriteLoopSuspected).toBe(true);
   });
 
+  it("keeps failed-write and write-without-reread live classifications distinct", () => {
+    const failedWrite = classifyLiveExecutionReceipts({
+      baselineMessageCount: 0,
+      stateSnapshots: [
+        {
+          mode: "blocked",
+          waitingState: null,
+          isStreaming: false,
+          activeTaskSummary: {
+            id: "task-edit",
+            status: "failed",
+            mode: "blocked",
+            toolExecutionCount: 1,
+          },
+          degradedGuardrails: [],
+          sessionStats: { messageCount: 1 },
+        },
+      ],
+      newEvents: [
+        {
+          event: "tool:failed",
+          ts: 1,
+          payload: { toolName: "execute_office_js" },
+        },
+      ],
+    });
+
+    expect(failedWrite.executionClassification).toBe(
+      "write_attempted_but_failed",
+    );
+    expect(failedWrite.writeAttemptedButFailed).toBe(true);
+    expect(failedWrite.writeSucceededWithoutReread).toBe(false);
+
+    const writeWithoutReread = classifyLiveExecutionReceipts({
+      baselineMessageCount: 0,
+      stateSnapshots: [
+        {
+          mode: "completed",
+          waitingState: null,
+          isStreaming: false,
+          activeTaskSummary: {
+            id: "task-edit",
+            status: "completed",
+            mode: "completed",
+            toolExecutionCount: 1,
+          },
+          degradedGuardrails: [],
+          sessionStats: { messageCount: 2 },
+        },
+      ],
+      newEvents: [
+        {
+          event: "tool:completed",
+          ts: 1,
+          payload: { toolName: "execute_office_js" },
+        },
+      ],
+    });
+
+    expect(writeWithoutReread.executionClassification).toBe(
+      "write_succeeded_without_reread",
+    );
+    expect(writeWithoutReread.writeAttemptedButFailed).toBe(false);
+    expect(writeWithoutReread.writeSucceededWithoutReread).toBe(true);
+  });
+
+  it("requires fresh task-attributed evidence before claiming live completion", () => {
+    const staleTask = classifyLiveExecutionReceipts({
+      baselineMessageCount: 2,
+      stateSnapshots: [
+        {
+          mode: "completed",
+          waitingState: null,
+          isStreaming: false,
+          activeTaskSummary: {
+            id: "older-task",
+            status: "completed",
+            mode: "completed",
+            toolExecutionCount: 1,
+          },
+          degradedGuardrails: [],
+          sessionStats: { messageCount: 2 },
+        },
+      ],
+      newEvents: [],
+    });
+
+    expect(staleTask.promptSubmitted).toBe(false);
+    expect(staleTask.executionObserved).toBe(false);
+    expect(staleTask.completionObserved).toBe(false);
+    expect(staleTask.executionClassification).toBe("no_execution_signal");
+  });
+
+  it("keeps polling briefly when reviewer completion lands before the tool receipt", () => {
+    const continuePolling = shouldContinueReceiptObservation({
+      receipts: {
+        promptSubmitted: true,
+        executionObserved: false,
+        completionObserved: true,
+      },
+      stateSnapshots: [
+        {
+          promptProvenance: { phase: "reviewer_live_review" },
+        },
+      ],
+      elapsedMs: 3_000,
+      completionObservedAtMs: 2_000,
+      timeoutMs: 75_000,
+    });
+
+    expect(continuePolling).toBe(true);
+  });
+
+  it("stops polling once the reviewer receipt grace window expires", () => {
+    const continuePolling = shouldContinueReceiptObservation({
+      receipts: {
+        promptSubmitted: true,
+        executionObserved: false,
+        completionObserved: true,
+      },
+      stateSnapshots: [
+        {
+          promptProvenance: { phase: "reviewer_live_review" },
+        },
+      ],
+      elapsedMs: 13_500,
+      completionObservedAtMs: 2_000,
+      timeoutMs: 75_000,
+    });
+
+    expect(continuePolling).toBe(false);
+  });
+
+  it("does not keep polling non-reviewer completions that still lack execution receipts", () => {
+    const continuePolling = shouldContinueReceiptObservation({
+      receipts: {
+        promptSubmitted: true,
+        executionObserved: false,
+        completionObserved: true,
+      },
+      stateSnapshots: [
+        {
+          promptProvenance: { phase: "mutation" },
+        },
+      ],
+      elapsedMs: 3_000,
+      completionObservedAtMs: 2_000,
+      timeoutMs: 75_000,
+    });
+
+    expect(continuePolling).toBe(false);
+  });
+
+  it("keeps long-running live mutation monitoring active only while fresh task-attributed progress continues", () => {
+    const stalledLongRun = assessWordBenchmarkLongRunProgress([
+      {
+        elapsedMs: 46_000,
+        toolExecutionCount: 3,
+        outputTokens: 220,
+        messageCount: 4,
+      },
+      {
+        elapsedMs: 52_000,
+        toolExecutionCount: 3,
+        outputTokens: 220,
+        messageCount: 4,
+      },
+    ]);
+
+    expect(stalledLongRun.isLongRun).toBe(true);
+    expect(stalledLongRun.canKeepRunning).toBe(false);
+
+    const progressingLongRun = assessWordBenchmarkLongRunProgress([
+      {
+        elapsedMs: 46_000,
+        toolExecutionCount: 3,
+        outputTokens: 220,
+        messageCount: 4,
+      },
+      {
+        elapsedMs: 52_000,
+        toolExecutionCount: 4,
+        outputTokens: 310,
+        messageCount: 5,
+      },
+    ]);
+
+    expect(progressingLongRun.canKeepRunning).toBe(true);
+    expect(progressingLongRun.taskAttributedForwardProgressObserved).toBe(true);
+  });
+
+  it("requires same-session live readback or screenshot change evidence before claiming long-run mutation success", () => {
+    const unsupportedSuccess = assessWordBenchmarkLongRunProgress([
+      {
+        elapsedMs: 46_000,
+        toolExecutionCount: 2,
+        outputTokens: 120,
+        messageCount: 3,
+        sameSessionReadbackHash: "before",
+        sameSessionScreenshotHash: "screen-a",
+      },
+      {
+        elapsedMs: 57_000,
+        toolExecutionCount: 5,
+        outputTokens: 420,
+        messageCount: 6,
+        sameSessionReadbackHash: "before",
+        sameSessionScreenshotHash: "screen-a",
+      },
+    ]);
+
+    expect(unsupportedSuccess.canClaimSuccess).toBe(false);
+    expect(unsupportedSuccess.sameSessionSuccessEvidenceObserved).toBe(false);
+
+    const supportedByReadback = assessWordBenchmarkLongRunProgress([
+      {
+        elapsedMs: 46_000,
+        toolExecutionCount: 2,
+        outputTokens: 120,
+        messageCount: 3,
+        sameSessionReadbackHash: "before",
+        sameSessionScreenshotHash: "screen-a",
+      },
+      {
+        elapsedMs: 57_000,
+        toolExecutionCount: 5,
+        outputTokens: 420,
+        messageCount: 6,
+        sameSessionReadbackHash: "after",
+        sameSessionScreenshotHash: "screen-a",
+      },
+    ]);
+
+    expect(supportedByReadback.canClaimSuccess).toBe(true);
+    expect(supportedByReadback.sameSessionReadbackChanged).toBe(true);
+  });
+
   it("unwraps nested bridge exec submission results", () => {
     expect(
       unwrapTaskpaneSubmissionResult({
@@ -855,7 +1502,9 @@ describe("word benchmark suite", () => {
 
   it("loads scenario packs that only reference known fixture ids", () => {
     const suite = loadWordBenchmarkSuite(suiteDir);
-    const knownFixtureIds = new Set(suite.fixtures.all.map((f) => f.source_doc_id));
+    const knownFixtureIds = new Set(
+      suite.fixtures.all.map((f) => f.source_doc_id),
+    );
 
     expect(Object.keys(suite.scenarioPacks).sort()).toEqual([
       "adversarial",
@@ -863,8 +1512,12 @@ describe("word benchmark suite", () => {
       "multistep",
     ]);
     expect(suite.scenarioPacks.core.tasks.length).toBeGreaterThanOrEqual(12);
-    expect(suite.scenarioPacks.adversarial.tasks.length).toBeGreaterThanOrEqual(6);
-    expect(suite.scenarioPacks.multistep.sessions.length).toBeGreaterThanOrEqual(3);
+    expect(suite.scenarioPacks.adversarial.tasks.length).toBeGreaterThanOrEqual(
+      6,
+    );
+    expect(
+      suite.scenarioPacks.multistep.sessions.length,
+    ).toBeGreaterThanOrEqual(3);
 
     for (const pack of Object.values(suite.scenarioPacks)) {
       if ("tasks" in pack) {
@@ -971,7 +1624,9 @@ describe("word benchmark suite", () => {
       path.join(planned.taskDir, "human-review.md"),
     );
     expect(planned.summaryPath).toBe(path.join(planned.taskDir, "summary.txt"));
-    expect(planned.screenshotPath).toBe(path.join(planned.taskDir, "before.png"));
+    expect(planned.screenshotPath).toBe(
+      path.join(planned.taskDir, "before.png"),
+    );
     expect(planned.baselineReferencePath).toBe(
       path.join(planned.taskDir, "baseline-reference.json"),
     );
@@ -1017,7 +1672,9 @@ describe("word benchmark suite", () => {
       "header_footer_linkage_check",
       "page_number_scheme_check",
     ]);
-    expect(executionPlan.validators[0].requiredArtifacts).toContain("inspectPath");
+    expect(executionPlan.validators[0].requiredArtifacts).toContain(
+      "inspectPath",
+    );
     expect(executionPlan.mutations.map((entry) => entry.id)).toEqual(["M01"]);
     expect(executionPlan.mutations[0].requiredArtifacts).toContain(
       "baselineReferencePath",
@@ -1036,9 +1693,7 @@ describe("word benchmark suite", () => {
       ).kind,
     ).toBe("session_collision");
     expect(
-      classifyWordBenchmarkFailure(
-        "Request timed out after 300000ms",
-      ).kind,
+      classifyWordBenchmarkFailure("Request timed out after 300000ms").kind,
     ).toBe("prompt_timeout");
   });
 
@@ -1131,7 +1786,11 @@ describe("word benchmark suite", () => {
     const rootDir = mkdtempSync(path.join(os.tmpdir(), "word-benchmark-run-"));
     const runDir = path.join(rootDir, "word-benchmark", "run-001");
     const fixtureDir = path.join(runDir, "Generic-report-template.docx");
-    const baselineDir = path.join(fixtureDir, "baseline-smoke", "benchmark-baseline");
+    const baselineDir = path.join(
+      fixtureDir,
+      "baseline-smoke",
+      "benchmark-baseline",
+    );
     mkdirSync(baselineDir, { recursive: true });
 
     writeFileSync(
@@ -1188,17 +1847,22 @@ describe("word benchmark suite", () => {
         }),
       );
       writeFileSync(paths.scorePath, JSON.stringify({ status: "pending" }));
-      writeFileSync(paths.humanReviewPath, buildHumanReviewStub({
-        fixture: suite.fixtures.local.find(
-          (entry) => entry.source_doc_id === currentTask.source_doc_id,
-        )!,
-        task: currentTask,
-        runId: "run-001",
-      }));
+      writeFileSync(
+        paths.humanReviewPath,
+        buildHumanReviewStub({
+          fixture: suite.fixtures.local.find(
+            (entry) => entry.source_doc_id === currentTask.source_doc_id,
+          )!,
+          task: currentTask,
+          runId: "run-001",
+        }),
+      );
       writeFileSync(paths.actionLogPath, "");
       writeFileSync(
         paths.baselineReferencePath,
-        JSON.stringify({ fixtureBaselineDir: "../baseline-smoke/benchmark-baseline" }),
+        JSON.stringify({
+          fixtureBaselineDir: "../baseline-smoke/benchmark-baseline",
+        }),
       );
       writeFileSync(paths.summaryPath, "word | idle");
       writeFileSync(paths.metadataPath, JSON.stringify({ pageCount: 19 }));
@@ -1224,10 +1888,7 @@ describe("word benchmark suite", () => {
       }),
     );
 
-    writeFileSync(
-      failedPaths.actionLogPath,
-      '{"step":"recovery attempt"}\n',
-    );
+    writeFileSync(failedPaths.actionLogPath, '{"step":"recovery attempt"}\n');
     writeFileSync(
       failedPaths.scorePath,
       JSON.stringify({
@@ -1259,7 +1920,11 @@ describe("word benchmark suite", () => {
     const rootDir = mkdtempSync(path.join(os.tmpdir(), "word-benchmark-run-"));
     const runDir = path.join(rootDir, "word-benchmark", "run-001");
     const fixtureDir = path.join(runDir, "Generic-report-template.docx");
-    const baselineDir = path.join(fixtureDir, "baseline-smoke", "benchmark-baseline");
+    const baselineDir = path.join(
+      fixtureDir,
+      "baseline-smoke",
+      "benchmark-baseline",
+    );
     mkdirSync(baselineDir, { recursive: true });
     writeFileSync(path.join(baselineDir, "summary.txt"), "word | idle");
 
@@ -1359,17 +2024,25 @@ describe("word benchmark suite", () => {
     writeFileSync(paths.taskManifestPath, JSON.stringify(task));
     writeFileSync(
       paths.runMetadataPath,
-      JSON.stringify({ executionStatus: "baseline_captured_pending_manual_agent_run" }),
+      JSON.stringify({
+        executionStatus: "baseline_captured_pending_manual_agent_run",
+      }),
     );
     writeFileSync(paths.scorePath, JSON.stringify({ status: "pending" }));
     writeFileSync(
       paths.humanReviewPath,
-      buildHumanReviewStub({ fixture: fixture!, task: task!, runId: "run-001" }),
+      buildHumanReviewStub({
+        fixture: fixture!,
+        task: task!,
+        runId: "run-001",
+      }),
     );
     writeFileSync(paths.actionLogPath, "");
     writeFileSync(
       paths.baselineReferencePath,
-      JSON.stringify({ fixtureBaselineDir: "../baseline-smoke/benchmark-baseline" }),
+      JSON.stringify({
+        fixtureBaselineDir: "../baseline-smoke/benchmark-baseline",
+      }),
     );
     writeFileSync(paths.summaryPath, "word | idle");
     writeFileSync(paths.metadataPath, JSON.stringify({ pageCount: 19 }));
@@ -1377,7 +2050,9 @@ describe("word benchmark suite", () => {
     writeFileSync(paths.statePath, JSON.stringify({ status: "idle" }));
     writeFileSync(paths.diagPath, JSON.stringify({ hooks: [] }));
 
-    expect(evaluateWordBenchmarkTaskArtifacts(paths.taskDir).status).toBe("ready");
+    expect(evaluateWordBenchmarkTaskArtifacts(paths.taskDir).status).toBe(
+      "ready",
+    );
 
     writeFileSync(paths.actionLogPath, '{"step":"repair toc"}\n');
     writeFileSync(

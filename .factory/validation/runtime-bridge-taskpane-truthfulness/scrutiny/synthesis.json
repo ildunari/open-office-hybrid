@@ -1,0 +1,48 @@
+{
+  "milestone": "runtime-bridge-taskpane-truthfulness",
+  "validator": "scrutiny",
+  "result": "overridden_pass",
+  "overrideReason": "Auto scrutiny-validator worker exited twice with `Droid process exited unexpectedly (exit code 0)` before startup, so milestone scrutiny was completed via substitute review plus targeted validator commands.",
+  "commandsRun": [
+    {
+      "command": "pnpm --filter @office-agents/sdk exec vitest run tests/runtime.test.ts",
+      "result": "passed after follow-up fix 8a3f1f46edf5dfedf34b089dc4c22131ab1398bb aligned stale runtime assertions"
+    },
+    {
+      "command": "pnpm --filter @office-agents/core exec vitest run tests/diagnostics.test.ts tests/diagnostics-panel.test.ts",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm --filter @office-agents/bridge exec vitest run tests/server.test.ts tests/session-summary.test.ts",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm typecheck",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm lint",
+      "result": "passed"
+    }
+  ],
+  "featureReviews": [
+    {
+      "featureId": "hybrid-runtime-blocked-resume-verification-truth",
+      "commitId": "6d42076baca1db91240f24479c8eac6baeb62952",
+      "reviewVerdict": "pass"
+    },
+    {
+      "featureId": "hybrid-bridge-summary-and-diagnostics-truth",
+      "commitId": "4c88224689d30d015a1343bb272af046a4166391",
+      "reviewVerdict": "pass"
+    },
+    {
+      "featureId": "runtime-truth-last-verification-test-alignment",
+      "commitId": "8a3f1f46edf5dfedf34b089dc4c22131ab1398bb",
+      "reviewVerdict": "pass"
+    }
+  ],
+  "findings": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": []
+}

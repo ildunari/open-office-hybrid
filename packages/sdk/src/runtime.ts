@@ -18,8 +18,10 @@ import { ContextManager } from "./context/manager";
 import {
   type Disposable,
   HookRegistry,
+  hasReadCoverage,
   readBeforeWritePostHook,
   readBeforeWritePreHook,
+  scopeKeyFromParams,
 } from "./hooks";
 import {
   agentMessagesToChatMessages,
@@ -63,6 +65,12 @@ import {
   type TaskRecord,
   type TaskThreadSummary,
 } from "./planning";
+import type { PromptPhase, PromptProviderFamily } from "./prompt-contract";
+import {
+  buildPromptContract,
+  inferPromptPhase,
+  inferProviderFamily,
+} from "./prompt-contract";
 import {
   applyProxyToModel,
   buildCustomModel,
@@ -79,6 +87,10 @@ import {
   type SkillMeta,
   syncSkillsToVfs,
 } from "./skills";
+import {
+  buildLocalDoctrinePromptSection,
+  selectLocalDoctrineContributors,
+} from "./skills/local-doctrine";
 import { TaskTracker } from "./state/tracker";
 import {
   type ChatSession,
@@ -126,6 +138,37 @@ import {
   snapshotVfs,
   writeFile,
 } from "./vfs";
+
+export type PromptProvenanceContributorKind =
+  | "system_prompt"
+  | "prompt_contract"
+  | "local_doctrine"
+  | "document_metadata"
+  | "attachments"
+  | "plan"
+  | "context_budget"
+  | "hook_notes"
+  | "user_request";
+
+export interface PromptProvenanceContributor {
+  id: string;
+  kind: PromptProvenanceContributorKind;
+  label: string;
+  order: number;
+  summary: string;
+  path?: string;
+}
+
+export interface PromptProvenance {
+  providerFamily: PromptProviderFamily;
+  provider: string;
+  model: string;
+  apiType: string;
+  phase: PromptPhase;
+  contributors: PromptProvenanceContributor[];
+  runtimeNotes: string[];
+  updatedAt: number;
+}
 
 export interface RuntimeAdapter {
   hostApp?: HostApp;
@@ -180,6 +223,7 @@ export interface RuntimeState {
   activeHookNames: string[];
   contextBudgetState: { action: string; usagePct: number } | null;
   lastPromptNotes: string[];
+  promptProvenance: PromptProvenance | null;
   activePlan: ExecutionPlan | null;
   activeTask: TaskRecord | null;
   planState: ExecutionPlan | null;
@@ -216,18 +260,13 @@ function thinkingLevelToAgent(level: ThinkingLevel): AgentThinkingLevel {
   return level === "none" ? "off" : level;
 }
 
-function toTaskPhase(
-  mode: RuntimeState["mode"],
-  hasPendingDecision: boolean,
-): TaskPhase {
+function toTaskPhase(mode: RuntimeState["mode"]): TaskPhase {
   if (mode === "awaiting_approval") return "waiting_on_user";
   if (mode === "plan") return "plan";
   if (mode === "execute") return "execute";
   if (mode === "verify") return "verify";
   if (mode === "completed") return "completed";
-  if (mode === "blocked") {
-    return hasPendingDecision ? "waiting_on_user" : "blocked";
-  }
+  if (mode === "blocked") return "blocked";
   return "discuss";
 }
 
@@ -247,14 +286,7 @@ function buildWaitingState(
       createdAt: state.approvalRequest.requestedAt,
     };
   }
-
-  if (!state.handoff) return null;
-  return {
-    kind: "clarification",
-    reason: state.handoff.nextRecommendedAction,
-    resumeMessage: state.handoff.summary || state.handoff.nextRecommendedAction,
-    createdAt: state.handoff.updatedAt,
-  };
+  return null;
 }
 
 const MAX_POLICY_TRACE_ENTRIES = 25;
@@ -269,6 +301,7 @@ const GENERIC_INSPECTION_TOOL_NAMES = new Set(["bash", "read"]);
 const NO_WRITE_LOOP_READ_LIMIT = 4;
 const NO_WRITE_LOOP_INSPECTION_LIMIT = 6;
 const NO_WRITE_LOOP_MS_LIMIT = 45_000;
+const NO_WRITE_LOOP_RECOVERY_LIMIT = 1;
 
 function createCapabilityBoundary(
   mode: CapabilityBoundaryMode,
@@ -334,6 +367,19 @@ function summarizeJson(value: unknown): string {
     : serialized;
 }
 
+function summarizeMetadataTag(tag: string, metadata: object): string {
+  const keys = Object.keys(metadata);
+  if (keys.length === 0) return `${tag} with no fields`;
+  const preview = keys.slice(0, 3).join(", ");
+  return `${tag} with fields: ${preview}${keys.length > 3 ? ", ..." : ""}`;
+}
+
+function summarizeAttachments(attachments: string[]): string {
+  if (attachments.length === 0) return "No attachments.";
+  if (attachments.length === 1) return attachments[0] ?? "1 attachment";
+  return `${attachments.length} attachments: ${attachments.slice(0, 3).join(", ")}${attachments.length > 3 ? ", ..." : ""}`;
+}
+
 function inferPlanStepIndex(
   plan: ExecutionPlan | null,
   task: TaskRecord | null,
@@ -347,14 +393,18 @@ function inferPlanStepIndex(
   const diagnostics = task?.executionDiagnostics;
   if (diagnostics?.writeCount && diagnostics.writeCount > 0) {
     if (diagnostics.postWriteRereadCount > 0) {
-      const verifyIndex = plan.steps.findIndex((step) => step.kind === "verify");
+      const verifyIndex = plan.steps.findIndex(
+        (step) => step.kind === "verify",
+      );
       return verifyIndex >= 0 ? verifyIndex : plan.steps.length - 1;
     }
     return plan.steps.findIndex((step) => step.kind === "write");
   }
 
   if (diagnostics?.scopeReadCount && diagnostics.scopeReadCount > 0) {
-    const analyzeIndex = plan.steps.findIndex((step) => step.kind === "analyze");
+    const analyzeIndex = plan.steps.findIndex(
+      (step) => step.kind === "analyze",
+    );
     return analyzeIndex >= 0 ? analyzeIndex : 0;
   }
 
@@ -391,8 +441,14 @@ export class AgentRuntime {
   private listeners: Set<StateListener> = new Set();
   private lastDocumentMetadata: object | null = null;
   private lastDocumentMetadataUpdatedAt: number | null = null;
-  private interruptedStreamingReason: "inspection_budget_exhausted" | null =
-    null;
+  private interruptedStreamingReason:
+    | "inspection_budget_exhausted"
+    | "inspection_budget_recovery"
+    | null = null;
+  private pendingNoWriteRecovery: {
+    content: string;
+    attachments?: string[];
+  } | null = null;
   private state: RuntimeState;
 
   constructor(adapter: RuntimeAdapter) {
@@ -435,6 +491,7 @@ export class AgentRuntime {
       activeHookNames: this.hookRegistry.getRegisteredHookNames(),
       contextBudgetState: null,
       lastPromptNotes: [],
+      promptProvenance: null,
       activePlan: null,
       activeTask: null,
       planState: null,
@@ -465,6 +522,9 @@ export class AgentRuntime {
     isStreaming: boolean;
     permissionMode: string;
     waitingState: string | null;
+    waitingReason: string | null;
+    handoffSummary: string | null;
+    nextRecommendedAction: string | null;
     activePlanSummary: {
       id: string;
       status: string;
@@ -478,7 +538,20 @@ export class AgentRuntime {
       toolExecutionCount: number;
     } | null;
     contextBudget: { usagePct: number; action: string };
-    lastVerification: { status: string } | null;
+    lastVerification: { status: string; retryable: boolean } | null;
+    latestCompletion: {
+      summary: string;
+      verificationStatus: string;
+    } | null;
+    promptProvenance: {
+      providerFamily: string;
+      provider: string;
+      model: string;
+      phase: string;
+      contributorCount: number;
+      doctrineIds: string[];
+      runtimeNotes: string[];
+    } | null;
     sessionStats: {
       inputTokens: number;
       outputTokens: number;
@@ -500,6 +573,9 @@ export class AgentRuntime {
       isStreaming: s.isStreaming,
       permissionMode: s.permissionMode,
       waitingState: s.waitingState?.kind ?? null,
+      waitingReason: s.waitingState?.reason ?? null,
+      handoffSummary: s.handoff?.summary ?? null,
+      nextRecommendedAction: s.handoff?.nextRecommendedAction ?? null,
       activePlanSummary: plan
         ? {
             id: plan.id,
@@ -518,7 +594,34 @@ export class AgentRuntime {
         : null,
       contextBudget: s.contextBudgetState ?? { usagePct: 0, action: "none" },
       lastVerification: s.lastVerification
-        ? { status: s.lastVerification.status }
+        ? {
+            status: s.lastVerification.status,
+            retryable: s.lastVerification.retryable,
+          }
+        : null,
+      latestCompletion: s.completionArtifacts[0]
+        ? {
+            summary: s.completionArtifacts[0].summary,
+            verificationStatus: s.completionArtifacts[0].verificationStatus,
+          }
+        : null,
+      promptProvenance: s.promptProvenance
+        ? {
+            providerFamily: s.promptProvenance.providerFamily,
+            provider: s.promptProvenance.provider,
+            model: s.promptProvenance.model,
+            phase: s.promptProvenance.phase,
+            contributorCount: s.promptProvenance.contributors.length,
+            doctrineIds: s.promptProvenance.contributors
+              .filter((contributor) => contributor.kind === "local_doctrine")
+              .flatMap((contributor) =>
+                contributor.summary
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean),
+              ),
+            runtimeNotes: [...s.promptProvenance.runtimeNotes],
+          }
         : null,
       sessionStats: {
         inputTokens: stats.inputTokens,
@@ -627,10 +730,7 @@ export class AgentRuntime {
       ...next,
       permissionMode,
       planState: next.activePlan,
-      taskPhase: toTaskPhase(
-        next.mode,
-        Boolean(next.approvalRequest || next.handoff),
-      ),
+      taskPhase: toTaskPhase(next.mode),
       waitingState: buildWaitingState(next),
     };
   }
@@ -1019,10 +1119,16 @@ export class AgentRuntime {
 
   private deriveExecutionDiagnostics(task: TaskRecord | null) {
     const executions = task?.toolExecutions ?? [];
-    const successfulWrite = executions.find(
-      (execution) =>
-        WORD_WRITE_TOOL_NAMES.has(execution.toolName) && !execution.isError,
-    );
+    const noWriteRecoveryAttemptCount = task?.noWriteRecoveryCount ?? 0;
+    const latestSuccessfulWrite = [...executions]
+      .reverse()
+      .find(
+        (execution) =>
+          WORD_WRITE_TOOL_NAMES.has(execution.toolName) && !execution.isError,
+      );
+    const latestSuccessfulWriteScope = latestSuccessfulWrite
+      ? this.getExecutionScopeKey(latestSuccessfulWrite)
+      : null;
     const firstRead = executions.find(
       (execution) =>
         WORD_READ_TOOL_NAMES.has(execution.toolName) && !execution.isError,
@@ -1031,7 +1137,9 @@ export class AgentRuntime {
       if (execution.isError || !WORD_READ_TOOL_NAMES.has(execution.toolName)) {
         return false;
       }
-      return successfulWrite ? execution.timestamp < successfulWrite.timestamp : true;
+      return latestSuccessfulWrite
+        ? execution.timestamp < latestSuccessfulWrite.timestamp
+        : true;
     }).length;
     const preWriteInspectionCount = executions.filter((execution) => {
       if (execution.isError) return false;
@@ -1041,13 +1149,17 @@ export class AgentRuntime {
       ) {
         return false;
       }
-      return successfulWrite ? execution.timestamp < successfulWrite.timestamp : true;
+      return latestSuccessfulWrite
+        ? execution.timestamp < latestSuccessfulWrite.timestamp
+        : true;
     }).length;
     const scopeReadCount = executions.filter((execution) => {
       if (execution.isError || !WORD_READ_TOOL_NAMES.has(execution.toolName)) {
         return false;
       }
-      return successfulWrite ? execution.timestamp < successfulWrite.timestamp : true;
+      return latestSuccessfulWrite
+        ? execution.timestamp < latestSuccessfulWrite.timestamp
+        : true;
     }).length;
     const writeCount = executions.filter(
       (execution) =>
@@ -1057,12 +1169,16 @@ export class AgentRuntime {
       (execution) =>
         WORD_WRITE_TOOL_NAMES.has(execution.toolName) && execution.isError,
     ).length;
-    const postWriteRereadCount = successfulWrite
+    const postWriteRereadCount = latestSuccessfulWrite
       ? executions.filter(
           (execution) =>
             !execution.isError &&
             WORD_READ_TOOL_NAMES.has(execution.toolName) &&
-            execution.timestamp >= successfulWrite.timestamp,
+            execution.timestamp >= latestSuccessfulWrite.timestamp &&
+            this.isRelevantPostWriteReread(
+              execution,
+              latestSuccessfulWriteScope,
+            ),
         ).length
       : 0;
     const activePlan = this.planManager.getActivePlan();
@@ -1074,7 +1190,7 @@ export class AgentRuntime {
       ) ||
         activePlan?.activeStepId === "step-write" ||
         activePlan?.activeStepId === "step-verify" ||
-        successfulWrite,
+        latestSuccessfulWrite,
     );
 
     return {
@@ -1085,9 +1201,70 @@ export class AgentRuntime {
       failedWriteCount,
       postWriteRereadCount,
       firstReadAt: firstRead?.timestamp,
-      firstWriteAt: successfulWrite?.timestamp,
+      firstWriteAt: latestSuccessfulWrite?.timestamp,
       planAdvancedBeyondInspection,
+      noWriteRecoveryAttemptCount,
+      noWriteRecoveryBudgetRemaining: Math.max(
+        0,
+        NO_WRITE_LOOP_RECOVERY_LIMIT - noWriteRecoveryAttemptCount,
+      ),
     };
+  }
+
+  private getToolCallArgs(
+    toolCallId: string,
+    toolName: string,
+  ): Record<string, unknown> | null {
+    for (
+      let messageIndex = this.state.messages.length - 1;
+      messageIndex >= 0;
+      messageIndex--
+    ) {
+      const message = this.state.messages[messageIndex];
+      for (const part of message.parts) {
+        if (
+          part.type === "toolCall" &&
+          part.id === toolCallId &&
+          part.name === toolName
+        ) {
+          return part.args;
+        }
+      }
+    }
+    return null;
+  }
+
+  private getExecutionScopeKey(
+    execution: NonNullable<TaskRecord["toolExecutions"]>[number],
+  ): string | null {
+    const args = this.getToolCallArgs(execution.toolCallId, execution.toolName);
+    if (!args) return null;
+    return scopeKeyFromParams(execution.toolName, args);
+  }
+
+  private isRelevantPostWriteReread(
+    execution: NonNullable<TaskRecord["toolExecutions"]>[number],
+    writeScope: string | null,
+  ): boolean {
+    if (!writeScope) {
+      return true;
+    }
+    const readScope = this.getExecutionScopeKey(execution);
+    if (!readScope) {
+      return false;
+    }
+    return hasReadCoverage(new Set([readScope]), writeScope);
+  }
+
+  private async resumePendingNoWriteRecovery() {
+    const recovery = this.pendingNoWriteRecovery;
+    if (!recovery || !this.agent) return;
+    this.pendingNoWriteRecovery = null;
+    await this.executeActiveTask(
+      this.agent,
+      recovery.content,
+      recovery.attachments,
+    );
   }
 
   private isMutationCapableWordTask(task: TaskRecord | null): boolean {
@@ -1109,6 +1286,9 @@ export class AgentRuntime {
     this.update({ activeTask: this.taskTracker.getCurrentTask() });
     const activeTask = this.taskTracker.getCurrentTask();
     if (!activeTask || diagnostics.firstWriteAt) {
+      return false;
+    }
+    if (diagnostics.failedWriteCount > 0) {
       return false;
     }
 
@@ -1134,23 +1314,75 @@ export class AgentRuntime {
 
     const reason =
       `Inspection budget exhausted before first write after ${diagnostics.preWriteInspectionCount} inspection operations` +
-      `${elapsedMs > 0 ? ` and ${Math.round(elapsedMs / 1000)}s` : ""}. ` +
+      `${elapsedMs > 0 ? ` and ${Math.round(elapsedMs / 1000)}s` : ""}.`;
+    const steeringInstruction =
+      "Perform exactly one bounded Word write now and reread that same scope immediately.";
+    const recoveryCount = activeTask.noWriteRecoveryCount ?? 0;
+    if (recoveryCount < NO_WRITE_LOOP_RECOVERY_LIMIT && this.agent) {
+      const nextRecoveryCount = recoveryCount + 1;
+      const recoveryReason = `${reason} ${steeringInstruction} Same-run recovery attempt ${nextRecoveryCount} of ${NO_WRITE_LOOP_RECOVERY_LIMIT}.`;
+      this.taskTracker.setNoWriteRecoveryCount(nextRecoveryCount);
+      this.taskTracker.setExecutionDiagnostics({
+        ...diagnostics,
+        noWriteLoopDetected: true,
+        noWriteLoopReason: recoveryReason,
+        noWriteRecoveryAttemptCount: nextRecoveryCount,
+        noWriteRecoveryBudgetRemaining: Math.max(
+          0,
+          NO_WRITE_LOOP_RECOVERY_LIMIT - nextRecoveryCount,
+        ),
+      });
+      this.appendPolicyTrace({
+        event: "task_resumed",
+        outcome: "allowed",
+        reason: recoveryReason,
+      });
+      this.pendingNoWriteRecovery = {
+        content: activeTask.userRequest,
+        attachments: activeTask.attachments?.map(
+          (path) => path.split("/").pop() ?? path,
+        ),
+      };
+      this.hookRegistry.addPromptNotes([
+        {
+          level: "warning",
+          text: recoveryReason,
+          source: { hookName: "runtime.no-write-recovery" },
+        },
+      ]);
+      this.interruptedStreamingReason = "inspection_budget_recovery";
+      this.update({
+        activeTask: this.taskTracker.getCurrentTask(),
+        error: null,
+      });
+      await this.persistSessionState();
+      this.agent.abort();
+      return true;
+    }
+
+    const exhaustedReason =
+      `${reason} Recovery budget exhausted after ${recoveryCount} same-run recovery attempt${recoveryCount === 1 ? "" : "s"}. ` +
       "Narrow to a bounded first write, reread the affected scope immediately, then continue.";
     this.interruptedStreamingReason = "inspection_budget_exhausted";
     this.appendPolicyTrace({
       event: "task_paused",
       outcome: "blocked",
-      reason,
+      reason: exhaustedReason,
     });
 
     this.taskTracker.setExecutionDiagnostics({
       ...diagnostics,
       noWriteLoopDetected: true,
-      noWriteLoopReason: reason,
+      noWriteLoopReason: exhaustedReason,
+      noWriteRecoveryAttemptCount: recoveryCount,
+      noWriteRecoveryBudgetRemaining: Math.max(
+        0,
+        NO_WRITE_LOOP_RECOVERY_LIMIT - recoveryCount,
+      ),
     });
     const handoff = await this.buildHandoff(
       this.taskTracker.getCurrentTask()!,
-      reason,
+      exhaustedReason,
     );
     this.taskTracker.setHandoff(handoff);
     this.taskTracker.setMode("blocked");
@@ -1386,7 +1618,11 @@ export class AgentRuntime {
           this.taskTracker.getCurrentTask(),
         );
         this.taskTracker.setExecutionDiagnostics(diagnostics);
-        this.update({ activeTask: this.taskTracker.getCurrentTask() });
+        this.planManager.syncWithExecution(this.taskTracker.getCurrentTask());
+        this.update({
+          activePlan: this.planManager.getActivePlan(),
+          activeTask: this.taskTracker.getCurrentTask(),
+        });
 
         if (event.isError) {
           this.emitBridgeEvent("tool:failed", {
@@ -1434,7 +1670,11 @@ export class AgentRuntime {
         this.streamingMessageId = null;
         this.update({ isStreaming: false });
         if (this.interruptedStreamingReason) {
+          const interruptedReason = this.interruptedStreamingReason;
           this.interruptedStreamingReason = null;
+          if (interruptedReason === "inspection_budget_recovery") {
+            void this.resumePendingNoWriteRecovery();
+          }
           break;
         }
         this.onStreamingEnd();
@@ -1543,6 +1783,7 @@ export class AgentRuntime {
 
   abort() {
     this.agent?.abort();
+    this.pendingNoWriteRecovery = null;
     this.isStreaming = false;
     this.update({ isStreaming: false });
   }
@@ -1702,6 +1943,7 @@ export class AgentRuntime {
         activeHookNames: this.hookRegistry.getRegisteredHookNames(),
         contextBudgetState: null,
         lastPromptNotes: [],
+        promptProvenance: null,
         activePlan,
         activeTask,
       });
@@ -1861,6 +2103,7 @@ export class AgentRuntime {
     this.planManager.hydrate(null);
     this.taskTracker.reset();
     this.patternRegistry.deactivateAll();
+    this.pendingNoWriteRecovery = null;
     if (this.currentSessionId) {
       const rootThread = this.buildRootThread(null, null);
       await Promise.all([
@@ -1892,6 +2135,7 @@ export class AgentRuntime {
       activeHookNames: this.hookRegistry.getRegisteredHookNames(),
       contextBudgetState: null,
       lastPromptNotes: [],
+      promptProvenance: null,
       activePlan: null,
       activeTask: null,
       threads: this.currentSessionId ? [this.buildRootThread(null, null)] : [],
@@ -1947,6 +2191,7 @@ export class AgentRuntime {
         activeHookNames: this.hookRegistry.getRegisteredHookNames(),
         contextBudgetState: null,
         lastPromptNotes: [],
+        promptProvenance: null,
         activePlan: null,
         activeTask: null,
         policyTrace: [],
@@ -2007,6 +2252,7 @@ export class AgentRuntime {
         activeHookNames: this.hookRegistry.getRegisteredHookNames(),
         contextBudgetState: null,
         lastPromptNotes: [],
+        promptProvenance: null,
         activePlan,
         activeTask,
         policyTrace: [],
@@ -2080,6 +2326,7 @@ export class AgentRuntime {
       activeHookNames: this.hookRegistry.getRegisteredHookNames(),
       contextBudgetState: null,
       lastPromptNotes: [],
+      promptProvenance: null,
       activePlan,
       activeTask,
       policyTrace: [],
@@ -2252,6 +2499,7 @@ export class AgentRuntime {
         activeHookNames: this.hookRegistry.getRegisteredHookNames(),
         contextBudgetState: null,
         lastPromptNotes: [],
+        promptProvenance: null,
         activePlan,
         activeTask,
         policyTrace: [],
@@ -2468,8 +2716,83 @@ export class AgentRuntime {
     });
   }
 
+  private createPromptProvenanceContributor(
+    order: number,
+    kind: PromptProvenanceContributorKind,
+    label: string,
+    summary: string,
+    path?: string,
+  ): PromptProvenanceContributor {
+    return {
+      id: `prompt:${kind}:${order}`,
+      kind,
+      label,
+      order,
+      summary,
+      path,
+    };
+  }
+
   private async buildPromptContent(content: string, attachments?: string[]) {
-    let promptContent = content;
+    const promptParts: string[] = [];
+    const provenanceContributors: PromptProvenanceContributor[] = [];
+    let contributorOrder = 0;
+
+    const providerFamily = inferProviderFamily(this.state.providerConfig);
+    const phase = inferPromptPhase(
+      content,
+      this.state.mode,
+      this.state.activeTask,
+    );
+    provenanceContributors.push(
+      this.createPromptProvenanceContributor(
+        contributorOrder++,
+        "system_prompt",
+        "System prompt",
+        `${this.adapter.hostApp ?? "generic"} adapter system prompt`,
+      ),
+    );
+    const promptContract = buildPromptContract({
+      providerConfig: this.state.providerConfig,
+      mode: this.state.mode,
+      task: this.state.activeTask,
+      content,
+      hostApp: this.adapter.hostApp,
+    });
+    promptParts.push(promptContract);
+    provenanceContributors.push(
+      this.createPromptProvenanceContributor(
+        contributorOrder++,
+        "prompt_contract",
+        "Prompt contract",
+        `${providerFamily} provider profile in ${phase} phase`,
+      ),
+    );
+
+    const localDoctrine = buildLocalDoctrinePromptSection({
+      hostApp: this.adapter.hostApp,
+      providerFamily,
+      phase,
+    });
+    const localDoctrineContributors = selectLocalDoctrineContributors({
+      hostApp: this.adapter.hostApp,
+      providerFamily,
+      phase,
+    });
+    if (localDoctrine) {
+      promptParts.push(localDoctrine);
+      provenanceContributors.push(
+        this.createPromptProvenanceContributor(
+          contributorOrder++,
+          "local_doctrine",
+          "Local doctrine",
+          localDoctrineContributors
+            .map((contributor) => contributor.id)
+            .join(", "),
+          localDoctrineContributors[0]?.canonicalPath,
+        ),
+      );
+    }
 
     if (this.adapter.getDocumentMetadata) {
       try {
@@ -2478,7 +2801,17 @@ export class AgentRuntime {
           this.lastDocumentMetadata = meta.metadata;
           this.lastDocumentMetadataUpdatedAt = Date.now();
           const tag = this.adapter.metadataTag || "doc_context";
-          promptContent = `<${tag}>\n${JSON.stringify(meta.metadata, null, 2)}\n</${tag}>\n\n${content}`;
+          promptParts.push(
+            `<${tag}>\n${JSON.stringify(meta.metadata, null, 2)}\n</${tag}>`,
+          );
+          provenanceContributors.push(
+            this.createPromptProvenanceContributor(
+              contributorOrder++,
+              "document_metadata",
+              "Document metadata",
+              summarizeMetadataTag(tag, meta.metadata),
+            ),
+          );
           if (meta.nameMap) {
             this.update({ nameMap: meta.nameMap });
           }
@@ -2492,11 +2825,29 @@ export class AgentRuntime {
       const paths = attachments
         .map((name) => `/home/user/uploads/${name}`)
         .join("\n");
-      promptContent = `<attachments>\n${paths}\n</attachments>\n\n${promptContent}`;
+      promptParts.push(`<attachments>\n${paths}\n</attachments>`);
+      provenanceContributors.push(
+        this.createPromptProvenanceContributor(
+          contributorOrder++,
+          "attachments",
+          "Attachments",
+          summarizeAttachments(attachments),
+        ),
+      );
     }
 
     if (this.state.activePlan) {
-      promptContent = `${this.planManager.formatPlanForPrompt(this.state.activePlan)}\n\n${promptContent}`;
+      promptParts.push(
+        this.planManager.formatPlanForPrompt(this.state.activePlan),
+      );
+      provenanceContributors.push(
+        this.createPromptProvenanceContributor(
+          contributorOrder++,
+          "plan",
+          "Active plan",
+          this.state.activePlan.summary ?? this.state.activePlan.userRequest,
+        ),
+      );
     }
 
     const contextUsagePct =
@@ -2510,24 +2861,64 @@ export class AgentRuntime {
     const contextAction =
       this.contextManager.getActionForUsage(contextUsagePct);
     if (contextAction !== "none") {
-      promptContent = `<context_budget action="${contextAction}" usage_pct="${contextUsagePct}" />\n\n${promptContent}`;
+      promptParts.push(
+        `<context_budget action="${contextAction}" usage_pct="${contextUsagePct}" />`,
+      );
+      provenanceContributors.push(
+        this.createPromptProvenanceContributor(
+          contributorOrder++,
+          "context_budget",
+          "Context budget",
+          `${contextAction} at ${contextUsagePct}% context usage`,
+        ),
+      );
     }
     this.update({
       contextBudgetState: { action: contextAction, usagePct: contextUsagePct },
     });
 
     const hookNotes = this.hookRegistry.drainPromptNotes();
+    const runtimeNotes = hookNotes.map((note) => note.text);
     this.update({
-      lastPromptNotes: hookNotes.map((note) => note.text),
+      lastPromptNotes: runtimeNotes,
     });
     if (hookNotes.length > 0) {
       const noteText = hookNotes
         .map((note) => `[${note.level.toUpperCase()}] ${note.text}`)
         .join("\n");
-      promptContent = `<hook_notes>\n${noteText}\n</hook_notes>\n\n${promptContent}`;
+      promptParts.push(`<hook_notes>\n${noteText}\n</hook_notes>`);
+      provenanceContributors.push(
+        this.createPromptProvenanceContributor(
+          contributorOrder++,
+          "hook_notes",
+          "Runtime notes",
+          `${hookNotes.length} note${hookNotes.length === 1 ? "" : "s"} from hooks`,
+        ),
+      );
     }
 
-    return promptContent;
+    promptParts.push(content);
+    provenanceContributors.push(
+      this.createPromptProvenanceContributor(
+        contributorOrder++,
+        "user_request",
+        "User request",
+        content,
+      ),
+    );
+    this.update({
+      promptProvenance: {
+        providerFamily,
+        provider: this.state.providerConfig?.provider ?? "unconfigured",
+        model: this.state.providerConfig?.model ?? "unknown",
+        apiType: this.state.providerConfig?.apiType ?? "default",
+        phase,
+        contributors: provenanceContributors,
+        runtimeNotes,
+        updatedAt: Date.now(),
+      },
+    });
+    return promptParts.join("\n\n");
   }
 
   private async executeActiveTask(
@@ -2642,6 +3033,7 @@ export class AgentRuntime {
       >["status"],
       verification.retryable,
     );
+    this.planManager.syncWithExecution(this.taskTracker.getCurrentTask());
 
     const verificationFailed =
       verification.status === "failed" || verification.status === "retryable";
@@ -2685,6 +3077,7 @@ export class AgentRuntime {
       handoff,
       lastVerification: verification,
       degradedGuardrails,
+      activePlan: this.planManager.getActivePlan(),
       activeTask: this.taskTracker.getCurrentTask(),
     });
 

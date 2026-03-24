@@ -103,6 +103,13 @@ pnpm exec office-bridge exec word --code "return { href: window.location.href, t
 
 See [`packages/bridge/README.md`](./packages/bridge/README.md) for full CLI documentation.
 
+### Hybrid Word live review
+
+For the current Hybrid Word live-review workflow, start with
+[`docs/testing/word/live-review-workflows.md`](./docs/testing/word/live-review-workflows.md).
+For bridge-first live checks against a running Hybrid pane, use
+[`docs/ai/hybrid-word-live-smoke-prompt.md`](./docs/ai/hybrid-word-live-smoke-prompt.md).
+
 ## License
 
 MIT

@@ -4,8 +4,10 @@ export {
   formatFingerprintRecordHook,
 } from "./builtins/format-fingerprint";
 export {
+  hasReadCoverage,
   readBeforeWritePostHook,
   readBeforeWritePreHook,
+  scopeKeyFromParams,
 } from "./builtins/read-before-write";
 export { classifyTool, classifyToolRisk } from "./classifier";
 export { HookRegistry } from "./registry";

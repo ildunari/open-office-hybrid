@@ -324,6 +324,121 @@ describe("word verifier helpers", () => {
     );
   });
 
+  it("passes write progress verification only after a successful write is reread", async () => {
+    const suites = getWordVerificationSuites();
+    const progressSuite = suites.find((suite) => suite.id === "word:write-progress");
+
+    expect(
+      await progressSuite?.verify({
+        app: "word",
+        mode: "verify",
+        request: "Rewrite the introduction and preserve formatting.",
+        plan: {
+          classification: {
+            complexity: "moderate",
+            risk: "medium",
+            needsPlan: true,
+            rationale: "Mutation-heavy",
+          },
+        } as any,
+        task: {
+          id: "task-3",
+          userRequest: "Rewrite the introduction and preserve formatting.",
+          status: "completed",
+          mode: "execute",
+          toolCallIds: [],
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        toolExecutions: [
+          {
+            toolCallId: "tc-write",
+            toolName: "execute_office_js",
+            isError: false,
+            resultText: "ok",
+            timestamp: 2,
+          },
+          {
+            toolCallId: "tc-reread",
+            toolName: "get_document_text",
+            isError: false,
+            resultText: "updated text",
+            timestamp: 3,
+          },
+        ],
+        promptNotes: [],
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        status: "passed",
+        retryable: false,
+      }),
+    );
+  });
+
+  it("does not pass write progress verification when a later reread is outside the latest write scope", async () => {
+    const suites = getWordVerificationSuites();
+    const progressSuite = suites.find((suite) => suite.id === "word:write-progress");
+
+    expect(
+      await progressSuite?.verify({
+        app: "word",
+        mode: "verify",
+        request: "Rewrite the introduction and preserve formatting.",
+        plan: {
+          classification: {
+            complexity: "moderate",
+            risk: "medium",
+            needsPlan: true,
+            rationale: "Mutation-heavy",
+          },
+        } as any,
+        task: {
+          id: "task-4",
+          userRequest: "Rewrite the introduction and preserve formatting.",
+          status: "completed",
+          mode: "execute",
+          toolCallIds: [],
+          executionDiagnostics: {
+            preWriteReadCount: 1,
+            preWriteInspectionCount: 1,
+            scopeReadCount: 1,
+            writeCount: 1,
+            failedWriteCount: 0,
+            postWriteRereadCount: 0,
+            firstReadAt: 1,
+            firstWriteAt: 2,
+            planAdvancedBeyondInspection: true,
+          },
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        toolExecutions: [
+          {
+            toolCallId: "tc-write",
+            toolName: "execute_office_js",
+            isError: false,
+            resultText: "ok",
+            timestamp: 2,
+          },
+          {
+            toolCallId: "tc-reread-wrong-scope",
+            toolName: "get_document_text",
+            isError: false,
+            resultText: "different scope",
+            timestamp: 3,
+          },
+        ],
+        promptNotes: [],
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        status: "retryable",
+        retryable: true,
+      }),
+    );
+  });
+
   it("binds corpus-derived review and formatting scenarios to the stricter verifier expectations", async () => {
     const suites = getWordVerificationSuites();
     const revisionSuite = suites.find((suite) => suite.id === "word:revision-safe");

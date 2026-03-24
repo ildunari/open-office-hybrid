@@ -185,11 +185,14 @@ export interface TaskRecord {
     firstReadAt?: number;
     firstWriteAt?: number;
     planAdvancedBeyondInspection: boolean;
+    noWriteRecoveryAttemptCount?: number;
+    noWriteRecoveryBudgetRemaining?: number;
     noWriteLoopDetected?: boolean;
     noWriteLoopReason?: string;
   };
   toolCallIds: string[];
   resumeCount?: number;
+  noWriteRecoveryCount?: number;
   createdAt: number;
   updatedAt: number;
 }

@@ -53,6 +53,54 @@
   {#if isExpanded}
     <div class="panel-expandable mt-3 grid gap-3 text-[11px]">
       <section class="grid gap-1 min-w-0">
+        <div class="uppercase tracking-wider text-(--chat-text-muted)">runtime truth</div>
+        <div class="text-(--chat-text-primary) break-words">
+          mode: {model.runtimeTruth.mode}
+        </div>
+        <div class="text-(--chat-text-primary) break-words">
+          task phase: {model.runtimeTruth.taskPhase}
+        </div>
+        <div class="text-(--chat-text-primary) break-words">
+          waiting:
+          {#if model.runtimeTruth.waitingState}
+            {model.runtimeTruth.waitingState}
+            {#if model.runtimeTruth.waitingReason}
+              {" - "}{model.runtimeTruth.waitingReason}
+            {/if}
+          {:else}
+            none
+          {/if}
+        </div>
+        <div class="text-(--chat-text-primary) break-words">
+          handoff:
+          {model.runtimeTruth.handoffSummary ?? "none"}
+        </div>
+        <div class="text-(--chat-text-primary) break-words">
+          next action:
+          {model.runtimeTruth.nextRecommendedAction ?? "none"}
+        </div>
+        <div class="text-(--chat-text-primary) break-words">
+          verification:
+          {#if model.runtimeTruth.verificationStatus}
+            {model.runtimeTruth.verificationStatus}
+            {#if model.runtimeTruth.verificationRetryable}
+              {" (retryable)"}
+            {/if}
+          {:else}
+            none
+          {/if}
+        </div>
+        <div class="text-(--chat-text-primary) break-words">
+          degraded guardrails:
+          {#if model.runtimeTruth.degradedGuardrails.length > 0}
+            {model.runtimeTruth.degradedGuardrails.join(" | ")}
+          {:else}
+            none
+          {/if}
+        </div>
+      </section>
+
+      <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">policy</div>
         <div class="text-(--chat-text-primary) break-words">
           mode: {runtimeState.permissionMode}
@@ -75,6 +123,43 @@
             <div class="text-(--chat-text-secondary) break-words">{source.summary}</div>
           </div>
         {/each}
+      </section>
+
+      <section class="grid gap-1 min-w-0">
+        <div class="uppercase tracking-wider text-(--chat-text-muted)">prompt provenance</div>
+        {#if model.promptProvenance}
+          <div class="text-(--chat-text-primary) break-words">
+            provider/model: {model.promptProvenance.provider} / {model.promptProvenance.model}
+          </div>
+          <div class="text-(--chat-text-primary) break-words">
+            provider family: {model.promptProvenance.providerFamily}
+          </div>
+          <div class="text-(--chat-text-primary) break-words">
+            phase: {model.promptProvenance.phase}
+          </div>
+          <div class="text-(--chat-text-primary) break-words">
+            runtime notes:
+            {#if model.promptProvenance.runtimeNotes.length > 0}
+              {model.promptProvenance.runtimeNotes.join(" | ")}
+            {:else}
+              none
+            {/if}
+          </div>
+          {#each model.promptProvenance.contributors as contributor (contributor.id)}
+            <div class="rounded-sm border border-(--chat-border) px-2 py-1 min-w-0">
+              <div class="text-(--chat-text-primary) break-words">
+                {contributor.order + 1}. {contributor.label}
+                <span class="text-(--chat-text-muted)">({contributor.kind})</span>
+              </div>
+              <div class="text-(--chat-text-secondary) break-words">{contributor.summary}</div>
+              {#if contributor.path}
+                <div class="text-(--chat-text-muted) break-words">{contributor.path}</div>
+              {/if}
+            </div>
+          {/each}
+        {:else}
+          <div class="text-(--chat-text-muted)">No prompt provenance captured yet.</div>
+        {/if}
       </section>
 
       <section class="grid gap-1 min-w-0">

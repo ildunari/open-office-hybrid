@@ -1,0 +1,63 @@
+{
+  "milestone": "hybrid-live-review-harness-correctness",
+  "validator": "scrutiny",
+  "result": "overridden_pass",
+  "overrideReason": "Auto scrutiny-validator worker exited before startup with `Droid process exited unexpectedly (exit code 0)`, so the final harness milestone was reviewed via substitute scrutiny plus real Hybrid bridge evidence from the connected session.",
+  "commandsRun": [
+    {
+      "command": "pnpm -C /Users/Kosta/worktrees/office-agents-hybrid/codex-word-system-polish --filter @office-agents/sdk exec vitest run tests/word-agent-benchmark-suite.test.ts --testNamePattern \"reviewer|live-review|receipt|executionClassification\"",
+      "result": "passed via worker feature live-review-receipt-observation-truth-fix"
+    },
+    {
+      "command": "pnpm -C /Users/Kosta/worktrees/office-agents-hybrid/codex-word-system-polish --filter @office-agents/sdk exec vitest run tests/word-agent-benchmark-suite.test.ts --testNamePattern \"taskpane exec|prompt outcomes|repo root|workspace-aware pnpm|bridge state|live|receipt|session|long-run\"",
+      "result": "passed via worker feature live-word-benchmark-worktree-root-resolution-fix"
+    },
+    {
+      "command": "pnpm -C /Users/Kosta/worktrees/office-agents-hybrid/codex-word-system-polish --filter @office-agents/sdk exec vitest run tests/word-agent-benchmark-suite.test.ts --testNamePattern \"receipt|executionClassification|live\"",
+      "result": "passed via worker feature hybrid-long-run-progress-evidence"
+    },
+    {
+      "command": "pnpm -C /Users/Kosta/worktrees/office-agents-hybrid/codex-word-system-polish typecheck",
+      "result": "passed in final worker verification"
+    },
+    {
+      "command": "pnpm -C /Users/Kosta/worktrees/office-agents-hybrid/codex-word-system-polish lint",
+      "result": "passed in final worker verification"
+    }
+  ],
+  "featureReviews": [
+    {
+      "featureId": "hybrid-live-review-targeting-and-preflight",
+      "commitId": "dab9f85",
+      "reviewVerdict": "pass"
+    },
+    {
+      "featureId": "hybrid-reviewer-contract-and-artifact-shape",
+      "commitId": "b97174a",
+      "reviewVerdict": "pass"
+    },
+    {
+      "featureId": "hybrid-live-classification-and-mismatch-boundaries",
+      "commitId": "414e3f6",
+      "reviewVerdict": "pass"
+    },
+    {
+      "featureId": "live-review-receipt-observation-truth-fix",
+      "commitId": "271d7c0b5375ff7be4a21a47f6f04110ea0eeec5",
+      "reviewVerdict": "pass"
+    },
+    {
+      "featureId": "live-word-benchmark-worktree-root-resolution-fix",
+      "commitId": "7f5f9d5f1dbaeaf3e0f3e9e9667b5bfeabfae03c",
+      "reviewVerdict": "pass"
+    },
+    {
+      "featureId": "hybrid-long-run-progress-evidence",
+      "commitId": "06c6ba8a46984308dd66c7e60a508dd353337fb1",
+      "reviewVerdict": "pass"
+    }
+  ],
+  "findings": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": []
+}

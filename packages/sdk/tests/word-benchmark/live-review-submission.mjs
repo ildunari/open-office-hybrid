@@ -9,6 +9,7 @@ const WORD_READ_TOOL_NAMES = new Set([
   "get_paragraph_ooxml",
 ]);
 const WORD_WRITE_TOOL_NAMES = new Set(["execute_office_js"]);
+export const LIVE_REVIEW_RECEIPT_GRACE_MS = 10_000;
 
 export function buildReviewerPrompt({
   capabilityId,
@@ -159,13 +160,16 @@ export function classifyLiveExecutionReceipts({
       },
     );
 
+  const freshMessageObserved =
+    stateSnapshots.some((state) => {
+      const messageCount =
+        state?.sessionStats?.messageCount ?? baselineMessageCount;
+      return messageCount > baselineMessageCount;
+    }) || newEvents.some((event) => event.event === "message:created");
   const promptSubmitted = stateSnapshots.some((state) => {
-    const messageCount = state?.sessionStats?.messageCount ?? baselineMessageCount;
-    return Boolean(
-      state?.isStreaming ||
-        state?.activeTaskSummary ||
-        messageCount > baselineMessageCount,
-    );
+    const messageCount =
+      state?.sessionStats?.messageCount ?? baselineMessageCount;
+    return Boolean(state?.isStreaming || messageCount > baselineMessageCount);
   });
 
   const toolEvents = newEvents.filter(
@@ -194,9 +198,6 @@ export function classifyLiveExecutionReceipts({
   const finalState = stateSnapshots[stateSnapshots.length - 1] ?? null;
 
   const executionObserved =
-    stateSnapshots.some(
-      (state) => (state?.activeTaskSummary?.toolExecutionCount ?? 0) > 0,
-    ) ||
     newEvents.some(
       (event) =>
         event.event === "tool:started" ||
@@ -204,16 +205,25 @@ export function classifyLiveExecutionReceipts({
         event.event === "tool:failed",
     ) ||
     hasConsoleReceipt("tool_execution_start") ||
-    hasConsoleReceipt("tool_execution_end");
+    hasConsoleReceipt("tool_execution_end") ||
+    (freshMessageObserved &&
+      stateSnapshots.some(
+        (state) => (state?.activeTaskSummary?.toolExecutionCount ?? 0) > 0,
+      ));
   const completionObserved =
+    newEvents.some((event) => event.event === "message:completed") ||
+    hasConsoleReceipt("agent_end");
+  const completionStateObserved =
+    freshMessageObserved &&
     stateSnapshots.some((state) => {
       return Boolean(
         state?.isStreaming === false &&
           state?.activeTaskSummary?.status === "completed" &&
           (state?.activeTaskSummary?.toolExecutionCount ?? 0) > 0,
       );
-    }) ||
-    hasConsoleReceipt("agent_end");
+    });
+  const completionEvidenceObserved =
+    completionObserved || completionStateObserved;
 
   const noWriteLoopSuspected = Boolean(
     promptSubmitted &&
@@ -225,7 +235,7 @@ export function classifyLiveExecutionReceipts({
         (finalState?.degradedGuardrails?.length ?? 0) > 0),
   );
   const reviewerOnlySuccess = Boolean(
-    completionObserved &&
+    completionEvidenceObserved &&
       successfulWriteEvents.length === 0 &&
       failedWriteEvents.length === 0 &&
       readEvents.length > 0,
@@ -253,7 +263,7 @@ export function classifyLiveExecutionReceipts({
   return {
     promptSubmitted,
     executionObserved,
-    completionObserved,
+    completionObserved: completionEvidenceObserved,
     readCount: readEvents.length,
     writeCount: successfulWriteEvents.length,
     failedWriteCount: failedWriteEvents.length,
@@ -266,4 +276,33 @@ export function classifyLiveExecutionReceipts({
     writeSucceededWithoutReread,
     executionClassification,
   };
+}
+
+export function shouldContinueReceiptObservation({
+  receipts,
+  stateSnapshots,
+  elapsedMs,
+  completionObservedAtMs,
+  timeoutMs,
+}) {
+  if (elapsedMs >= timeoutMs || !receipts.completionObserved) {
+    return false;
+  }
+
+  if (receipts.executionObserved) {
+    return false;
+  }
+
+  const reviewerPhaseObserved = stateSnapshots.some(
+    (state) => state?.promptProvenance?.phase === "reviewer_live_review",
+  );
+  if (!reviewerPhaseObserved || !receipts.promptSubmitted) {
+    return false;
+  }
+
+  if (completionObservedAtMs == null) {
+    return true;
+  }
+
+  return elapsedMs - completionObservedAtMs < LIVE_REVIEW_RECEIPT_GRACE_MS;
 }

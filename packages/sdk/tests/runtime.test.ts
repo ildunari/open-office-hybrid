@@ -2,12 +2,12 @@ import "fake-indexeddb/auto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildDefaultPlan, inferTaskClassification } from "../src/planning";
 import {
   AgentRuntime,
   type RuntimeAdapter,
   type RuntimeState,
 } from "../src/runtime";
-import { buildDefaultPlan, inferTaskClassification } from "../src/planning";
 import {
   getLatestTaskRecord,
   listThreadSummaries,
@@ -94,7 +94,10 @@ function createPlan(
 function runtimeInternals(runtime: AgentRuntime) {
   return runtime as unknown as {
     taskClassifier: { classify: (message: string) => Promise<unknown> };
-    estimateScopeRisk: (message: string, classification: unknown) => Promise<{
+    estimateScopeRisk: (
+      message: string,
+      classification: unknown,
+    ) => Promise<{
       level: "none" | "low" | "medium" | "high";
       destructive: boolean;
       requiresApproval: boolean;
@@ -160,6 +163,7 @@ function runtimeInternals(runtime: AgentRuntime) {
     planManager: {
       replacePlan: (plan: ReturnType<typeof createPlan>) => void;
       getActivePlan: () => ReturnType<typeof createPlan> | null;
+      syncWithExecution: (task: Record<string, unknown> | null) => unknown;
       persist: (sessionId: string) => Promise<unknown>;
     };
     deriveExecutionDiagnostics: (
@@ -172,7 +176,12 @@ function runtimeInternals(runtime: AgentRuntime) {
 
 const corpusScenarioMap = JSON.parse(
   readFileSync(
-    path.join(__dirname, "fixtures", "docx-corpus", "docx-corpus.scenarios.json"),
+    path.join(
+      __dirname,
+      "fixtures",
+      "docx-corpus",
+      "docx-corpus.scenarios.json",
+    ),
     "utf8",
   ),
 ) as {
@@ -254,6 +263,379 @@ describe("AgentRuntime", () => {
     expect(state.providerConfig).not.toBeNull();
     expect(state.providerConfig!.provider).toBe("custom");
     expect(state.sessionStats.contextWindow).toBe(128000);
+    runtime.dispose();
+  });
+
+  it("builds an explicit GPT mutation prompt contract without Claude-only guidance", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-5",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "medium",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request = "Rewrite the introduction and preserve formatting.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "execute",
+    });
+    internals.update({
+      mode: "execute",
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const prompt = await (runtime as any).buildPromptContent(request);
+
+    expect(prompt).toContain("<prompt_contract");
+    expect(prompt).toContain("<active_doctrine");
+    expect(prompt).toContain('provider_family="gpt"');
+    expect(prompt).toContain('phase="mutation"');
+    expect(prompt).toContain('<skill id="gpt-prompt-architect"');
+    expect(prompt).toContain(
+      'canonical_path="skills/word-mastery-v3/SKILL.md"',
+    );
+    expect(prompt).toContain("Scope discipline matters");
+    expect(prompt).toContain("one bounded Word write");
+    expect(prompt).toContain("Use named styles for every recurring element.");
+    expect(prompt).not.toContain("Use XML-tagged sections");
+    runtime.dispose();
+  });
+
+  it("preserves prompt contracts and active doctrine when document metadata is present", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+        getDocumentMetadata: async () => ({
+          metadata: { title: "Draft", paragraphCount: 4 },
+        }),
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-5",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "medium",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request = "Rewrite the introduction and preserve formatting.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "execute",
+    });
+    internals.update({
+      mode: "execute",
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const prompt = await (runtime as any).buildPromptContent(request);
+
+    expect(prompt).toContain("<prompt_contract");
+    expect(prompt).toContain("<active_doctrine");
+    expect(prompt).toContain("<doc_context>");
+    expect(prompt).toContain('"title": "Draft"');
+    expect(runtime.getState().promptProvenance).toMatchObject({
+      providerFamily: "gpt",
+      provider: "openai",
+      model: "gpt-5",
+      apiType: "default",
+      phase: "mutation",
+      runtimeNotes: [],
+    });
+    expect(
+      runtime
+        .getState()
+        .promptProvenance?.contributors.map((contributor) => contributor.kind),
+    ).toEqual([
+      "system_prompt",
+      "prompt_contract",
+      "local_doctrine",
+      "document_metadata",
+      "user_request",
+    ]);
+    expect(
+      runtime
+        .getState()
+        .promptProvenance?.contributors.find(
+          (contributor) => contributor.kind === "local_doctrine",
+        ),
+    ).toMatchObject({
+      summary: "gpt-prompt-architect, word-mastery-v3, openword-best-practices",
+    });
+    runtime.dispose();
+  });
+
+  it("builds a reviewer/live-review prompt contract without mutation guidance", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "anthropic",
+      apiKey: "sk-test",
+      model: "claude-sonnet-4-5",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "high",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request =
+      "Live reviewer check for task M08 in Hybrid Word. Stay read-only and capture evidence only.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "execute",
+    });
+    internals.update({
+      mode: "execute",
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const prompt = await (runtime as any).buildPromptContent(request);
+
+    expect(prompt).toContain("<prompt_contract");
+    expect(prompt).toContain('provider_family="claude"');
+    expect(prompt).toContain('phase="reviewer_live_review"');
+    expect(prompt).toContain("Use XML-tagged sections");
+    expect(prompt).toContain("Stay read-only");
+    expect(prompt).not.toContain("one bounded Word write");
+    runtime.dispose();
+  });
+
+  it("treats low-risk formatting edits as mutation-phase Word runs even without rewrite keywords", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-5",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request = "Make the title bold and center it.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "discuss",
+    });
+    internals.update({
+      mode: "discuss",
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const prompt = await (runtime as any).buildPromptContent(request);
+
+    expect(prompt).toContain('phase="mutation"');
+    expect(prompt).toContain("<active_doctrine");
+    expect(prompt).toContain("one bounded Word write");
+    runtime.dispose();
+  });
+
+  it("keeps read-only formatting inspection requests out of mutation-phase prompt framing", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-5",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request =
+      "Check whether the title is bold and centered. Keep this read-only.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "discuss",
+    });
+    internals.update({
+      mode: "discuss",
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const prompt = await (runtime as any).buildPromptContent(request);
+
+    expect(prompt).toContain('phase="discuss"');
+    expect(prompt).not.toContain("<active_doctrine");
+    expect(prompt).not.toContain("one bounded Word write");
+    runtime.dispose();
+  });
+
+  it("builds blocked and resume prompt contracts without leaking reviewer guidance", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request = "Rewrite the selected paragraph and preserve formatting.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "execute",
+    });
+    internals.update({
+      mode: "blocked",
+      handoff: {
+        taskId: "task-1",
+        mode: "blocked",
+        currentIntent: request,
+        summary: "Blocked pending reread.",
+        constraints: ["Preserve formatting."],
+        incompleteVerifications: [],
+        nextRecommendedAction: "Reread the edited paragraph.",
+        updatedAt: Date.now(),
+      } as any,
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const blockedPrompt = await (runtime as any).buildPromptContent(request);
+    expect(blockedPrompt).toContain('phase="blocked"');
+    expect(blockedPrompt).toContain(
+      "Do not continue broad exploration or new writes",
+    );
+    expect(blockedPrompt).not.toContain("Stay read-only");
+
+    (internals.taskTracker.getCurrentTask() as any).resumeCount = 1;
+    internals.update({
+      mode: "execute",
+      handoff: null,
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const resumePrompt = await (runtime as any).buildPromptContent(request);
+    expect(resumePrompt).toContain('phase="resume"');
+    expect(resumePrompt).toContain("Resume from the recorded blocker");
+    expect(resumePrompt).not.toContain("Stay read-only");
+    runtime.dispose();
+  });
+
+  it("records ordered prompt provenance including plan, context budget, and runtime notes", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "anthropic",
+      apiKey: "sk-test",
+      model: "claude-sonnet-4-5",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "high",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request = "Rewrite the selected paragraph and preserve formatting.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "execute",
+    });
+    internals.planManager.replacePlan(createPlan());
+    internals.hookRegistry.addPromptNotes([
+      {
+        level: "warning",
+        text: "Reread the edited paragraph before reporting completion.",
+        source: { hookName: "word-reread-guard" },
+      },
+    ]);
+    internals.update({
+      mode: "execute",
+      activePlan: createPlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      sessionStats: {
+        ...runtime.getState().sessionStats,
+        contextWindow: 1000,
+        lastInputTokens: 600,
+      },
+    });
+
+    await (runtime as any).buildPromptContent(request);
+    const provenance = runtime.getState().promptProvenance;
+
+    expect(provenance).toMatchObject({
+      providerFamily: "claude",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      phase: "mutation",
+      runtimeNotes: [
+        "Reread the edited paragraph before reporting completion.",
+      ],
+    });
+    expect(
+      provenance?.contributors.map((contributor) => contributor.kind),
+    ).toEqual([
+      "system_prompt",
+      "prompt_contract",
+      "local_doctrine",
+      "plan",
+      "context_budget",
+      "hook_notes",
+      "user_request",
+    ]);
+    expect(
+      provenance?.contributors.find(
+        (contributor) => contributor.kind === "context_budget",
+      ),
+    ).toMatchObject({
+      summary: "summarize at 60% context usage",
+    });
+    expect(runtime.getRuntimeStateSlice().promptProvenance).toMatchObject({
+      providerFamily: "claude",
+      phase: "mutation",
+      contributorCount: 7,
+      runtimeNotes: [
+        "Reread the edited paragraph before reporting completion.",
+      ],
+      doctrineIds: [
+        "prompt-architect",
+        "word-mastery-v3",
+        "openword-best-practices",
+      ],
+    });
     runtime.dispose();
   });
 
@@ -676,29 +1058,39 @@ describe("AgentRuntime", () => {
             timestamp: number;
           }) => void;
         };
-        hookRegistry: { addPromptNotes: (notes: Array<{ text: string; level: "info"; source: { hookName: string } }>) => void };
+        hookRegistry: {
+          addPromptNotes: (
+            notes: Array<{
+              text: string;
+              level: "info";
+              source: { hookName: string };
+            }>,
+          ) => void;
+        };
         syncAdapterVerifiers: (adapter: RuntimeAdapter) => void;
       }
-    ).syncAdapterVerifiers(createAdapter({
-      getVerificationSuites: () => [
-        {
-          id: "note-suite",
-          label: "Note suite",
-          appliesTo: () => true,
-          verify: (context) => ({
-            suiteId: "note-suite",
+    ).syncAdapterVerifiers(
+      createAdapter({
+        getVerificationSuites: () => [
+          {
+            id: "note-suite",
             label: "Note suite",
-            expectedEffect: "Hook notes are visible.",
-            observedEffect: context.promptNotes.join(", "),
-            status: context.promptNotes.includes("Fresh hook note")
-              ? "passed"
-              : "retryable",
-            evidence: context.promptNotes,
-            retryable: !context.promptNotes.includes("Fresh hook note"),
-          }),
-        },
-      ],
-    }));
+            appliesTo: () => true,
+            verify: (context) => ({
+              suiteId: "note-suite",
+              label: "Note suite",
+              expectedEffect: "Hook notes are visible.",
+              observedEffect: context.promptNotes.join(", "),
+              status: context.promptNotes.includes("Fresh hook note")
+                ? "passed"
+                : "retryable",
+              evidence: context.promptNotes,
+              retryable: !context.promptNotes.includes("Fresh hook note"),
+            }),
+          },
+        ],
+      }),
+    );
 
     const internals = runtime as unknown as {
       taskTracker: {
@@ -751,6 +1143,120 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("surfaces retryable verification follow-up as blocked instead of waiting-on-user", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        getVerificationSuites: () => [
+          {
+            id: "retryable-suite",
+            label: "Retryable suite",
+            appliesTo: () => true,
+            verify: () => ({
+              suiteId: "retryable-suite",
+              label: "Retryable suite",
+              expectedEffect: "Latest write is reread.",
+              observedEffect: "Write happened but reread is missing.",
+              status: "retryable",
+              evidence: ["Missing reread"],
+              retryable: true,
+            }),
+          },
+        ],
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtime as unknown as {
+      taskTracker: {
+        beginTask: (
+          request: string,
+          classification: ReturnType<typeof inferTaskClassification>,
+          options?: Record<string, unknown>,
+        ) => unknown;
+      };
+    };
+
+    internals.taskTracker.beginTask(
+      "Rewrite the selected paragraph.",
+      inferTaskClassification("Rewrite the selected paragraph."),
+      { mode: "execute" },
+    );
+
+    const verification = await runtime.runVerificationPhase();
+    const slice = runtime.getRuntimeStateSlice();
+
+    expect(verification?.status).toBe("retryable");
+    expect(slice.mode).toBe("blocked");
+    expect(slice.taskPhase).toBe("blocked");
+    expect(slice.waitingState).toBeNull();
+    expect(slice.lastVerification).toEqual({
+      status: "retryable",
+      retryable: true,
+    });
+    expect(runtime.getState().handoff?.nextRecommendedAction).toContain(
+      "retryable verification mismatch",
+    );
+    runtime.dispose();
+  });
+
+  it("keeps degraded retryable verification completions honest after resume attempts are exhausted", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        getVerificationSuites: () => [
+          {
+            id: "retryable-suite",
+            label: "Retryable suite",
+            appliesTo: () => true,
+            verify: () => ({
+              suiteId: "retryable-suite",
+              label: "Retryable suite",
+              expectedEffect: "Latest write is reread.",
+              observedEffect: "Write happened but reread is missing.",
+              status: "retryable",
+              evidence: ["Missing reread"],
+              retryable: true,
+            }),
+          },
+        ],
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtime as unknown as {
+      taskTracker: {
+        beginTask: (
+          request: string,
+          classification: ReturnType<typeof inferTaskClassification>,
+          options?: Record<string, unknown>,
+        ) => unknown;
+        getCurrentTask: () => Record<string, unknown> | null;
+      };
+    };
+
+    internals.taskTracker.beginTask(
+      "Rewrite the selected paragraph.",
+      inferTaskClassification("Rewrite the selected paragraph."),
+      { mode: "execute" },
+    );
+    (internals.taskTracker.getCurrentTask() as any).resumeCount = 2;
+
+    const verification = await runtime.runVerificationPhase();
+    const slice = runtime.getRuntimeStateSlice();
+
+    expect(verification?.status).toBe("retryable");
+    expect(slice.mode).toBe("completed");
+    expect(slice.taskPhase).toBe("completed");
+    expect(slice.waitingState).toBeNull();
+    expect(slice.lastVerification).toEqual({
+      status: "retryable",
+      retryable: true,
+    });
+    expect(runtime.getState().degradedGuardrails).toContain(
+      "Verification failed after 2 resume attempts; completing with degraded guardrails.",
+    );
+    runtime.dispose();
+  });
+
   it("keeps corpus-derived review, structure, and formatting requests out of mutation gating when they are analysis-only", () => {
     const requests = corpusScenarioMap.scenarios
       .filter((scenario) =>
@@ -758,7 +1264,10 @@ describe("AgentRuntime", () => {
           scenario.stressArea,
         ),
       )
-      .map((scenario) => `Inspect ${scenario.file} and summarize risks without changing the document.`);
+      .map(
+        (scenario) =>
+          `Inspect ${scenario.file} and summarize risks without changing the document.`,
+      );
 
     for (const request of requests) {
       const classification = inferTaskClassification(request);
@@ -817,9 +1326,9 @@ describe("AgentRuntime", () => {
       expandToolCalls: false,
     });
 
-    const internals = runtimeInternals(runtime) as typeof runtimeInternals extends (
-      runtime: AgentRuntime,
-    ) => infer R
+    const internals = runtimeInternals(
+      runtime,
+    ) as typeof runtimeInternals extends (runtime: AgentRuntime) => infer R
       ? R & {
           buildHandoff: (
             task: Record<string, unknown>,
@@ -858,7 +1367,9 @@ describe("AgentRuntime", () => {
 
     expect(taskRecord?.task.approvalPending).toBe(true);
     expect(taskRecord?.task.mode).toBe("awaiting_approval");
-    expect(vfsFiles.some((file) => file.path === "/.oa/context/requirements.json")).toBe(true);
+    expect(
+      vfsFiles.some((file) => file.path === "/.oa/context/requirements.json"),
+    ).toBe(true);
     expect(threads.length).toBeGreaterThan(0);
     runtime.dispose();
   });
@@ -979,7 +1490,7 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
-  it("blocks a Word mutation task that keeps reading without a write", async () => {
+  it("uses same-run steering recovery before blocking a Word mutation task that keeps reading without a write", async () => {
     const runtime = new AgentRuntime(
       createAdapter({
         hostApp: "word",
@@ -1038,7 +1549,119 @@ describe("AgentRuntime", () => {
     internals.update({
       isStreaming: true,
       mode: "execute",
-      lastPromptNotes: ["Large range detected; work from a bounded working set."],
+      lastPromptNotes: [
+        "Large range detected; work from a bounded working set.",
+      ],
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+    const promptCalls: string[] = [];
+    (runtime as any).agent = {
+      state: { messages: [] },
+      prompt: async (promptContent: string) => {
+        promptCalls.push(promptContent);
+      },
+      abort: () => {},
+    };
+    (runtime as any).isStreaming = true;
+
+    const interrupted = await internals.maybeInterruptNoWriteLoop();
+    await (runtime as any).handleAgentEvent({ type: "agent_end" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const state = runtime.getState();
+
+    expect(interrupted).toBe(true);
+    expect(state.mode).toBe("execute");
+    expect(state.handoff).toBeNull();
+    expect(state.activeTask?.executionDiagnostics?.noWriteLoopDetected).toBe(
+      true,
+    );
+    expect(
+      state.activeTask?.executionDiagnostics?.noWriteRecoveryAttemptCount,
+    ).toBe(1);
+    expect(
+      state.activeTask?.executionDiagnostics?.noWriteRecoveryBudgetRemaining,
+    ).toBe(0);
+    expect(promptCalls).toHaveLength(1);
+    expect(promptCalls[0]).toContain(
+      "Inspection budget exhausted before first write",
+    );
+    expect(promptCalls[0]).toContain(
+      "Perform exactly one bounded Word write now and reread that same scope immediately.",
+    );
+    expect(
+      state.lastPromptNotes.some((note) =>
+        note.includes(
+          "Perform exactly one bounded Word write now and reread that same scope immediately.",
+        ),
+      ),
+    ).toBe(true);
+    runtime.dispose();
+  });
+
+  it("blocks a Word mutation task after the no-write recovery budget is exhausted", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the whole document and fix formatting issues.",
+    );
+    internals.planManager.replacePlan(
+      createPlan({
+        userRequest: "Rewrite the whole document and fix formatting issues.",
+        classification,
+        approvalRequired: false,
+      }),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the whole document and fix formatting issues.",
+      classification,
+      {
+        mode: "execute",
+        constraints: ["Preserve formatting."],
+        expectedEffects: ["Write and reread the affected scope."],
+      },
+    );
+    (internals.taskTracker.getCurrentTask() as any).noWriteRecoveryCount = 1;
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-1",
+      toolName: "get_document_structure",
+      isError: false,
+      resultText: "ok",
+      timestamp: 1,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-2",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 2,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-3",
+      toolName: "get_ooxml",
+      isError: false,
+      resultText: "ok",
+      timestamp: 3,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-4",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 4,
+    });
+    internals.update({
+      isStreaming: true,
+      mode: "execute",
+      lastPromptNotes: [
+        "Large range detected; work from a bounded working set.",
+      ],
       activePlan: internals.planManager.getActivePlan(),
       activeTask: internals.taskTracker.getCurrentTask() as any,
     });
@@ -1052,9 +1675,226 @@ describe("AgentRuntime", () => {
     expect(state.handoff?.nextRecommendedAction).toContain(
       "Inspection budget exhausted before first write",
     );
+    expect(state.handoff?.nextRecommendedAction).toContain(
+      "Recovery budget exhausted after 1 same-run recovery attempt.",
+    );
+    expect(
+      state.activeTask?.executionDiagnostics?.noWriteRecoveryAttemptCount,
+    ).toBe(1);
+    expect(
+      state.activeTask?.executionDiagnostics?.noWriteRecoveryBudgetRemaining,
+    ).toBe(0);
+    runtime.dispose();
+  });
+
+  it("surfaces exhausted Word no-write stalls as blocked instead of waiting-on-user", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the whole document and fix formatting issues.",
+    );
+    internals.planManager.replacePlan(
+      createPlan({
+        userRequest: "Rewrite the whole document and fix formatting issues.",
+        classification,
+        approvalRequired: false,
+      }),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the whole document and fix formatting issues.",
+      classification,
+      {
+        mode: "execute",
+        constraints: ["Preserve formatting."],
+        expectedEffects: ["Write and reread the affected scope."],
+      },
+    );
+    (internals.taskTracker.getCurrentTask() as any).noWriteRecoveryCount = 1;
+    for (const [index, toolName] of [
+      "get_document_structure",
+      "get_document_text",
+      "get_ooxml",
+      "get_document_text",
+    ].entries()) {
+      internals.taskTracker.recordToolExecution({
+        toolCallId: `tc-${index + 1}`,
+        toolName,
+        isError: false,
+        resultText: "ok",
+        timestamp: index + 1,
+      });
+    }
+    internals.update({
+      isStreaming: true,
+      mode: "execute",
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+    (runtime as any).isStreaming = true;
+
+    const interrupted = await internals.maybeInterruptNoWriteLoop();
+    const slice = runtime.getRuntimeStateSlice();
+
+    expect(interrupted).toBe(true);
+    expect(slice.mode).toBe("blocked");
+    expect(slice.taskPhase).toBe("blocked");
+    expect(slice.waitingState).toBeNull();
+    runtime.dispose();
+  });
+
+  it("clears blocked handoff presentation and re-enters execution on resume", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the whole document and fix formatting issues.",
+    );
+    internals.planManager.replacePlan(
+      createPlan({
+        userRequest: "Rewrite the whole document and fix formatting issues.",
+        classification,
+        approvalRequired: false,
+      }),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the whole document and fix formatting issues.",
+      classification,
+      {
+        mode: "execute",
+        constraints: ["Preserve formatting."],
+        expectedEffects: ["Write and reread the affected scope."],
+      },
+    );
+    (internals.taskTracker.getCurrentTask() as any).noWriteRecoveryCount = 1;
+    for (const [index, toolName] of [
+      "get_document_structure",
+      "get_document_text",
+      "get_ooxml",
+      "get_document_text",
+    ].entries()) {
+      internals.taskTracker.recordToolExecution({
+        toolCallId: `tc-${index + 1}`,
+        toolName,
+        isError: false,
+        resultText: "ok",
+        timestamp: index + 1,
+      });
+    }
+    internals.update({
+      isStreaming: true,
+      mode: "execute",
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+    (runtime as any).isStreaming = true;
+
+    await internals.maybeInterruptNoWriteLoop();
+    (runtime as any).agent = {
+      prompt: async () => undefined,
+      abort: () => undefined,
+    };
+
+    await runtime.resumeFromHandoff();
+
+    const state = runtime.getState();
+    const slice = runtime.getRuntimeStateSlice();
+    expect(state.handoff).toBeNull();
+    expect(slice.mode).toBe("execute");
+    expect(slice.taskPhase).toBe("execute");
+    expect(slice.waitingState).toBeNull();
+    expect(state.isStreaming).toBe(true);
+    runtime.dispose();
+  });
+
+  it("does not collapse failed Word writes into a no-write inspection loop", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.planManager.replacePlan(
+      buildDefaultPlan(
+        "Rewrite the introduction and preserve formatting.",
+        classification,
+      ),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-1",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 1,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-2",
+      toolName: "execute_office_js",
+      isError: true,
+      resultText: '{"error":"Selection became invalid"}',
+      timestamp: 2,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-3",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 3,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-4",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 4,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-5",
+      toolName: "get_ooxml",
+      isError: false,
+      resultText: "ok",
+      timestamp: 5,
+    });
+    internals.update({
+      isStreaming: true,
+      mode: "execute",
+      lastPromptNotes: ["Preserve formatting after the edit."],
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+    (runtime as any).isStreaming = true;
+
+    const interrupted = await internals.maybeInterruptNoWriteLoop();
+    const state = runtime.getState();
+
+    expect(interrupted).toBe(false);
+    expect(state.mode).toBe("execute");
+    expect(state.activeTask?.executionDiagnostics?.failedWriteCount).toBe(1);
     expect(
       state.activeTask?.executionDiagnostics?.noWriteLoopDetected,
-    ).toBe(true);
+    ).not.toBe(true);
     runtime.dispose();
   });
 
@@ -1122,6 +1962,424 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("advances plan steps from inspection to write and verify based on real tool activity", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.planManager.replacePlan(
+      buildDefaultPlan(
+        "Rewrite the introduction and preserve formatting.",
+        classification,
+      ),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-1",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 1,
+    });
+    internals.taskTracker.setExecutionDiagnostics(
+      internals.deriveExecutionDiagnostics(
+        internals.taskTracker.getCurrentTask() as any,
+      ) as any,
+    );
+    internals.planManager.syncWithExecution(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "execute",
+    });
+
+    let plan = runtime.getState().activePlan;
+    expect(plan?.steps.map((step) => step.status)).toEqual([
+      "completed",
+      "active",
+      "pending",
+      "pending",
+    ]);
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(1);
+
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-2",
+      toolName: "execute_office_js",
+      isError: false,
+      resultText: "ok",
+      timestamp: 2,
+    });
+    internals.taskTracker.setExecutionDiagnostics(
+      internals.deriveExecutionDiagnostics(
+        internals.taskTracker.getCurrentTask() as any,
+      ) as any,
+    );
+    internals.planManager.syncWithExecution(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "execute",
+    });
+
+    plan = runtime.getState().activePlan;
+    expect(plan?.steps.map((step) => step.status)).toEqual([
+      "completed",
+      "completed",
+      "completed",
+      "active",
+    ]);
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(2);
+
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-3",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 3,
+    });
+    internals.taskTracker.setExecutionDiagnostics(
+      internals.deriveExecutionDiagnostics(
+        internals.taskTracker.getCurrentTask() as any,
+      ) as any,
+    );
+    internals.planManager.syncWithExecution(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "verify",
+    });
+
+    plan = runtime.getState().activePlan;
+    expect(plan?.steps.map((step) => step.status)).toEqual([
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+    ]);
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(3);
+    runtime.dispose();
+  });
+
+  it("anchors reread progress to the latest successful Word write", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.planManager.replacePlan(
+      buildDefaultPlan(
+        "Rewrite the introduction and preserve formatting.",
+        classification,
+      ),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-1",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "before",
+      timestamp: 1,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-2",
+      toolName: "execute_office_js",
+      isError: false,
+      resultText: "first write",
+      timestamp: 2,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-3",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "after first write",
+      timestamp: 3,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-4",
+      toolName: "execute_office_js",
+      isError: false,
+      resultText: "second write",
+      timestamp: 4,
+    });
+
+    const diagnostics = internals.deriveExecutionDiagnostics(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.taskTracker.setExecutionDiagnostics(diagnostics);
+    internals.planManager.syncWithExecution(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "execute",
+    });
+
+    expect(diagnostics).toEqual(
+      expect.objectContaining({
+        writeCount: 2,
+        postWriteRereadCount: 0,
+        firstWriteAt: 4,
+      }),
+    );
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(2);
+    runtime.dispose();
+  });
+
+  it("counts a same-scope reread after an alias-style paragraph write as verification", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.planManager.replacePlan(
+      buildDefaultPlan(
+        "Rewrite the introduction and preserve formatting.",
+        classification,
+      ),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.update({
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          timestamp: 1,
+          parts: [
+            {
+              type: "toolCall",
+              id: "tc-read",
+              name: "get_document_text",
+              args: { startParagraph: 1, endParagraph: 3 },
+              status: "complete",
+            },
+            {
+              type: "toolCall",
+              id: "tc-write",
+              name: "execute_office_js",
+              args: {
+                code: "const p = context.document.body.paragraphs.items[1]; p.insertText('Updated', Word.InsertLocation.replace);",
+              },
+              status: "complete",
+            },
+            {
+              type: "toolCall",
+              id: "tc-reread-same-scope",
+              name: "get_document_text",
+              args: { startParagraph: 2, endParagraph: 2 },
+              status: "complete",
+            },
+          ],
+        },
+      ],
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-read",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "before",
+      timestamp: 1,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-write",
+      toolName: "execute_office_js",
+      isError: false,
+      resultText: "write",
+      timestamp: 2,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-reread-same-scope",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "updated scope",
+      timestamp: 3,
+    });
+
+    const diagnostics = internals.deriveExecutionDiagnostics(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.taskTracker.setExecutionDiagnostics(diagnostics);
+    internals.planManager.syncWithExecution(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "execute",
+    });
+
+    expect(diagnostics).toEqual(
+      expect.objectContaining({
+        writeCount: 1,
+        postWriteRereadCount: 1,
+        firstWriteAt: 2,
+      }),
+    );
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(3);
+    runtime.dispose();
+  });
+
+  it("does not treat an unrelated reread after the latest successful Word write as verification", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.planManager.replacePlan(
+      buildDefaultPlan(
+        "Rewrite the introduction and preserve formatting.",
+        classification,
+      ),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.update({
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          timestamp: 1,
+          parts: [
+            {
+              type: "toolCall",
+              id: "tc-read",
+              name: "get_document_text",
+              args: { startParagraph: 1, endParagraph: 3 },
+              status: "complete",
+            },
+            {
+              type: "toolCall",
+              id: "tc-write",
+              name: "execute_office_js",
+              args: {
+                code: "const p = context.document.body.paragraphs.items[1]; p.insertText('Updated', Word.InsertLocation.replace);",
+              },
+              status: "complete",
+            },
+            {
+              type: "toolCall",
+              id: "tc-reread-wrong-scope",
+              name: "get_document_text",
+              args: { startParagraph: 8, endParagraph: 10 },
+              status: "complete",
+            },
+          ],
+        },
+      ],
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-read",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "before",
+      timestamp: 1,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-write",
+      toolName: "execute_office_js",
+      isError: false,
+      resultText: "write",
+      timestamp: 2,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-reread-wrong-scope",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "different scope",
+      timestamp: 3,
+    });
+
+    const diagnostics = internals.deriveExecutionDiagnostics(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.taskTracker.setExecutionDiagnostics(diagnostics);
+    internals.planManager.syncWithExecution(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "execute",
+    });
+
+    expect(diagnostics).toEqual(
+      expect.objectContaining({
+        writeCount: 1,
+        postWriteRereadCount: 0,
+        firstWriteAt: 2,
+      }),
+    );
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(2);
+    runtime.dispose();
+  });
+
   it("marks completed plans as done in the runtime summary", async () => {
     const runtime = new AgentRuntime(
       createAdapter({
@@ -1172,9 +2430,9 @@ describe("AgentRuntime", () => {
       mode: "completed",
     });
 
-    expect(runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex).toBe(
-      -1,
-    );
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(-1);
     runtime.dispose();
   });
 });

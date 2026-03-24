@@ -1,0 +1,57 @@
+{
+  "milestone": "prompt-framework-hardening",
+  "validator": "scrutiny",
+  "result": "overridden_pass",
+  "overrideReason": "Auto scrutiny-validator worker exited before startup with `Droid process exited unexpectedly (exit code 0)`, so this milestone was reviewed via substitute scrutiny plus targeted validator commands.",
+  "commandsRun": [
+    {
+      "command": "pnpm --filter @office-agents/sdk exec vitest run tests/runtime.test.ts tests/skills.test.ts",
+      "result": "passed after follow-up fix eff629f9d3b9f1f9b5cf946dd1cf0b787a4889ac corrected low-risk mutation phase inference"
+    },
+    {
+      "command": "pnpm --filter @office-agents/word exec vitest run tests/system-prompt.test.ts",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm --filter @office-agents/core exec vitest run tests/diagnostics.test.ts tests/diagnostics-panel.test.ts",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm --filter @office-agents/bridge exec vitest run tests/session-summary.test.ts tests/server.test.ts",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm typecheck",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm lint",
+      "result": "passed"
+    }
+  ],
+  "featureReviews": [
+    {
+      "featureId": "provider-aware-prompt-profiles-and-phase-assembly",
+      "commitId": "5285ccc795ee2411eacdf3d3d54b7449812062fa",
+      "reviewVerdict": "pass"
+    },
+    {
+      "featureId": "word-doctrine-skill-activation-and-canonicalization",
+      "commitId": "1861b50c059a67254bcd296e98245e333bceaf88",
+      "reviewVerdict": "pass"
+    },
+    {
+      "featureId": "prompt-provenance-and-diagnostics-ledger",
+      "commitId": "d581e14d3c27ed651cacbad6c9039a31d1b95977",
+      "reviewVerdict": "pass"
+    },
+    {
+      "featureId": "prompt-phase-low-risk-mutation-truth-fix",
+      "commitId": "eff629f9d3b9f1f9b5cf946dd1cf0b787a4889ac",
+      "reviewVerdict": "pass"
+    }
+  ],
+  "findings": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": []
+}

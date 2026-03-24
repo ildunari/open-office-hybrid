@@ -123,8 +123,12 @@ export function getWordVerificationSuites(): VerificationSuite[] {
           (execution) =>
             execution.toolName === "execute_office_js" && execution.isError,
         );
-        const hadPostWriteReread = hasPostWriteReread(context.toolExecutions);
-        const loopReason = context.task?.executionDiagnostics?.noWriteLoopReason;
+        const hadPostWriteReread =
+          (context.task?.executionDiagnostics?.postWriteRereadCount ?? 0) > 0 ||
+          (context.task?.executionDiagnostics == null &&
+            hasPostWriteReread(context.toolExecutions));
+        const loopReason =
+          context.task?.executionDiagnostics?.noWriteLoopReason;
 
         if (successfulWrites.length === 0) {
           return {
@@ -170,7 +174,9 @@ export function getWordVerificationSuites(): VerificationSuite[] {
           observedEffect:
             "A successful Word write was followed by a reread of the affected scope.",
           status: "passed",
-          evidence: context.toolExecutions.map((execution) => execution.toolName),
+          evidence: context.toolExecutions.map(
+            (execution) => execution.toolName,
+          ),
           retryable: false,
         };
       },
@@ -181,7 +187,10 @@ export function getWordVerificationSuites(): VerificationSuite[] {
       appliesTo: (context) => WORD_FORMAT_RE.test(context.request),
       verify: (context) => {
         const hadWrite = hasTool(context.toolExecutions, "execute_office_js");
-        const hadPostWriteReread = hasPostWriteReread(context.toolExecutions);
+        const hadPostWriteReread =
+          (context.task?.executionDiagnostics?.postWriteRereadCount ?? 0) > 0 ||
+          (context.task?.executionDiagnostics == null &&
+            hasPostWriteReread(context.toolExecutions));
         const hadFingerprintMismatch = context.promptNotes.some((note) =>
           /format(?:ting)? fingerprint mismatch|formatting drift/i.test(note),
         );
@@ -192,10 +201,10 @@ export function getWordVerificationSuites(): VerificationSuite[] {
           observedEffect: hadFingerprintMismatch
             ? "A post-write reread detected formatting drift in the edited scope."
             : !hadWrite
-            ? "No Word write detected to verify."
-            : hadPostWriteReread
-              ? "Word write was followed by a reread of nearby document state."
-              : "Word write executed without a reread of the affected document state.",
+              ? "No Word write detected to verify."
+              : hadPostWriteReread
+                ? "Word write was followed by a reread of nearby document state."
+                : "Word write executed without a reread of the affected document state.",
           status: hadFingerprintMismatch
             ? "failed"
             : hadWrite && hadPostWriteReread
@@ -205,7 +214,8 @@ export function getWordVerificationSuites(): VerificationSuite[] {
             ...context.toolExecutions.map((execution) => execution.toolName),
             ...context.promptNotes,
           ],
-          retryable: !hadFingerprintMismatch && !(hadWrite && hadPostWriteReread),
+          retryable:
+            !hadFingerprintMismatch && !(hadWrite && hadPostWriteReread),
         };
       },
     },
@@ -218,7 +228,10 @@ export function getWordVerificationSuites(): VerificationSuite[] {
         const hadWriteError = context.toolExecutions.some(
           (entry) => entry.isError,
         );
-        const hadPostWriteReread = hasPostWriteReread(context.toolExecutions);
+        const hadPostWriteReread =
+          (context.task?.executionDiagnostics?.postWriteRereadCount ?? 0) > 0 ||
+          (context.task?.executionDiagnostics == null &&
+            hasPostWriteReread(context.toolExecutions));
         const hadRevisionPromptNote = context.promptNotes.some((note) =>
           /revision layer|tracked changes|revision-safe/i.test(note),
         );

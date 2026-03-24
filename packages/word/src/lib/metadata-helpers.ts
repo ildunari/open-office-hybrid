@@ -23,7 +23,10 @@ export interface ParagraphSampleInput {
 export function buildStyleInfoFromLoadedStyles(
   styles: LoadedStyleSummary[],
 ): Record<string, { font?: string; size?: number; color?: string }> | null {
-  const styleInfo: Record<string, { font?: string; size?: number; color?: string }> = {};
+  const styleInfo: Record<
+    string,
+    { font?: string; size?: number; color?: string }
+  > = {};
 
   for (const style of styles) {
     if (!style.builtIn || !style.inUse || !style.nameLocal) continue;

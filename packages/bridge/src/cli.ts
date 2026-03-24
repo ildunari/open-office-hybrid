@@ -31,6 +31,7 @@ import {
   summarizeExecutionError,
 } from "./server.js";
 import { pickUniqueWaitSession } from "./session-selection.js";
+import { buildSessionSummaryLine } from "./session-summary.js";
 
 const OPTIONS = {
   help: { type: "boolean" as const },
@@ -1183,24 +1184,7 @@ async function commandBench(cli: Cli) {
 
 async function commandSummary(cli: Cli) {
   const session = await resolveSession(cli, cli.positionals[1]);
-  const rs = session.snapshot.runtimeState;
-  if (!rs) {
-    console.log(`${session.snapshot.app} | no runtime state`);
-    return;
-  }
-  const plan = rs.activePlanSummary;
-  const planStr = plan
-    ? plan.activeStepIndex >= 0
-      ? `plan:step${plan.activeStepIndex + 1}/${plan.stepCount}`
-      : "plan:done"
-    : "no-plan";
-  const tokens = rs.sessionStats.inputTokens + rs.sessionStats.outputTokens;
-  const cost = rs.sessionStats.totalCost;
-  const toolCount = session.snapshot.tools.length;
-  const streamStr = rs.isStreaming ? "streaming" : "idle";
-  console.log(
-    `${session.snapshot.app} | ${streamStr} | ${planStr} | ${Math.round(tokens / 1000)}k tokens | $${cost.toFixed(2)} | ${toolCount} tools`,
-  );
+  console.log(buildSessionSummaryLine(session.snapshot));
 }
 
 async function commandDiag(cli: Cli) {

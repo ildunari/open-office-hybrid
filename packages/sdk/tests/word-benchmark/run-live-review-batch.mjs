@@ -27,6 +27,7 @@ import {
   buildReviewerPrompt,
   buildTaskpanePromptSubmissionScript,
   classifyLiveExecutionReceipts,
+  shouldContinueReceiptObservation,
   unwrapTaskpaneSubmissionResult,
 } from "./live-review-submission.mjs";
 
@@ -167,6 +168,18 @@ function sessionMatchesFixtureFingerprint(session, fixture) {
   });
 }
 
+function isHybridWordSession(session) {
+  if (!session || session.app !== "word") return false;
+
+  const appName = typeof session.appName === "string" ? session.appName : "";
+  const hostHref =
+    session.host && typeof session.host.href === "string"
+      ? session.host.href
+      : "";
+
+  return /hybrid/i.test(appName) || hostHref.includes("localhost:3003");
+}
+
 export function resolveLiveReviewSession({
   sessions,
   sourceDocument,
@@ -176,25 +189,40 @@ export function resolveLiveReviewSession({
     throw new Error("No Word bridge sessions available for live review.");
   }
 
+  const hybridSessions = sessions.filter((entry) => isHybridWordSession(entry));
+
   if (sessionSelector) {
     const exact = sessions.find(
       (entry) =>
         entry.sessionId === sessionSelector ||
         entry.documentId === sessionSelector,
     );
-    if (exact) return exact;
+    if (exact) {
+      if (!isHybridWordSession(exact)) {
+        throw new Error(
+          `Requested live-review session ${sessionSelector} is not a Hybrid Word session.`,
+        );
+      }
+      return exact;
+    }
 
     throw new Error(
       `Requested live-review session ${sessionSelector} was not found among connected Word sessions.`,
     );
   }
 
-  if (sessions.length === 1) {
-    return sessions[0];
+  if (hybridSessions.length === 0) {
+    throw new Error(
+      "No qualifying Hybrid Word session is available for live review.",
+    );
+  }
+
+  if (hybridSessions.length === 1) {
+    return hybridSessions[0];
   }
 
   const fixture = getFixtureBySourceDocument(sourceDocument);
-  const fingerprintMatches = sessions.filter((entry) =>
+  const fingerprintMatches = hybridSessions.filter((entry) =>
     sessionMatchesFixtureFingerprint(entry, fixture),
   );
   if (fingerprintMatches.length === 1) {
@@ -208,8 +236,57 @@ export function resolveLiveReviewSession({
   }
 
   throw new Error(
-    `Multiple Word sessions are connected and none uniquely match ${sourceDocument}; close the extra document windows or pass an explicit session selector.`,
+    `Multiple Hybrid Word sessions are connected and none uniquely match ${sourceDocument}; close the extra Hybrid document windows or pass an explicit session selector.`,
   );
+}
+
+function createTaskIdentity(sourceDocument, taskId) {
+  return `${sourceDocument}:${taskId}`;
+}
+
+export function buildPreflightStop({
+  clone,
+  runtime,
+  timeline,
+  batchReport,
+  failureClassification,
+  readinessState,
+  executionStatus,
+  stopReason,
+  observation,
+}) {
+  timeline.events.push(stopReason);
+  timeline.execution_classification = failureClassification;
+  batchReport.diagnosis_summary = observation;
+  batchReport.stop_reasons.push(stopReason);
+  batchReport.next_action_queue = [stopReason];
+
+  return {
+    reviewerReport: {
+      ...createReviewerReportSkeleton({
+        capabilityId: runtime.capabilityArea,
+        sourceDocument: runtime.sourceDocument,
+        taskId: runtime.selectedTasks[0],
+        cloneId: clone.cloneId,
+      }),
+      readiness_state: readinessState,
+      execution_status: executionStatus,
+      failure_classification: failureClassification,
+      freeform_observations: observation,
+      verdict: "fail",
+      confidence: 0.9,
+    },
+    cloneArtifact: buildCloneArtifact({
+      capabilityId: runtime.capabilityArea,
+      sourceDocument: runtime.sourceDocument,
+      taskId: runtime.selectedTasks[0],
+      clone,
+      readinessState,
+      executionStatus,
+      bridgeSessionId: runtime.bridgeSessionId ?? "pending",
+      wordDocumentId: runtime.wordDocumentId ?? "pending",
+    }),
+  };
 }
 
 function buildManualPlan({ sourceDocument, taskId }) {
@@ -427,6 +504,7 @@ async function observeLiveExecutionReceipts({
   const newEvents = [];
   const seenEventIds = new Set(baselineEventIds);
   const startedAt = Date.now();
+  let completionObservedAtMs = null;
 
   while (Date.now() - startedAt < timeoutMs) {
     const state = await execBridgeJsonWithReconnect(
@@ -452,7 +530,21 @@ async function observeLiveExecutionReceipts({
       stateSnapshots,
       newEvents,
     });
-    if (receipts.completionObserved) {
+    const elapsedMs = Date.now() - startedAt;
+    if (receipts.completionObserved && completionObservedAtMs == null) {
+      completionObservedAtMs = elapsedMs;
+    }
+
+    if (
+      receipts.completionObserved &&
+      !shouldContinueReceiptObservation({
+        receipts,
+        stateSnapshots,
+        elapsedMs,
+        completionObservedAtMs,
+        timeoutMs,
+      })
+    ) {
       return { stateSnapshots, newEvents, receipts };
     }
 
@@ -477,7 +569,7 @@ function createReviewerReportSkeleton({
   cloneId,
 }) {
   return {
-    task_identity: `${sourceDocument}:${taskId}`,
+    task_identity: createTaskIdentity(sourceDocument, taskId),
     capability_area: capabilityId,
     source_document: sourceDocument,
     task_id: taskId,
@@ -505,7 +597,7 @@ function createReviewerReportSkeleton({
   };
 }
 
-function createBatchReportSkeleton(plan, document, batchId) {
+export function createBatchReportSkeleton(plan, document, batchId) {
   return {
     batch_id: batchId,
     capability_area: plan.capabilityId,
@@ -533,14 +625,49 @@ function createBatchReportSkeleton(plan, document, batchId) {
   };
 }
 
-function buildExecutionDiagnosticReport({
+export function buildCloneArtifact({
+  capabilityId,
+  sourceDocument,
+  taskId,
+  clone,
+  readinessState,
+  executionStatus,
+  bridgeSessionId = "pending",
+  wordDocumentId = "pending",
+}) {
+  return {
+    task_identity: createTaskIdentity(sourceDocument, taskId),
+    capability_area: capabilityId,
+    source_document: sourceDocument,
+    task_id: taskId,
+    clone_id: clone.cloneId,
+    clone_path: clone.clonePath,
+    readiness_state: readinessState,
+    execution_status: executionStatus,
+    bridge_session_id: bridgeSessionId,
+    word_document_id: wordDocumentId,
+  };
+}
+
+export function buildExecutionDiagnosticReport({
+  capabilityId,
+  sourceDocument,
+  cloneId,
+  bridgeSessionId,
+  wordDocumentId,
   task,
   receiptObservation,
   finalState,
 }) {
   return {
+    task_identity: createTaskIdentity(sourceDocument, task.taskId),
+    capability_area: capabilityId,
+    source_document: sourceDocument,
     task_id: task.taskId,
+    clone_id: cloneId,
     captured_at: new Date().toISOString(),
+    bridge_session_id: bridgeSessionId,
+    word_document_id: wordDocumentId,
     execution_classification:
       receiptObservation.receipts.executionClassification,
     prompt_submitted: receiptObservation.receipts.promptSubmitted,
@@ -646,7 +773,7 @@ async function runTask({
   sessionSelector,
 }) {
   const clone = createClone(batchId, document, task.taskId);
-  const reviewerReport = createReviewerReportSkeleton({
+  let reviewerReport = createReviewerReportSkeleton({
     capabilityId,
     sourceDocument: document.sourceDocument,
     taskId: task.taskId,
@@ -672,27 +799,72 @@ async function runTask({
   });
 
   if (sessions.length === 0) {
-    reviewerReport.readiness_state = "pane_open_required";
-    reviewerReport.execution_status = "paused_for_pane";
-    timeline.events.push("pane_open_required");
-    batchReport.stop_reasons.push("awaiting_hybrid_pane");
+    const preflightStop = buildPreflightStop({
+      clone,
+      runtime,
+      timeline,
+      batchReport,
+      failureClassification: "preflight_blocked_no_hybrid_session",
+      readinessState: "pane_open_required",
+      executionStatus: "paused_for_pane",
+      stopReason: "awaiting_hybrid_pane",
+      observation:
+        "No connected Hybrid Word pane/session was available at preflight, so live review stopped before prompt submission.",
+    });
+    reviewerReport = preflightStop.reviewerReport;
     writeJson(
       path.join(batchDir, `${task.taskId}-reviewer-report.json`),
       reviewerReport,
     );
-    writeJson(path.join(batchDir, `${task.taskId}-task-clone.json`), {
-      clone_id: clone.cloneId,
-      clone_path: clone.clonePath,
-      task_id: task.taskId,
-    });
+    writeJson(
+      path.join(batchDir, `${task.taskId}-task-clone.json`),
+      preflightStop.cloneArtifact,
+    );
     return;
   }
 
-  const session = resolveLiveReviewSession({
-    sessions,
-    sourceDocument: document.sourceDocument,
-    sessionSelector,
-  });
+  let session;
+  try {
+    session = resolveLiveReviewSession({
+      sessions,
+      sourceDocument: document.sourceDocument,
+      sessionSelector,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : String(error ?? "Unknown error");
+    const isAmbiguous = /multiple/i.test(message);
+    const isNonHybrid = /not a Hybrid Word session|No qualifying Hybrid Word session/i.test(
+      message,
+    );
+    const preflightStop = buildPreflightStop({
+      clone,
+      runtime,
+      timeline,
+      batchReport,
+      failureClassification: isAmbiguous
+        ? "preflight_blocked_ambiguous_session"
+        : isNonHybrid
+          ? "preflight_blocked_no_hybrid_session"
+          : "preflight_blocked_session_resolution",
+      readinessState: isAmbiguous ? "quarantined" : "pane_open_required",
+      executionStatus: isAmbiguous ? "failed" : "paused_for_pane",
+      stopReason: isAmbiguous
+        ? "ambiguous_hybrid_session_selection"
+        : "awaiting_hybrid_pane",
+      observation: `Live review stopped during preflight: ${message}`,
+    });
+    reviewerReport = preflightStop.reviewerReport;
+    writeJson(
+      path.join(batchDir, `${task.taskId}-reviewer-report.json`),
+      reviewerReport,
+    );
+    writeJson(
+      path.join(batchDir, `${task.taskId}-task-clone.json`),
+      preflightStop.cloneArtifact,
+    );
+    return;
+  }
   const baselineState = await waitForIdleSession({
     bridgeUrl,
     sessionId: session.sessionId,
@@ -735,7 +907,7 @@ async function runTask({
 
   const metadata = await execBridgeJsonWithReconnect(
     bridgeUrl,
-    ["metadata", "word"],
+    ["metadata", session.sessionId],
     { sessionSelector: session.sessionId },
   );
   const receiptObservation = await observeLiveExecutionReceipts({
@@ -799,6 +971,8 @@ async function runTask({
         verdict: reviewerReport.verdict,
         execution_status: reviewerReport.execution_status,
         failure_classification: reviewerReport.failure_classification,
+        execution_classification:
+          receiptObservation.receipts.executionClassification,
       },
     });
     if (mismatch.mismatchClass !== "aligned") {
@@ -825,16 +999,29 @@ async function runTask({
   writeJson(
     path.join(batchDir, `${task.taskId}-execution-diagnostic.json`),
     buildExecutionDiagnosticReport({
+      capabilityId,
+      sourceDocument: document.sourceDocument,
+      cloneId: clone.cloneId,
+      bridgeSessionId: runtime.bridgeSessionId ?? "unknown",
+      wordDocumentId: runtime.wordDocumentId ?? "unknown",
       task,
       receiptObservation,
       finalState,
     }),
   );
-  writeJson(path.join(batchDir, `${task.taskId}-task-clone.json`), {
-    clone_id: clone.cloneId,
-    clone_path: clone.clonePath,
-    task_id: task.taskId,
-  });
+  writeJson(
+    path.join(batchDir, `${task.taskId}-task-clone.json`),
+    buildCloneArtifact({
+      capabilityId,
+      sourceDocument: document.sourceDocument,
+      taskId: task.taskId,
+      clone,
+      readinessState: reviewerReport.readiness_state,
+      executionStatus: reviewerReport.execution_status,
+      bridgeSessionId: reviewerReport.bridge_session_id,
+      wordDocumentId: reviewerReport.word_document_id,
+    }),
+  );
 }
 
 async function main() {

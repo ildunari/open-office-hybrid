@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { buildDiagnosticsModel } from "../src/chat/diagnostics";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { buildDiagnosticsModel } from "../src/chat/diagnostics";
 
 const corpusScenarios = JSON.parse(
   readFileSync(
@@ -22,6 +22,8 @@ const corpusScenarios = JSON.parse(
 describe("buildDiagnosticsModel", () => {
   it("selects the active thread and sorts diagnostic collections predictably", () => {
     const model = buildDiagnosticsModel({
+      mode: "blocked",
+      taskPhase: "blocked",
       permissionMode: "confirm_risky",
       capabilityBoundary: {
         mode: "standard",
@@ -96,6 +98,23 @@ describe("buildDiagnosticsModel", () => {
         },
       ],
       activeThreadId: "thread-1",
+      waitingState: {
+        kind: "retry_exhausted",
+        reason: "Verification follow-up required",
+        resumeMessage: "Resume after rereading the edited paragraph.",
+        createdAt: 25,
+      },
+      handoff: {
+        taskId: "task-1",
+        mode: "execute",
+        currentIntent: "Update the grant summary",
+        constraints: [],
+        incompleteVerifications: ["word-reread"],
+        nextRecommendedAction: "Resume after rereading the edited paragraph.",
+        summary:
+          "Verification is blocked on a missing reread of the edited paragraph.",
+        updatedAt: 26,
+      },
       compactionState: {
         artifactCount: 2,
         lastCompactedThreadId: "thread-2",
@@ -113,9 +132,39 @@ describe("buildDiagnosticsModel", () => {
         },
       ],
       lastVerification: {
-        status: "passed",
-        retryable: false,
+        status: "retryable",
+        retryable: true,
         results: [],
+      },
+      degradedGuardrails: [
+        "Verification failed after 2 resume attempts; completing with degraded guardrails.",
+      ],
+      promptProvenance: {
+        providerFamily: "gpt",
+        provider: "openai",
+        model: "gpt-5",
+        apiType: "default",
+        phase: "mutation",
+        runtimeNotes: [
+          "Reread the edited paragraph before reporting completion.",
+        ],
+        contributors: [
+          {
+            id: "source-system",
+            kind: "system_prompt",
+            label: "System prompt",
+            order: 0,
+            summary: "Word host system prompt",
+          },
+          {
+            id: "source-doctrine",
+            kind: "local_doctrine",
+            label: "Local doctrine",
+            order: 1,
+            summary:
+              "gpt-prompt-architect, word-mastery-v3, openword-best-practices",
+          },
+        ],
       },
     });
 
@@ -131,10 +180,38 @@ describe("buildDiagnosticsModel", () => {
       "trace-2",
       "trace-1",
     ]);
+    expect(model.runtimeTruth.waitingState).toBe("retry_exhausted");
+    expect(model.runtimeTruth.waitingReason).toBe(
+      "Verification follow-up required",
+    );
+    expect(model.runtimeTruth.handoffSummary).toBe(
+      "Verification is blocked on a missing reread of the edited paragraph.",
+    );
+    expect(model.runtimeTruth.nextRecommendedAction).toBe(
+      "Resume after rereading the edited paragraph.",
+    );
+    expect(model.runtimeTruth.verificationRetryable).toBe(true);
+    expect(model.runtimeTruth.degradedGuardrails).toEqual([
+      "Verification failed after 2 resume attempts; completing with degraded guardrails.",
+    ]);
+    expect(model.promptProvenance).toMatchObject({
+      providerFamily: "gpt",
+      provider: "openai",
+      model: "gpt-5",
+      phase: "mutation",
+      runtimeNotes: [
+        "Reread the edited paragraph before reporting completion.",
+      ],
+    });
+    expect(
+      model.promptProvenance?.contributors.map((item) => item.kind),
+    ).toEqual(["system_prompt", "local_doctrine"]);
   });
 
   it("trims crowded diagnostics collections to the latest policy trace entries and first completion artifacts", () => {
     const model = buildDiagnosticsModel({
+      mode: "execute",
+      taskPhase: "execute",
       permissionMode: "confirm_risky",
       capabilityBoundary: {
         mode: "standard",
@@ -160,6 +237,8 @@ describe("buildDiagnosticsModel", () => {
       activeVerifierIds: [],
       threads: [],
       activeThreadId: null,
+      waitingState: null,
+      handoff: null,
       compactionState: null,
       completionArtifacts: Array.from({ length: 7 }, (_, index) => ({
         id: `artifact-${index + 1}`,
@@ -171,6 +250,8 @@ describe("buildDiagnosticsModel", () => {
         createdAt: index + 1,
       })),
       lastVerification: null,
+      degradedGuardrails: [],
+      promptProvenance: null,
     });
 
     expect(model.recentPolicyTrace).toHaveLength(6);
@@ -202,6 +283,8 @@ describe("buildDiagnosticsModel", () => {
     }));
 
     const model = buildDiagnosticsModel({
+      mode: "discuss",
+      taskPhase: "discuss",
       permissionMode: "confirm_risky",
       capabilityBoundary: {
         mode: "standard",
@@ -219,12 +302,18 @@ describe("buildDiagnosticsModel", () => {
       activeVerifierIds: [],
       threads: [],
       activeThreadId: null,
+      waitingState: null,
+      handoff: null,
       compactionState: null,
       completionArtifacts: [],
       lastVerification: null,
+      degradedGuardrails: [],
+      promptProvenance: null,
     });
 
-    expect(model.instructionSources).toHaveLength(corpusScenarios.scenarios.length);
+    expect(model.instructionSources).toHaveLength(
+      corpusScenarios.scenarios.length,
+    );
     expect(model.instructionSources[0]?.label).toBe("comments.docx");
     expect(model.instructionSources.at(-1)?.label).toBe("toc.docx");
   });

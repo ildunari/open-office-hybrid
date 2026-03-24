@@ -100,6 +100,15 @@ export class TaskTracker {
     };
   }
 
+  setNoWriteRecoveryCount(noWriteRecoveryCount: number): void {
+    if (!this.currentTask) return;
+    this.currentTask = {
+      ...this.currentTask,
+      noWriteRecoveryCount,
+      updatedAt: Date.now(),
+    };
+  }
+
   setMode(mode: TaskRecord["mode"]): void {
     if (!this.currentTask) return;
     this.currentTask = {

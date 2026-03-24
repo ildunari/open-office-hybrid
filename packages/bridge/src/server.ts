@@ -128,10 +128,7 @@ function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
 }
 
-function requestToken(
-  req: IncomingMessage,
-  url: URL,
-): string | undefined {
+function requestToken(req: IncomingMessage, url: URL): string | undefined {
   const header = req.headers[BRIDGE_AUTH_HEADER.toLowerCase()];
   if (typeof header === "string" && header.trim()) {
     return header.trim();

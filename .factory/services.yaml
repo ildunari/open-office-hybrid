@@ -1,0 +1,25 @@
+commands:
+  install: pnpm install
+  typecheck: pnpm typecheck
+  lint: pnpm lint
+  format: pnpm format
+  test: pnpm test
+  test_sdk_targeted: pnpm --filter @office-agents/sdk exec vitest run --maxWorkers=6 tests/hook-guards.test.ts tests/runtime.test.ts tests/word-agent-benchmark-suite.test.ts
+  test_word_targeted: pnpm --filter @office-agents/word exec vitest run --maxWorkers=6 tests/system-prompt.test.ts tests/patterns.test.ts tests/verifiers.test.ts tests/tool-helpers.test.ts
+  test_bridge_targeted: pnpm --filter @office-agents/bridge exec vitest run --maxWorkers=6 tests/server.test.ts tests/client.test.ts tests/cli-commands.test.ts tests/session-selection.test.ts
+  test_core_targeted: pnpm --filter @office-agents/core exec vitest run --maxWorkers=6 tests/resume-task-banner.test.ts tests/diagnostics.test.ts tests/diagnostics-panel.test.ts
+
+services:
+  bridge_hybrid:
+    start: pnpm -C "/Users/Kosta/worktrees/office-agents-hybrid/codex-word-system-polish" bridge:serve:hybrid
+    stop: pnpm -C "/Users/Kosta/worktrees/office-agents-hybrid/codex-word-system-polish" bridge:stop:hybrid
+    healthcheck: curl -skf https://localhost:4018/health
+    port: 4018
+    depends_on: []
+
+  word_hybrid_dev_server:
+    start: PORT=3003 pnpm -C "/Users/Kosta/worktrees/office-agents-hybrid/codex-word-system-polish" --filter @office-agents/word dev-server
+    stop: sh -c 'pids=$(lsof -ti tcp:3003); if [ -n "$pids" ]; then kill $pids; fi'
+    healthcheck: curl -skf https://localhost:3003
+    port: 3003
+    depends_on: []

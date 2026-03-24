@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import {
+  createHash,
+} from "node:crypto";
+import {
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -7,18 +10,62 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  assessWordBenchmarkLongRunProgress,
   classifyWordBenchmarkFailure,
   matchWordBenchmarkFixtures,
   summarizeWordBenchmarkRun,
 } from "./benchmark-suite-runtime.mjs";
+import {
+  buildTaskpanePromptSubmissionScript,
+  unwrapTaskpaneSubmissionResult,
+} from "./live-review-submission.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.join(__dirname, "..", "..", "..", "..", "..");
-const bridgeCliPath = path.join(repoRoot, "packages", "bridge", "dist", "cli.js");
 const MAX_BUFFER = 20 * 1024 * 1024;
+const LONG_RUN_PROGRESS_THRESHOLD_MS = 45_000;
+const LONG_RUN_PROGRESS_POLL_MS = 5_000;
+
+export function resolveLiveWordBenchmarkPaths(startDir = __dirname) {
+  let currentDir = path.resolve(startDir);
+
+  while (true) {
+    const workspaceManifestPath = path.join(currentDir, "pnpm-workspace.yaml");
+    const bridgePackagePath = path.join(
+      currentDir,
+      "packages",
+      "bridge",
+      "package.json",
+    );
+    if (
+      existsSync(workspaceManifestPath) &&
+      existsSync(bridgePackagePath)
+    ) {
+      return {
+        repoRoot: currentDir,
+        bridgeCliPath: path.join(
+          currentDir,
+          "packages",
+          "bridge",
+          "dist",
+          "cli.js",
+        ),
+      };
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      throw new Error(
+        `Could not resolve workspace root from ${startDir} for the live Word benchmark runner.`,
+      );
+    }
+    currentDir = parentDir;
+  }
+}
+
+const { repoRoot, bridgeCliPath } = resolveLiveWordBenchmarkPaths();
 
 function parseArgs(argv) {
   const args = {
@@ -194,12 +241,76 @@ function runBridgeCliJsonAllowFailure(args) {
   };
 }
 
-function ensureBridgeCliBuilt() {
-  execFileSync("pnpm", ["--filter", "@office-agents/bridge", "build"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    maxBuffer: MAX_BUFFER,
-  });
+export function extractRuntimeStateFromRefreshPayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  if (payload.runtimeState && typeof payload.runtimeState === "object") {
+    return payload.runtimeState;
+  }
+  if (
+    payload.snapshot &&
+    typeof payload.snapshot === "object" &&
+    payload.snapshot.runtimeState &&
+    typeof payload.snapshot.runtimeState === "object"
+  ) {
+    return payload.snapshot.runtimeState;
+  }
+  return null;
+}
+
+function readFreshRuntimeState(bridgeUrl, sessionId) {
+  try {
+    const refreshed = runBridgeCliJson(buildBridgeRefreshArgs(bridgeUrl, sessionId));
+    const refreshedState = extractRuntimeStateFromRefreshPayload(refreshed);
+    if (refreshedState) {
+      return refreshedState;
+    }
+  } catch {
+    // Fall back to the regular state endpoint below.
+  }
+  return runBridgeCliJson(buildBridgeStateJsonArgs(bridgeUrl, sessionId));
+}
+
+export function ensureBridgeCliBuilt({
+  repoRoot: activeRepoRoot = repoRoot,
+  execFileSyncImpl = execFileSync,
+} = {}) {
+  execFileSyncImpl(
+    "pnpm",
+    ["--dir", activeRepoRoot, "--filter", "@office-agents/bridge", "build"],
+    {
+      cwd: activeRepoRoot,
+      encoding: "utf8",
+      maxBuffer: MAX_BUFFER,
+    },
+  );
+}
+
+export function buildBridgeStateJsonArgs(bridgeUrl, sessionId) {
+  return ["--url", bridgeUrl, "state", sessionId, "--json"];
+}
+
+export function buildBridgeRefreshArgs(bridgeUrl, sessionId) {
+  return ["--url", bridgeUrl, "rpc", sessionId, "refresh_session"];
+}
+
+export function buildBridgeTaskpanePromptArgs({ bridgeUrl, sessionId, code }) {
+  return ["--url", bridgeUrl, "exec", sessionId, "--unsafe", "--code", code];
+}
+
+export function summarizeBenchmarkPromptOutcome(finalState) {
+  if (finalState?.error) return "error";
+  if (finalState?.waitingState) return "waiting_on_user";
+  if (finalState?.mode === "blocked" || finalState?.taskPhase === "blocked") {
+    return "blocked";
+  }
+  if (
+    finalState?.mode === "completed" ||
+    finalState?.taskPhase === "completed"
+  ) {
+    return "completed";
+  }
+  if (finalState?.isStreaming) return "streaming";
+  return "error";
 }
 
 function fetchLiveWordSessions(bridgeUrl) {
@@ -211,6 +322,218 @@ function fetchLiveWordSessions(bridgeUrl) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function hashContent(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function extractToolPayload(result) {
+  if (result?.ok === false) {
+    return null;
+  }
+  if (result && typeof result === "object" && "result" in result) {
+    return result.result;
+  }
+  return result ?? null;
+}
+
+function captureDocumentReadbackHash(bridgeUrl, sessionId, outputPath = null) {
+  try {
+    const response = runBridgeCliJson([
+      "--url",
+      bridgeUrl,
+      "tool",
+      sessionId,
+      "get_document_text",
+    ]);
+    const payload = extractToolPayload(response);
+    const serialized = JSON.stringify(payload ?? null);
+    if (outputPath) {
+      writeJson(outputPath, {
+        sessionId,
+        capturedAt: new Date().toISOString(),
+        payload,
+      });
+    }
+    return hashContent(serialized);
+  } catch {
+    return null;
+  }
+}
+
+function captureSessionScreenshotHash(bridgeUrl, sessionId, outputPath) {
+  try {
+    execBridgeCli([
+      "--url",
+      bridgeUrl,
+      "screenshot",
+      sessionId,
+      "--pages",
+      "1",
+      "--out",
+      outputPath,
+    ]);
+    return existsSync(outputPath)
+      ? hashContent(readFileSync(outputPath))
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function sampleLongRunProgress({
+  startedAt,
+  state,
+  sameSessionReadbackHash = null,
+  sameSessionScreenshotHash = null,
+}) {
+  return {
+    elapsedMs: Math.max(0, Date.now() - startedAt),
+    toolExecutionCount: state?.activeTaskSummary?.toolExecutionCount ?? 0,
+    outputTokens: state?.sessionStats?.outputTokens ?? 0,
+    messageCount: state?.sessionStats?.messageCount ?? 0,
+    sameSessionReadbackHash,
+    sameSessionScreenshotHash,
+  };
+}
+
+function parsePromptProcessResult({ ok, stdout, stderr, error }) {
+  const trimmedStdout = (stdout ?? "").trim();
+  if (trimmedStdout.length > 0) {
+    try {
+      return JSON.parse(trimmedStdout);
+    } catch {
+      // Fall through to error handling below.
+    }
+  }
+  if (!ok) {
+    throw error ?? new Error((stderr ?? "").trim() || "Bridge prompt failed");
+  }
+  return JSON.parse(stdout);
+}
+
+async function runBridgePromptWithMonitoring({
+  bridgeUrl,
+  sessionId,
+  prompt,
+  promptTimeoutMs,
+  startedAt,
+  progressSamples,
+  taskPaths,
+  baselineState,
+}) {
+  const submissionScript = buildTaskpanePromptSubmissionScript({ prompt });
+  const child = spawn(
+    "node",
+    [bridgeCliPath, ...buildBridgeTaskpanePromptArgs({
+      bridgeUrl,
+      sessionId,
+      code: submissionScript,
+    })],
+    {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString("utf8");
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString("utf8");
+  });
+
+  const completion = new Promise((resolve) => {
+    child.on("close", (code, signal) => {
+      resolve({
+        ok: code === 0,
+        stdout,
+        stderr,
+        signal,
+        error:
+          code === 0
+            ? null
+            : new Error(
+                stderr.trim() ||
+                  `Bridge prompt exited with code ${code ?? "unknown"}`,
+              ),
+      });
+    });
+  });
+
+  const processResult = await completion;
+  const submissionEnvelope = parsePromptProcessResult(processResult);
+  const submissionResult = unwrapTaskpaneSubmissionResult(submissionEnvelope);
+  const baselineMessageCount =
+    baselineState?.sessionStats?.messageCount ?? 0;
+  const baselineToolExecutionCount =
+    baselineState?.activeTaskSummary?.toolExecutionCount ?? 0;
+
+  let forcedStop = null;
+  const deadline = Date.now() + promptTimeoutMs;
+  while (Date.now() < deadline) {
+    await sleep(LONG_RUN_PROGRESS_POLL_MS);
+    let state = null;
+    try {
+      state = runBridgeCliJson(buildBridgeStateJsonArgs(bridgeUrl, sessionId));
+    } catch {
+      continue;
+    }
+
+    progressSamples.push(
+      sampleLongRunProgress({
+        startedAt,
+        state,
+      }),
+    );
+    const assessment = assessWordBenchmarkLongRunProgress(progressSamples, {
+      longRunThresholdMs: LONG_RUN_PROGRESS_THRESHOLD_MS,
+    });
+    if (assessment.isLongRun && !assessment.canKeepRunning) {
+      forcedStop = {
+        outcome: "blocked",
+        reason:
+          "Stopped long-running live mutation monitoring after task-attributed progress stalled.",
+        submissionResult,
+      };
+      appendActionLog(taskPaths, {
+        type: "long_run_progress_stalled",
+        assessment,
+        timestamp: new Date().toISOString(),
+      });
+      break;
+    }
+
+    const messageCount = state?.sessionStats?.messageCount ?? baselineMessageCount;
+    const toolExecutionCount =
+      state?.activeTaskSummary?.toolExecutionCount ?? baselineToolExecutionCount;
+    const promptOutcome = summarizeBenchmarkPromptOutcome(state);
+    const freshActivityObserved =
+      messageCount > baselineMessageCount ||
+      toolExecutionCount > baselineToolExecutionCount;
+
+    if (!state?.isStreaming && freshActivityObserved) {
+      return {
+        outcome: promptOutcome,
+        latestAssistant: state?.latestCompletion?.summary
+          ? { text: state.latestCompletion.summary }
+          : null,
+        submissionResult,
+      };
+    }
+  }
+
+  if (forcedStop) {
+    return forcedStop;
+  }
+  return {
+    outcome: "timed_out",
+    latestAssistant: null,
+    submissionResult,
+  };
 }
 
 function buildSessionFingerprints(bridgeUrl) {
@@ -330,6 +653,14 @@ function getMetadataCore(payload) {
   return payload?.metadata ?? payload?.snapshot?.documentMetadata ?? payload ?? {};
 }
 
+function promptSummaryHasMissingLongRunEvidence(promptSummary) {
+  return Boolean(
+    promptSummary?.longRunEvidence?.isLongRun &&
+      promptSummary?.outcome === "completed" &&
+      promptSummary?.longRunEvidence?.canClaimSuccess === false,
+  );
+}
+
 function buildValidatorResults(task, promptSummary, beforeMetadata, afterMetadata) {
   const before = getMetadataCore(beforeMetadata);
   const after = getMetadataCore(afterMetadata);
@@ -348,6 +679,10 @@ function buildValidatorResults(task, promptSummary, beforeMetadata, afterMetadat
       ) {
         status = "failed";
         evidence = "Prompt execution failed before validators could complete.";
+      } else if (promptSummaryHasMissingLongRunEvidence(promptSummary)) {
+        status = "failed";
+        evidence =
+          "Long-running live mutation completed without same-session readback or screenshot-change evidence.";
       } else if (
         promptSummary.outcome === "waiting_on_user" ||
         promptSummary.outcome === "blocked"
@@ -389,6 +724,7 @@ function scoreFromPromptSummary(task, promptSummary, validatorResults) {
   const triggeredAutoFail =
     promptSummary.outcome === "error" ||
     promptSummary.outcome === "timed_out" ||
+    promptSummaryHasMissingLongRunEvidence(promptSummary) ||
     failedValidatorCount > 0;
 
   const completionMap = {
@@ -409,7 +745,9 @@ function scoreFromPromptSummary(task, promptSummary, validatorResults) {
       scope_localization: failedValidatorCount === 0 ? 0.9 : 0.35,
       word_native_integrity: failedValidatorCount === 0 ? 0.9 : 0.35,
       formatting_layout_fidelity: 0.8,
-      completion_coverage: completion,
+      completion_coverage: promptSummaryHasMissingLongRunEvidence(promptSummary)
+        ? 0.2
+        : completion,
       safety_ambiguity_handling:
         promptSummary.outcome === "waiting_on_user" ? 0.9 : 0.8,
     },
@@ -459,7 +797,7 @@ async function waitForSettledSession(bridgeUrl, sessionId, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const state = runBridgeCliJson(["--url", bridgeUrl, "state", sessionId]);
+      const state = readFreshRuntimeState(bridgeUrl, sessionId);
       if (sessionLooksSettled(state)) {
         return state;
       }
@@ -470,6 +808,13 @@ async function waitForSettledSession(bridgeUrl, sessionId, timeoutMs = 30000) {
   }
   throw new Error(
     `Session ${sessionId} did not settle within ${timeoutMs}ms before prompt submission.`,
+  );
+}
+
+export function shouldContinueBenchmarkSessionPlan(promptSummary) {
+  const outcome = promptSummary?.outcome ?? "error";
+  return !["blocked", "waiting_on_user", "timed_out", "error"].includes(
+    outcome,
   );
 }
 
@@ -489,18 +834,73 @@ async function runPromptTaskWithPolicy(
   let lastError = null;
   for (let attempt = 1; attempt <= policy.maxPromptAttempts; attempt++) {
     try {
-      const result = runBridgeCliJsonAllowFailure([
-        "--url",
+      const startedAt = Date.now();
+      const beforeReadbackPath = path.join(
+        taskPaths.taskDir,
+        `before-readback-attempt-${attempt}.json`,
+      );
+      const afterReadbackPath = path.join(
+        taskPaths.taskDir,
+        `after-readback-attempt-${attempt}.json`,
+      );
+      const afterScreenshotPath = path.join(
+        taskPaths.taskDir,
+        `after-attempt-${attempt}.png`,
+      );
+      const baselineState = runBridgeCliJson(
+        buildBridgeStateJsonArgs(bridgeUrl, sessionId),
+      );
+      const progressSamples = [
+        sampleLongRunProgress({
+          startedAt,
+          state: baselineState,
+          sameSessionReadbackHash: captureDocumentReadbackHash(
+            bridgeUrl,
+            sessionId,
+            beforeReadbackPath,
+          ),
+          sameSessionScreenshotHash: captureSessionScreenshotHash(
+            bridgeUrl,
+            sessionId,
+            taskPaths.screenshotPath,
+          ),
+        }),
+      ];
+      const promptSummary = await runBridgePromptWithMonitoring({
         bridgeUrl,
-        "prompt",
         sessionId,
-        "--prompt",
         prompt,
-        "--timeout",
-        String(policy.promptTimeoutMs),
-        "--json",
-      ]);
-      return result.value;
+        promptTimeoutMs: policy.promptTimeoutMs,
+        startedAt,
+        progressSamples,
+        taskPaths,
+        baselineState,
+      });
+      const finalState = runBridgeCliJson(
+        buildBridgeStateJsonArgs(bridgeUrl, sessionId),
+      );
+      progressSamples.push(
+        sampleLongRunProgress({
+          startedAt,
+          state: finalState,
+          sameSessionReadbackHash: captureDocumentReadbackHash(
+            bridgeUrl,
+            sessionId,
+            afterReadbackPath,
+          ),
+          sameSessionScreenshotHash: captureSessionScreenshotHash(
+            bridgeUrl,
+            sessionId,
+            afterScreenshotPath,
+          ),
+        }),
+      );
+      return {
+        ...promptSummary,
+        longRunEvidence: assessWordBenchmarkLongRunProgress(progressSamples, {
+          longRunThresholdMs: LONG_RUN_PROGRESS_THRESHOLD_MS,
+        }),
+      };
     } catch (error) {
       lastError = error;
       const normalizedError = normalizeError(error);
@@ -978,6 +1378,9 @@ async function main() {
                 promptSummary,
                 timestamp: new Date().toISOString(),
               });
+              if (!shouldContinueBenchmarkSessionPlan(promptSummary)) {
+                break;
+              }
             }
 
             await captureArtifacts(args.bridgeUrl, resolved.sessionId, sessionPaths);
@@ -1042,4 +1445,6 @@ async function main() {
   }
 }
 
-await main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await main();
+}

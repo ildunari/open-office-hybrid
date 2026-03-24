@@ -1,0 +1,59 @@
+{
+  "milestone": "runtime-bridge-taskpane-truthfulness",
+  "validator": "user-testing",
+  "result": "overridden_pass",
+  "overrideReason": "Auto validator startup is failing with the same worker-exit issue, so runtime truth assertions were validated from targeted automated evidence and substitute review. No connected Hybrid Word session was available on bridge 4018 for optional live confirmation.",
+  "assertions": {
+    "VAL-TRUTH-001": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/runtime.test.ts: blocked instead of waiting-on-user",
+        "commit 6d42076baca1db91240f24479c8eac6baeb62952"
+      ]
+    },
+    "VAL-TRUTH-002": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/runtime.test.ts: clears blocked handoff presentation and re-enters execution on resume",
+        "commit 6d42076baca1db91240f24479c8eac6baeb62952"
+      ]
+    },
+    "VAL-TRUTH-003": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/runtime.test.ts: retryable verification follow-up and degraded completion cases",
+        "commit 6d42076baca1db91240f24479c8eac6baeb62952"
+      ]
+    },
+    "VAL-TRUTH-004": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/runtime.test.ts: retryable verification truth remains explicit",
+        "packages/core/tests/diagnostics.test.ts",
+        "packages/core/tests/diagnostics-panel.test.ts"
+      ]
+    },
+    "VAL-TRUTH-005": {
+      "status": "passed",
+      "evidence": [
+        "packages/bridge/tests/session-summary.test.ts",
+        "packages/bridge/tests/server.test.ts",
+        "commit 4c88224689d30d015a1343bb272af046a4166391",
+        "follow-up test alignment commit 8a3f1f46edf5dfedf34b089dc4c22131ab1398bb"
+      ]
+    },
+    "VAL-TRUTH-006": {
+      "status": "passed",
+      "evidence": [
+        "packages/core/tests/diagnostics.test.ts",
+        "packages/core/tests/diagnostics-panel.test.ts",
+        "commit 4c88224689d30d015a1343bb272af046a4166391"
+      ]
+    }
+  },
+  "blockedByEnvironment": [
+    "No connected Hybrid Word session on https://localhost:4018 for optional bridge-first live confirmation."
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": []
+}

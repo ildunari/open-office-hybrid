@@ -34,6 +34,116 @@ const WRITE_TOOLS = new Set([
   "duplicate_slide",
 ]);
 
+const WORD_LOCAL_WRITE_SCOPE = "word:local";
+
+const BROAD_WORD_MUTATION_PATTERNS = [
+  /(?:context\.document\.)?body\.search\s*\(/i,
+  /(?:context\.document\.)?body\.getRange\s*\(/i,
+  /(?:context\.document\.)?body\.(?:insertParagraph|insertTable|insertOoxml|insertFileFromBase64|insertBreak)\s*\(/i,
+  /(?:context\.document\.)?body\.clear\s*\(/i,
+  /context\.document\.sections\b/i,
+  /getHeader\s*\(/i,
+  /getFooter\s*\(/i,
+  /changeTrackingMode\s*=/i,
+  /getTrackedChanges\s*\(/i,
+  /\bacceptAll\s*\(/i,
+  /\brejectAll\s*\(/i,
+  /(?:context\.document\.)?body\.(?:contentControls|inlinePictures)\b/i,
+];
+
+const LOCAL_WORD_MUTATION_PATTERNS = [
+  /paragraphs\.items\s*\[/i,
+  /tables\.items\s*\[/i,
+  /contentControls\.items\s*\[/i,
+  /getSelection\s*\(/i,
+  /getBookmarkRange\s*\(/i,
+  /paragraphs\.(?:getFirst|getLast)\s*\(/i,
+  /tables\.(?:getFirst|getLast)\s*\(/i,
+  /insertComment\s*\(/i,
+];
+
+function resolveParagraphIndexExpression(
+  expression: string,
+  numericBindings: Map<string, number>,
+): number | null {
+  const normalized = expression.trim();
+  if (/^-?\d+$/.test(normalized)) {
+    return Number(normalized);
+  }
+  return numericBindings.get(normalized) ?? null;
+}
+
+function inferParagraphWriteScope(code: string): string | null {
+  const numericBindings = new Map<string, number>();
+  for (const match of code.matchAll(
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(-?\d+)\s*;/g,
+  )) {
+    numericBindings.set(match[1], Number(match[2]));
+  }
+
+  const paragraphCollectionAliases = new Set<string>(["paragraphs"]);
+  for (const match of code.matchAll(
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:context\.document\.)?body\.paragraphs\s*;/g,
+  )) {
+    paragraphCollectionAliases.add(match[1]);
+  }
+
+  const directParagraphMatch =
+    /\b((?:context\.document\.)?body\.paragraphs|[A-Za-z_$][\w$]*)\.items\s*\[\s*([^\]]+?)\s*\]\s*\.(?:insertText|insertParagraph|insertHtml|insertOoxml|clear|delete)\s*\(/gi;
+  for (const match of code.matchAll(directParagraphMatch)) {
+    const collectionName = match[1];
+    if (
+      collectionName !== "body.paragraphs" &&
+      collectionName !== "context.document.body.paragraphs" &&
+      !paragraphCollectionAliases.has(collectionName)
+    ) {
+      continue;
+    }
+    const resolvedIndex = resolveParagraphIndexExpression(
+      match[2],
+      numericBindings,
+    );
+    if (resolvedIndex == null) {
+      continue;
+    }
+    const paragraphIndex = resolvedIndex + 1;
+    return `word:para:${paragraphIndex}-${paragraphIndex}`;
+  }
+
+  const paragraphAliases = new Map<string, number>();
+  const paragraphAliasAssignment =
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*|(?:context\.document\.)?body\.paragraphs)\.items\s*\[\s*([^\]]+?)\s*\]\s*;/g;
+  for (const match of code.matchAll(paragraphAliasAssignment)) {
+    const sourceCollection = match[2];
+    if (
+      sourceCollection !== "body.paragraphs" &&
+      sourceCollection !== "context.document.body.paragraphs" &&
+      !paragraphCollectionAliases.has(sourceCollection)
+    ) {
+      continue;
+    }
+    const resolvedIndex = resolveParagraphIndexExpression(
+      match[3],
+      numericBindings,
+    );
+    if (resolvedIndex == null) {
+      continue;
+    }
+    paragraphAliases.set(match[1], resolvedIndex + 1);
+  }
+
+  const paragraphAliasUse =
+    /\b([A-Za-z_$][\w$]*)\s*\.(?:insertText|insertParagraph|insertHtml|insertOoxml|clear|delete)\s*\(/g;
+  for (const match of code.matchAll(paragraphAliasUse)) {
+    const paragraphIndex = paragraphAliases.get(match[1]);
+    if (paragraphIndex != null) {
+      return `word:para:${paragraphIndex}-${paragraphIndex}`;
+    }
+  }
+
+  return null;
+}
+
 function isWordTool(toolName: string): boolean {
   return (
     toolName.startsWith("get_document") ||
@@ -82,6 +192,28 @@ export function scopeKeyFromParams(
       const index = params.paragraphIndex ?? params.index ?? "all";
       return `word:para:${index}-${index}`;
     }
+    if (toolName === "execute_office_js") {
+      const code = String(params.code ?? params.jsCode ?? "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (
+        code &&
+        BROAD_WORD_MUTATION_PATTERNS.some((pattern) => pattern.test(code))
+      ) {
+        return "word:all";
+      }
+      const inferredParagraphWriteScope = inferParagraphWriteScope(code);
+      if (inferredParagraphWriteScope) {
+        return inferredParagraphWriteScope;
+      }
+      if (
+        !code ||
+        LOCAL_WORD_MUTATION_PATTERNS.some((pattern) => pattern.test(code))
+      ) {
+        return WORD_LOCAL_WRITE_SCOPE;
+      }
+      return WORD_LOCAL_WRITE_SCOPE;
+    }
     return "word:all";
   }
 
@@ -104,11 +236,14 @@ export function scopeKeyFromParams(
   return "all";
 }
 
-function parseWordScope(scope: string):
-  | { kind: "all" }
+function parseWordScope(
+  scope: string,
+):
+  | { kind: "all" | "local" }
   | { kind: "para" | "child"; start: number; end: number | null }
   | null {
   if (scope === "word:all") return { kind: "all" };
+  if (scope === WORD_LOCAL_WRITE_SCOPE) return { kind: "local" };
   const match = /^word:(para|child):(-?\d+)-(end|-?\d+)$/.exec(scope);
   if (!match) return null;
   return {
@@ -127,7 +262,10 @@ function rangeContains(
   return outer.start <= inner.start && outerEnd >= innerEnd;
 }
 
-export function hasReadCoverage(readScopes: Set<string>, writeScope: string): boolean {
+export function hasReadCoverage(
+  readScopes: Set<string>,
+  writeScope: string,
+): boolean {
   if (readScopes.has(writeScope) || readScopes.has("all")) {
     return true;
   }
@@ -141,12 +279,13 @@ export function hasReadCoverage(readScopes: Set<string>, writeScope: string): bo
     if (appPrefix === "word") {
       const readWordScope = parseWordScope(scope);
       const writeWordScope = parseWordScope(writeScope);
+      if (!readWordScope || !writeWordScope) {
+        continue;
+      }
       if (
-        readWordScope &&
-        writeWordScope &&
+        (readWordScope.kind === "para" || readWordScope.kind === "child") &&
+        (writeWordScope.kind === "para" || writeWordScope.kind === "child") &&
         readWordScope.kind === writeWordScope.kind &&
-        readWordScope.kind !== "all" &&
-        writeWordScope.kind !== "all" &&
         rangeContains(readWordScope, writeWordScope)
       ) {
         return true;
@@ -190,13 +329,19 @@ export const readBeforeWritePreHook: PreHookDefinition = {
   execute: (ctx) => {
     const writeScope = scopeKeyFromParams(ctx.toolName, ctx.params);
     if (!hasReadCoverage(ctx.sessionState.readScopes, writeScope)) {
+      const scopeMessage =
+        writeScope === "word:all"
+          ? "Detected a broad Word write. Read a broad document or structure scope first."
+          : writeScope === WORD_LOCAL_WRITE_SCOPE
+            ? "Read the target Word scope first, then perform the bounded write. The runtime could not prove overlapping read coverage for this bounded Word write, so it is failing closed."
+            : `Read the target Word scope first, then perform the bounded write. Attempted write scope: ${writeScope}`;
       return {
         action: "abort",
         errorMessage:
           "You must read the target content before modifying it. " +
           "Use get_document_text, get_document_structure, get_ooxml, " +
           "get_cell_ranges, get_range_as_csv, search_data, or the appropriate " +
-          `read tool first. (Attempted write scope: ${writeScope})`,
+          `read tool first. ${scopeMessage}`,
       };
     }
 
