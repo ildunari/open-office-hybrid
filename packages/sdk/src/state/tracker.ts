@@ -89,6 +89,17 @@ export class TaskTracker {
     };
   }
 
+  setExecutionDiagnostics(
+    executionDiagnostics: NonNullable<TaskRecord["executionDiagnostics"]>,
+  ): void {
+    if (!this.currentTask) return;
+    this.currentTask = {
+      ...this.currentTask,
+      executionDiagnostics,
+      updatedAt: Date.now(),
+    };
+  }
+
   setMode(mode: TaskRecord["mode"]): void {
     if (!this.currentTask) return;
     this.currentTask = {

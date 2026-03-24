@@ -175,6 +175,19 @@ export interface TaskRecord {
     resultText: string;
     timestamp: number;
   }>;
+  executionDiagnostics?: {
+    preWriteReadCount: number;
+    preWriteInspectionCount: number;
+    scopeReadCount: number;
+    writeCount: number;
+    failedWriteCount: number;
+    postWriteRereadCount: number;
+    firstReadAt?: number;
+    firstWriteAt?: number;
+    planAdvancedBeyondInspection: boolean;
+    noWriteLoopDetected?: boolean;
+    noWriteLoopReason?: string;
+  };
   toolCallIds: string[];
   resumeCount?: number;
   createdAt: number;

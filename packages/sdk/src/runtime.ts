@@ -57,6 +57,7 @@ import {
   type CompletionArtifact,
   createUpdatePlanTool,
   type ExecutionPlan,
+  inferTaskClassification,
   PlanManager,
   TaskClassifier,
   type TaskRecord,
@@ -257,6 +258,17 @@ function buildWaitingState(
 }
 
 const MAX_POLICY_TRACE_ENTRIES = 25;
+const WORD_READ_TOOL_NAMES = new Set([
+  "get_document_text",
+  "get_document_structure",
+  "get_ooxml",
+  "get_paragraph_ooxml",
+]);
+const WORD_WRITE_TOOL_NAMES = new Set(["execute_office_js"]);
+const GENERIC_INSPECTION_TOOL_NAMES = new Set(["bash", "read"]);
+const NO_WRITE_LOOP_READ_LIMIT = 4;
+const NO_WRITE_LOOP_INSPECTION_LIMIT = 6;
+const NO_WRITE_LOOP_MS_LIMIT = 45_000;
 
 function createCapabilityBoundary(
   mode: CapabilityBoundaryMode,
@@ -350,6 +362,8 @@ export class AgentRuntime {
   private listeners: Set<StateListener> = new Set();
   private lastDocumentMetadata: object | null = null;
   private lastDocumentMetadataUpdatedAt: number | null = null;
+  private interruptedStreamingReason: "inspection_budget_exhausted" | null =
+    null;
   private state: RuntimeState;
 
   constructor(adapter: RuntimeAdapter) {
@@ -976,6 +990,160 @@ export class AgentRuntime {
     );
   }
 
+  private deriveExecutionDiagnostics(task: TaskRecord | null) {
+    const executions = task?.toolExecutions ?? [];
+    const successfulWrite = executions.find(
+      (execution) =>
+        WORD_WRITE_TOOL_NAMES.has(execution.toolName) && !execution.isError,
+    );
+    const firstRead = executions.find(
+      (execution) =>
+        WORD_READ_TOOL_NAMES.has(execution.toolName) && !execution.isError,
+    );
+    const preWriteReadCount = executions.filter((execution) => {
+      if (execution.isError || !WORD_READ_TOOL_NAMES.has(execution.toolName)) {
+        return false;
+      }
+      return successfulWrite ? execution.timestamp < successfulWrite.timestamp : true;
+    }).length;
+    const preWriteInspectionCount = executions.filter((execution) => {
+      if (execution.isError) return false;
+      if (
+        !WORD_READ_TOOL_NAMES.has(execution.toolName) &&
+        !GENERIC_INSPECTION_TOOL_NAMES.has(execution.toolName)
+      ) {
+        return false;
+      }
+      return successfulWrite ? execution.timestamp < successfulWrite.timestamp : true;
+    }).length;
+    const scopeReadCount = executions.filter((execution) => {
+      if (execution.isError || !WORD_READ_TOOL_NAMES.has(execution.toolName)) {
+        return false;
+      }
+      return successfulWrite ? execution.timestamp < successfulWrite.timestamp : true;
+    }).length;
+    const writeCount = executions.filter(
+      (execution) =>
+        WORD_WRITE_TOOL_NAMES.has(execution.toolName) && !execution.isError,
+    ).length;
+    const failedWriteCount = executions.filter(
+      (execution) =>
+        WORD_WRITE_TOOL_NAMES.has(execution.toolName) && execution.isError,
+    ).length;
+    const postWriteRereadCount = successfulWrite
+      ? executions.filter(
+          (execution) =>
+            !execution.isError &&
+            WORD_READ_TOOL_NAMES.has(execution.toolName) &&
+            execution.timestamp >= successfulWrite.timestamp,
+        ).length
+      : 0;
+    const activePlan = this.planManager.getActivePlan();
+    const planAdvancedBeyondInspection = Boolean(
+      activePlan?.steps.some(
+        (step) =>
+          (step.kind === "write" || step.kind === "verify") &&
+          (step.status === "active" || step.status === "completed"),
+      ) ||
+        activePlan?.activeStepId === "step-write" ||
+        activePlan?.activeStepId === "step-verify" ||
+        successfulWrite,
+    );
+
+    return {
+      preWriteReadCount,
+      preWriteInspectionCount,
+      scopeReadCount,
+      writeCount,
+      failedWriteCount,
+      postWriteRereadCount,
+      firstReadAt: firstRead?.timestamp,
+      firstWriteAt: successfulWrite?.timestamp,
+      planAdvancedBeyondInspection,
+    };
+  }
+
+  private isMutationCapableWordTask(task: TaskRecord | null): boolean {
+    if (this.adapter.hostApp !== "word" || !task) return false;
+    const classification =
+      this.planManager.getActivePlan()?.classification ??
+      inferTaskClassification(task.userRequest);
+    return classification.risk !== "none" || classification.needsPlan;
+  }
+
+  private async maybeInterruptNoWriteLoop() {
+    const task = this.taskTracker.getCurrentTask();
+    if (!this.isStreaming || !this.isMutationCapableWordTask(task) || !task) {
+      return false;
+    }
+
+    const diagnostics = this.deriveExecutionDiagnostics(task);
+    this.taskTracker.setExecutionDiagnostics(diagnostics);
+    this.update({ activeTask: this.taskTracker.getCurrentTask() });
+    const activeTask = this.taskTracker.getCurrentTask();
+    if (!activeTask || diagnostics.firstWriteAt) {
+      return false;
+    }
+
+    const hasScopeRead = diagnostics.scopeReadCount >= 1;
+    const elapsedMs = diagnostics.firstReadAt
+      ? Date.now() - diagnostics.firstReadAt
+      : 0;
+    const inspectionBudgetExceeded =
+      diagnostics.preWriteReadCount >= NO_WRITE_LOOP_READ_LIMIT ||
+      diagnostics.preWriteInspectionCount >= NO_WRITE_LOOP_INSPECTION_LIMIT ||
+      (elapsedMs >= NO_WRITE_LOOP_MS_LIMIT &&
+        diagnostics.preWriteInspectionCount >= 3);
+
+    if (
+      activeTask.approvalPending ||
+      this.state.mode === "blocked" ||
+      (!hasScopeRead &&
+        diagnostics.preWriteInspectionCount < NO_WRITE_LOOP_INSPECTION_LIMIT) ||
+      !inspectionBudgetExceeded
+    ) {
+      return false;
+    }
+
+    const reason =
+      `Inspection budget exhausted before first write after ${diagnostics.preWriteInspectionCount} inspection operations` +
+      `${elapsedMs > 0 ? ` and ${Math.round(elapsedMs / 1000)}s` : ""}. ` +
+      "Narrow to a bounded first write, reread the affected scope immediately, then continue.";
+    this.interruptedStreamingReason = "inspection_budget_exhausted";
+    this.appendPolicyTrace({
+      event: "task_paused",
+      outcome: "blocked",
+      reason,
+    });
+
+    this.taskTracker.setExecutionDiagnostics({
+      ...diagnostics,
+      noWriteLoopDetected: true,
+      noWriteLoopReason: reason,
+    });
+    const handoff = await this.buildHandoff(
+      this.taskTracker.getCurrentTask()!,
+      reason,
+    );
+    this.taskTracker.setHandoff(handoff);
+    this.taskTracker.setMode("blocked");
+    this.isStreaming = false;
+    this.update({
+      isStreaming: false,
+      mode: "blocked",
+      handoff,
+      degradedGuardrails: [
+        ...this.state.degradedGuardrails,
+        "Stopped a Word task after repeated pre-write inspection with no write attempt.",
+      ],
+      activeTask: this.taskTracker.getCurrentTask(),
+      error: null,
+    });
+    await this.persistSessionState();
+    this.agent?.abort();
+    return true;
+  }
+
   getAvailableProviders(): string[] {
     return getProviders();
   }
@@ -1044,9 +1212,13 @@ export class AgentRuntime {
         });
         if (event.message.role === "assistant") {
           const assistantMsg = event.message as AssistantMessage;
+          const controlledAbort =
+            assistantMsg.stopReason === "aborted" &&
+            this.interruptedStreamingReason === "inspection_budget_exhausted";
           const isError =
-            assistantMsg.stopReason === "error" ||
-            assistantMsg.stopReason === "aborted";
+            !controlledAbort &&
+            (assistantMsg.stopReason === "error" ||
+              assistantMsg.stopReason === "aborted");
           const streamId = this.streamingMessageId;
 
           this.updateMessages(
@@ -1054,7 +1226,7 @@ export class AgentRuntime {
               const messages = [...msgs];
               const idx = messages.findIndex((m) => m.id === streamId);
 
-              if (isError) {
+              if (isError || controlledAbort) {
                 if (idx !== -1) {
                   messages.splice(idx, 1);
                 }
@@ -1086,6 +1258,7 @@ export class AgentRuntime {
       case "tool_execution_start": {
         this.flushStreamingBuffer();
         this.taskTracker.recordToolCall(event.toolCallId);
+        this.update({ activeTask: this.taskTracker.getCurrentTask() });
         this.emitBridgeEvent("tool:started", {
           toolCallId: event.toolCallId,
           toolName: event.toolName,
@@ -1182,6 +1355,11 @@ export class AgentRuntime {
           resultText,
           timestamp: Date.now(),
         });
+        const diagnostics = this.deriveExecutionDiagnostics(
+          this.taskTracker.getCurrentTask(),
+        );
+        this.taskTracker.setExecutionDiagnostics(diagnostics);
+        this.update({ activeTask: this.taskTracker.getCurrentTask() });
 
         if (event.isError) {
           this.emitBridgeEvent("tool:failed", {
@@ -1220,6 +1398,7 @@ export class AgentRuntime {
           }
           return messages;
         });
+        void this.maybeInterruptNoWriteLoop();
         break;
       }
       case "agent_end": {
@@ -1227,6 +1406,10 @@ export class AgentRuntime {
         this.isStreaming = false;
         this.streamingMessageId = null;
         this.update({ isStreaming: false });
+        if (this.interruptedStreamingReason) {
+          this.interruptedStreamingReason = null;
+          break;
+        }
         this.onStreamingEnd();
         break;
       }

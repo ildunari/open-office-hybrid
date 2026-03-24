@@ -101,6 +101,81 @@ export function hasPostWriteReread(
 export function getWordVerificationSuites(): VerificationSuite[] {
   return [
     {
+      id: "word:write-progress",
+      label: "Mutation task made write progress",
+      appliesTo: (context) => {
+        const planRisk = context.plan?.classification?.risk ?? "none";
+        const taskMode = context.task?.mode ?? "discuss";
+        return (
+          context.app === "word" &&
+          (planRisk !== "none" ||
+            taskMode === "plan" ||
+            taskMode === "execute" ||
+            WORD_FORMAT_RE.test(context.request))
+        );
+      },
+      verify: (context) => {
+        const successfulWrites = context.toolExecutions.filter(
+          (execution) =>
+            execution.toolName === "execute_office_js" && !execution.isError,
+        );
+        const failedWrites = context.toolExecutions.filter(
+          (execution) =>
+            execution.toolName === "execute_office_js" && execution.isError,
+        );
+        const hadPostWriteReread = hasPostWriteReread(context.toolExecutions);
+        const loopReason = context.task?.executionDiagnostics?.noWriteLoopReason;
+
+        if (successfulWrites.length === 0) {
+          return {
+            suiteId: "word:write-progress",
+            label: "Mutation task made write progress",
+            expectedEffect:
+              "Mutation-capable Word tasks attempt at least one real write.",
+            observedEffect: loopReason
+              ? `No successful Word write detected. ${loopReason}`
+              : failedWrites.length > 0
+                ? "Word write was attempted but no successful write completed."
+                : "No successful Word write was detected for the mutation-capable task.",
+            status: failedWrites.length > 0 ? "failed" : "retryable",
+            evidence: [
+              ...context.toolExecutions.map((execution) => execution.toolName),
+              ...(loopReason ? [loopReason] : []),
+            ],
+            retryable: failedWrites.length === 0,
+          };
+        }
+
+        if (!hadPostWriteReread) {
+          return {
+            suiteId: "word:write-progress",
+            label: "Mutation task made write progress",
+            expectedEffect:
+              "Each successful write is followed by a reread of the affected scope.",
+            observedEffect:
+              "A successful Word write completed, but no post-write reread was detected.",
+            status: "retryable",
+            evidence: context.toolExecutions.map(
+              (execution) => execution.toolName,
+            ),
+            retryable: true,
+          };
+        }
+
+        return {
+          suiteId: "word:write-progress",
+          label: "Mutation task made write progress",
+          expectedEffect:
+            "Mutation-capable Word tasks perform a write and reread the affected scope.",
+          observedEffect:
+            "A successful Word write was followed by a reread of the affected scope.",
+          status: "passed",
+          evidence: context.toolExecutions.map((execution) => execution.toolName),
+          retryable: false,
+        };
+      },
+    },
+    {
       id: "word:format-preserved",
       label: "Formatting preserved",
       appliesTo: (context) => WORD_FORMAT_RE.test(context.request),

@@ -29,3 +29,14 @@ npm-debug.log*
 *.pem
 headless-test/
 tmp/
+
+# Local agent/system scratch
+.agents/
+.superset/
+Pencil/
+$tmpkh
+
+# Live Word benchmark outputs and local-only docs
+packages/sdk/tests/word-benchmark/artifacts/
+packages/sdk/tests/word-benchmark/fixtures/NIH Biocoating V30 km edits copy.docx
+~$*.docx

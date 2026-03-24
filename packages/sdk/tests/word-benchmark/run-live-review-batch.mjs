@@ -521,6 +521,7 @@ function createBatchReportSkeleton(plan, document, batchId) {
     per_task_timeline: document.tasks.map((task) => ({
       task_id: task.taskId,
       events: ["batch_preflight"],
+      execution_classification: "pending",
     })),
     diagnosis_summary: "pending",
     fix_attempted: false,
@@ -529,6 +530,39 @@ function createBatchReportSkeleton(plan, document, batchId) {
     stop_reasons: [],
     quarantined_tasks: [],
     next_action_queue: ["verify_pane_and_session"],
+  };
+}
+
+function buildExecutionDiagnosticReport({
+  task,
+  receiptObservation,
+  finalState,
+}) {
+  return {
+    task_id: task.taskId,
+    captured_at: new Date().toISOString(),
+    execution_classification:
+      receiptObservation.receipts.executionClassification,
+    prompt_submitted: receiptObservation.receipts.promptSubmitted,
+    execution_observed: receiptObservation.receipts.executionObserved,
+    completion_observed: receiptObservation.receipts.completionObserved,
+    read_count: receiptObservation.receipts.readCount,
+    write_count: receiptObservation.receipts.writeCount,
+    failed_write_count: receiptObservation.receipts.failedWriteCount,
+    first_read_ts: receiptObservation.receipts.firstReadTs,
+    first_write_ts: receiptObservation.receipts.firstWriteTs,
+    post_write_reread_observed:
+      receiptObservation.receipts.postWriteRereadObserved,
+    no_write_loop_suspected: receiptObservation.receipts.noWriteLoopSuspected,
+    reviewer_only_success: receiptObservation.receipts.reviewerOnlySuccess,
+    write_attempted_but_failed:
+      receiptObservation.receipts.writeAttemptedButFailed,
+    write_succeeded_without_reread:
+      receiptObservation.receipts.writeSucceededWithoutReread,
+    final_runtime_mode: finalState?.mode ?? null,
+    final_waiting_state: finalState?.waitingState ?? null,
+    final_verification_status: finalState?.lastVerification?.status ?? null,
+    degraded_guardrails: finalState?.degradedGuardrails ?? [],
   };
 }
 
@@ -739,6 +773,8 @@ async function runTask({
   reviewerReport.confidence = completion.confidence;
   reviewerReport.freeform_observations = completion.freeformObservations;
   reviewerReport.duration_ms = Date.now() - Date.parse(reviewerReport.timestamp);
+  timeline.execution_classification =
+    receiptObservation.receipts.executionClassification;
 
   timeline.events.push(
     "session_ready",
@@ -785,6 +821,14 @@ async function runTask({
   writeJson(
     path.join(batchDir, `${task.taskId}-reviewer-report.json`),
     reviewerReport,
+  );
+  writeJson(
+    path.join(batchDir, `${task.taskId}-execution-diagnostic.json`),
+    buildExecutionDiagnosticReport({
+      task,
+      receiptObservation,
+      finalState,
+    }),
   );
   writeJson(path.join(batchDir, `${task.taskId}-task-clone.json`), {
     clone_id: clone.cloneId,

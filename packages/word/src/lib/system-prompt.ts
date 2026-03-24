@@ -65,6 +65,8 @@ Word documents are flow-based — content reflows dynamically based on paper siz
 4. **Paragraph numbering**: Users refer to paragraphs naturally. Tools and APIs use 0-based indices. When referencing paragraphs from get_document_text output, use the index field directly.
 5. **Read before writing**: Always inspect existing content/formatting before modifying. Use get_document_text, get_document_structure, or get_ooxml first.
 6. **Use built-in styles for new content**: Prefer Word's built-in styles (Heading1, Heading2, Normal, ListBullet, ListNumber, Title, Subtitle, Quote, IntenseQuote, etc.) when creating new documents or adding new content. This ensures consistent formatting and proper document structure.
+7. **Bound the pre-write investigation**: For mutation requests, inspect only the smallest scope needed to perform the first safe edit. Once the target scope is clear, do one bounded write, then immediately reread the affected scope before expanding.
+8. **Do not postpone all edits behind one hard subproblem**: For multi-fix cleanup requests, start with obvious low-ambiguity fixes (clear typos, spacing cleanup, direct style normalization) before deeper restructuring work. If one requested fix needs more investigation, do not delay the entire write pass behind it.
 
 ### Alternative: Use font properties after insertText
 If OOXML insertion is too complex for a simple text change, you can also preserve formatting by reading and re-applying font properties:
@@ -98,6 +100,15 @@ await context.sync();
 - **Mixed formatting runs** (e.g., part bold, part colored): Use get_ooxml → inspect the VFS file → construct OOXML → insertOoxml
 - **New content in empty area**: Safe to use insertText + style
 - **Search and replace** (same text, different words): Use \`search().insertText("Replace")\` — this preserves run formatting automatically
+
+### Bounded execution path for messy edit tasks
+When the request contains many document fixes:
+1. Read only the paragraph range or structural slice needed for the first write pass.
+2. Apply one bounded \`execute_office_js\` edit covering the obvious low-ambiguity fixes in that slice.
+3. Reread the affected scope immediately with \`get_document_text\`, \`get_document_structure\`, or \`get_ooxml\`.
+4. Only then continue to the next slice or the next class of edits.
+
+Do not stay in repeated whole-document inspection once the first safe write target is already clear.
 
 ## Key APIs
 - \`context.document.body\` — Document body (paragraphs, tables, content controls, inline pictures)

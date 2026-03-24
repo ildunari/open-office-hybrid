@@ -2,6 +2,13 @@ export const LIVE_REVIEW_TEXTAREA_SELECTOR = "[data-live-review-textarea]";
 export const LIVE_REVIEW_SEND_BUTTON_SELECTOR = "[data-live-review-send]";
 export const LIVE_REVIEW_AUTOMATION_GLOBAL =
   "window.__OFFICE_AGENTS_AUTOMATION__";
+const WORD_READ_TOOL_NAMES = new Set([
+  "get_document_text",
+  "get_document_structure",
+  "get_ooxml",
+  "get_paragraph_ooxml",
+]);
+const WORD_WRITE_TOOL_NAMES = new Set(["execute_office_js"]);
 
 export function buildReviewerPrompt({
   capabilityId,
@@ -161,6 +168,31 @@ export function classifyLiveExecutionReceipts({
     );
   });
 
+  const toolEvents = newEvents.filter(
+    (event) =>
+      event.event === "tool:started" ||
+      event.event === "tool:completed" ||
+      event.event === "tool:failed",
+  );
+  const readEvents = toolEvents.filter((event) =>
+    WORD_READ_TOOL_NAMES.has(event.payload?.toolName),
+  );
+  const writeEvents = toolEvents.filter((event) =>
+    WORD_WRITE_TOOL_NAMES.has(event.payload?.toolName),
+  );
+  const successfulWriteEvents = writeEvents.filter(
+    (event) => event.event === "tool:completed",
+  );
+  const failedWriteEvents = writeEvents.filter(
+    (event) => event.event === "tool:failed",
+  );
+  const firstWriteTs = successfulWriteEvents[0]?.ts ?? null;
+  const postWriteRereadObserved =
+    firstWriteTs == null
+      ? false
+      : readEvents.some((event) => (event.ts ?? 0) >= firstWriteTs);
+  const finalState = stateSnapshots[stateSnapshots.length - 1] ?? null;
+
   const executionObserved =
     stateSnapshots.some(
       (state) => (state?.activeTaskSummary?.toolExecutionCount ?? 0) > 0,
@@ -183,9 +215,55 @@ export function classifyLiveExecutionReceipts({
     }) ||
     hasConsoleReceipt("agent_end");
 
+  const noWriteLoopSuspected = Boolean(
+    promptSubmitted &&
+      executionObserved &&
+      successfulWriteEvents.length === 0 &&
+      readEvents.length >= 3 &&
+      (finalState?.mode === "blocked" ||
+        finalState?.waitingState != null ||
+        (finalState?.degradedGuardrails?.length ?? 0) > 0),
+  );
+  const reviewerOnlySuccess = Boolean(
+    completionObserved &&
+      successfulWriteEvents.length === 0 &&
+      failedWriteEvents.length === 0 &&
+      readEvents.length > 0,
+  );
+  const writeAttemptedButFailed = Boolean(
+    failedWriteEvents.length > 0 && successfulWriteEvents.length === 0,
+  );
+  const writeSucceededWithoutReread = Boolean(
+    successfulWriteEvents.length > 0 && !postWriteRereadObserved,
+  );
+  const executionClassification = reviewerOnlySuccess
+    ? "reviewer_only_success"
+    : noWriteLoopSuspected
+      ? "no_write_loop"
+      : writeAttemptedButFailed
+        ? "write_attempted_but_failed"
+        : writeSucceededWithoutReread
+          ? "write_succeeded_without_reread"
+          : successfulWriteEvents.length > 0
+            ? "write_completed_with_reread"
+            : executionObserved
+              ? "execution_without_write_signal"
+              : "no_execution_signal";
+
   return {
     promptSubmitted,
     executionObserved,
     completionObserved,
+    readCount: readEvents.length,
+    writeCount: successfulWriteEvents.length,
+    failedWriteCount: failedWriteEvents.length,
+    firstReadTs: readEvents[0]?.ts ?? null,
+    firstWriteTs,
+    postWriteRereadObserved,
+    noWriteLoopSuspected,
+    reviewerOnlySuccess,
+    writeAttemptedButFailed,
+    writeSucceededWithoutReread,
+    executionClassification,
   };
 }

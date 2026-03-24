@@ -142,6 +142,8 @@ function runtimeInternals(runtime: AgentRuntime) {
         resultText: string;
         timestamp: number;
       }) => void;
+      setMode: (mode: string) => void;
+      setExecutionDiagnostics: (diagnostics: Record<string, unknown>) => void;
       setHandoff: (handoff: Record<string, unknown> | null) => void;
       persist: (sessionId: string) => Promise<unknown>;
     };
@@ -155,9 +157,14 @@ function runtimeInternals(runtime: AgentRuntime) {
       ) => void;
     };
     planManager: {
-      hydrate: (plan: ReturnType<typeof createPlan>) => void;
+      replacePlan: (plan: ReturnType<typeof createPlan>) => void;
+      getActivePlan: () => ReturnType<typeof createPlan> | null;
       persist: (sessionId: string) => Promise<unknown>;
     };
+    deriveExecutionDiagnostics: (
+      task: Record<string, unknown> | null,
+    ) => Record<string, unknown>;
+    maybeInterruptNoWriteLoop: () => Promise<boolean>;
     update: (partial: Partial<RuntimeState>) => void;
   };
 }
@@ -968,6 +975,150 @@ describe("AgentRuntime", () => {
     const state = runtime.getState();
     expect(state.uploads).toHaveLength(1);
     expect(state.uploads[0].size).toBe(20);
+    runtime.dispose();
+  });
+
+  it("blocks a Word mutation task that keeps reading without a write", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the whole document and fix formatting issues.",
+    );
+    internals.planManager.replacePlan(
+      createPlan({
+        userRequest: "Rewrite the whole document and fix formatting issues.",
+        classification,
+        approvalRequired: false,
+      }),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the whole document and fix formatting issues.",
+      classification,
+      {
+        mode: "execute",
+        constraints: ["Preserve formatting."],
+        expectedEffects: ["Write and reread the affected scope."],
+      },
+    );
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-1",
+      toolName: "get_document_structure",
+      isError: false,
+      resultText: "ok",
+      timestamp: 1,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-2",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 2,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-3",
+      toolName: "get_ooxml",
+      isError: false,
+      resultText: "ok",
+      timestamp: 3,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-4",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 4,
+    });
+    internals.update({
+      isStreaming: true,
+      mode: "execute",
+      lastPromptNotes: ["Large range detected; work from a bounded working set."],
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+    (runtime as any).isStreaming = true;
+
+    const interrupted = await internals.maybeInterruptNoWriteLoop();
+    const state = runtime.getState();
+
+    expect(interrupted).toBe(true);
+    expect(state.mode).toBe("blocked");
+    expect(state.handoff?.nextRecommendedAction).toContain(
+      "Inspection budget exhausted before first write",
+    );
+    expect(
+      state.activeTask?.executionDiagnostics?.noWriteLoopDetected,
+    ).toBe(true);
+    runtime.dispose();
+  });
+
+  it("does not block once a Word mutation task has already written and reread", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.planManager.replacePlan(
+      createPlan({
+        userRequest: "Rewrite the introduction and preserve formatting.",
+        classification,
+        approvalRequired: false,
+      }),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-1",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 1,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-2",
+      toolName: "execute_office_js",
+      isError: false,
+      resultText: "ok",
+      timestamp: 2,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-3",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "ok",
+      timestamp: 3,
+    });
+    internals.update({
+      isStreaming: true,
+      mode: "execute",
+      lastPromptNotes: ["Preserve formatting after the edit."],
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+    (runtime as any).isStreaming = true;
+
+    const interrupted = await internals.maybeInterruptNoWriteLoop();
+    const state = runtime.getState();
+
+    expect(interrupted).toBe(false);
+    expect(state.mode).toBe("execute");
+    expect(state.activeTask?.executionDiagnostics?.firstWriteAt).toBe(2);
     runtime.dispose();
   });
 });

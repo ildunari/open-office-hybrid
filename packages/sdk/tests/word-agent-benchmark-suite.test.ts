@@ -725,7 +725,89 @@ describe("word benchmark suite", () => {
       promptSubmitted: true,
       executionObserved: true,
       completionObserved: true,
+      readCount: 0,
+      writeCount: 0,
+      failedWriteCount: 0,
+      firstReadTs: null,
+      firstWriteTs: null,
+      postWriteRereadObserved: false,
+      noWriteLoopSuspected: false,
+      reviewerOnlySuccess: false,
+      writeAttemptedButFailed: false,
+      writeSucceededWithoutReread: false,
+      executionClassification: "execution_without_write_signal",
     });
+  });
+
+  it("classifies reviewer-only and no-write-loop receipt patterns distinctly", () => {
+    const reviewerOnly = classifyLiveExecutionReceipts({
+      baselineMessageCount: 0,
+      stateSnapshots: [
+        {
+          mode: "completed",
+          waitingState: null,
+          isStreaming: false,
+          activeTaskSummary: {
+            id: "task-reviewer",
+            status: "completed",
+            mode: "completed",
+            toolExecutionCount: 1,
+          },
+          degradedGuardrails: [],
+          sessionStats: { messageCount: 2 },
+        },
+      ],
+      newEvents: [
+        {
+          event: "tool:completed",
+          ts: 1,
+          payload: { toolName: "get_document_structure" },
+        },
+      ],
+    });
+
+    expect(reviewerOnly.executionClassification).toBe("reviewer_only_success");
+
+    const noWriteLoop = classifyLiveExecutionReceipts({
+      baselineMessageCount: 0,
+      stateSnapshots: [
+        {
+          mode: "blocked",
+          waitingState: "clarification",
+          isStreaming: false,
+          activeTaskSummary: {
+            id: "task-edit",
+            status: "failed",
+            mode: "blocked",
+            toolExecutionCount: 4,
+          },
+          degradedGuardrails: [
+            "Stopped a Word task after repeated pre-write inspection with no write attempt.",
+          ],
+          sessionStats: { messageCount: 2 },
+        },
+      ],
+      newEvents: [
+        {
+          event: "tool:completed",
+          ts: 1,
+          payload: { toolName: "get_document_structure" },
+        },
+        {
+          event: "tool:completed",
+          ts: 2,
+          payload: { toolName: "get_document_text" },
+        },
+        {
+          event: "tool:completed",
+          ts: 3,
+          payload: { toolName: "get_ooxml" },
+        },
+      ],
+    });
+
+    expect(noWriteLoop.executionClassification).toBe("no_write_loop");
+    expect(noWriteLoop.noWriteLoopSuspected).toBe(true);
   });
 
   it("unwraps nested bridge exec submission results", () => {

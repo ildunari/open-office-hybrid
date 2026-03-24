@@ -66,9 +66,54 @@ describe("word verifier helpers", () => {
 
   it("returns passing or retryable verification results for formatting/coherence suites", async () => {
     const suites = getWordVerificationSuites();
+    const progressSuite = suites.find((suite) => suite.id === "word:write-progress");
     const formatSuite = suites.find((suite) => suite.id === "word:format-preserved");
     const coherenceSuite = suites.find(
       (suite) => suite.id === "word:coherence-reread",
+    );
+
+    expect(
+      await progressSuite?.verify({
+        app: "word",
+        mode: "verify",
+        request: "Rewrite the section and preserve formatting.",
+        plan: null,
+        task: {
+          id: "task-1",
+          userRequest: "Rewrite the section and preserve formatting.",
+          status: "failed",
+          mode: "execute",
+          toolCallIds: [],
+          executionDiagnostics: {
+            preWriteReadCount: 4,
+            preWriteInspectionCount: 4,
+            scopeReadCount: 1,
+            writeCount: 0,
+            failedWriteCount: 0,
+            postWriteRereadCount: 0,
+            planAdvancedBeyondInspection: false,
+            noWriteLoopDetected: true,
+            noWriteLoopReason:
+              "Inspection budget exhausted before first write.",
+          },
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        toolExecutions: [
+          {
+            toolCallId: "tc-read",
+            toolName: "get_document_text",
+            isError: false,
+            resultText: "ok",
+            timestamp: 1,
+          },
+        ],
+        promptNotes: [],
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        status: "retryable",
+      }),
     );
 
     expect(
@@ -224,6 +269,50 @@ describe("word verifier helpers", () => {
             isError: false,
             resultText: "ok",
             timestamp: 1,
+          },
+        ],
+        promptNotes: [],
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        status: "retryable",
+      }),
+    );
+  });
+
+  it("flags missing rereads after a successful write as retryable progress gaps", async () => {
+    const suites = getWordVerificationSuites();
+    const progressSuite = suites.find((suite) => suite.id === "word:write-progress");
+
+    expect(
+      await progressSuite?.verify({
+        app: "word",
+        mode: "verify",
+        request: "Rewrite the introduction and preserve formatting.",
+        plan: {
+          classification: {
+            complexity: "moderate",
+            risk: "medium",
+            needsPlan: true,
+            rationale: "Mutation-heavy",
+          },
+        } as any,
+        task: {
+          id: "task-2",
+          userRequest: "Rewrite the introduction and preserve formatting.",
+          status: "completed",
+          mode: "execute",
+          toolCallIds: [],
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        toolExecutions: [
+          {
+            toolCallId: "tc-write",
+            toolName: "execute_office_js",
+            isError: false,
+            resultText: "ok",
+            timestamp: 2,
           },
         ],
         promptNotes: [],
