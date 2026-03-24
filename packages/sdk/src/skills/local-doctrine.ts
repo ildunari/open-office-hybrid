@@ -81,7 +81,10 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function extractHeadingSection(markdown: string, heading: string): string | null {
+function extractHeadingSection(
+  markdown: string,
+  heading: string,
+): string | null {
   const normalized = stripFrontmatter(markdown);
   const pattern = new RegExp(
     `(^${escapeRegExp(heading)}\\s*$[\\s\\S]*?)(?=^##\\s|^#\\s|\\Z)`,
@@ -155,7 +158,9 @@ export function buildLocalDoctrinePromptSection(options: {
 
   const renderedSkills = contributors
     .map(
-      (contributor) => `  <skill id="${xmlEscape(contributor.id)}" name="${xmlEscape(contributor.name)}" canonical_path="${xmlEscape(contributor.canonicalPath)}">
+      (
+        contributor,
+      ) => `  <skill id="${xmlEscape(contributor.id)}" name="${xmlEscape(contributor.name)}" canonical_path="${xmlEscape(contributor.canonicalPath)}">
     <why>${xmlEscape(contributor.rationale)}</why>
     <excerpt><![CDATA[
 ${contributor.excerpt}

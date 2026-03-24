@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { buildDiagnosticsModel } from "../src/chat/diagnostics";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { buildDiagnosticsModel } from "../src/chat/diagnostics";
 
 const corpusScenarios = JSON.parse(
   readFileSync(
@@ -111,7 +111,8 @@ describe("buildDiagnosticsModel", () => {
         constraints: [],
         incompleteVerifications: ["word-reread"],
         nextRecommendedAction: "Resume after rereading the edited paragraph.",
-        summary: "Verification is blocked on a missing reread of the edited paragraph.",
+        summary:
+          "Verification is blocked on a missing reread of the edited paragraph.",
         updatedAt: 26,
       },
       compactionState: {
@@ -138,6 +139,33 @@ describe("buildDiagnosticsModel", () => {
       degradedGuardrails: [
         "Verification failed after 2 resume attempts; completing with degraded guardrails.",
       ],
+      promptProvenance: {
+        providerFamily: "gpt",
+        provider: "openai",
+        model: "gpt-5",
+        apiType: "default",
+        phase: "mutation",
+        runtimeNotes: [
+          "Reread the edited paragraph before reporting completion.",
+        ],
+        contributors: [
+          {
+            id: "source-system",
+            kind: "system_prompt",
+            label: "System prompt",
+            order: 0,
+            summary: "Word host system prompt",
+          },
+          {
+            id: "source-doctrine",
+            kind: "local_doctrine",
+            label: "Local doctrine",
+            order: 1,
+            summary:
+              "gpt-prompt-architect, word-mastery-v3, openword-best-practices",
+          },
+        ],
+      },
     });
 
     expect(model.activeThread?.id).toBe("thread-1");
@@ -166,6 +194,18 @@ describe("buildDiagnosticsModel", () => {
     expect(model.runtimeTruth.degradedGuardrails).toEqual([
       "Verification failed after 2 resume attempts; completing with degraded guardrails.",
     ]);
+    expect(model.promptProvenance).toMatchObject({
+      providerFamily: "gpt",
+      provider: "openai",
+      model: "gpt-5",
+      phase: "mutation",
+      runtimeNotes: [
+        "Reread the edited paragraph before reporting completion.",
+      ],
+    });
+    expect(
+      model.promptProvenance?.contributors.map((item) => item.kind),
+    ).toEqual(["system_prompt", "local_doctrine"]);
   });
 
   it("trims crowded diagnostics collections to the latest policy trace entries and first completion artifacts", () => {
@@ -211,6 +251,7 @@ describe("buildDiagnosticsModel", () => {
       })),
       lastVerification: null,
       degradedGuardrails: [],
+      promptProvenance: null,
     });
 
     expect(model.recentPolicyTrace).toHaveLength(6);
@@ -267,9 +308,12 @@ describe("buildDiagnosticsModel", () => {
       completionArtifacts: [],
       lastVerification: null,
       degradedGuardrails: [],
+      promptProvenance: null,
     });
 
-    expect(model.instructionSources).toHaveLength(corpusScenarios.scenarios.length);
+    expect(model.instructionSources).toHaveLength(
+      corpusScenarios.scenarios.length,
+    );
     expect(model.instructionSources[0]?.label).toBe("comments.docx");
     expect(model.instructionSources.at(-1)?.label).toBe("toc.docx");
   });

@@ -126,6 +126,43 @@
       </section>
 
       <section class="grid gap-1 min-w-0">
+        <div class="uppercase tracking-wider text-(--chat-text-muted)">prompt provenance</div>
+        {#if model.promptProvenance}
+          <div class="text-(--chat-text-primary) break-words">
+            provider/model: {model.promptProvenance.provider} / {model.promptProvenance.model}
+          </div>
+          <div class="text-(--chat-text-primary) break-words">
+            provider family: {model.promptProvenance.providerFamily}
+          </div>
+          <div class="text-(--chat-text-primary) break-words">
+            phase: {model.promptProvenance.phase}
+          </div>
+          <div class="text-(--chat-text-primary) break-words">
+            runtime notes:
+            {#if model.promptProvenance.runtimeNotes.length > 0}
+              {model.promptProvenance.runtimeNotes.join(" | ")}
+            {:else}
+              none
+            {/if}
+          </div>
+          {#each model.promptProvenance.contributors as contributor (contributor.id)}
+            <div class="rounded-sm border border-(--chat-border) px-2 py-1 min-w-0">
+              <div class="text-(--chat-text-primary) break-words">
+                {contributor.order + 1}. {contributor.label}
+                <span class="text-(--chat-text-muted)">({contributor.kind})</span>
+              </div>
+              <div class="text-(--chat-text-secondary) break-words">{contributor.summary}</div>
+              {#if contributor.path}
+                <div class="text-(--chat-text-muted) break-words">{contributor.path}</div>
+              {/if}
+            </div>
+          {/each}
+        {:else}
+          <div class="text-(--chat-text-muted)">No prompt provenance captured yet.</div>
+        {/if}
+      </section>
+
+      <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">active framework</div>
         <div class="text-(--chat-text-primary) break-words">
           hooks: {model.activeHooks.length > 0 ? model.activeHooks.join(", ") : "none"}

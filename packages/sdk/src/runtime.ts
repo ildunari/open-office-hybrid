@@ -65,6 +65,7 @@ import {
   type TaskRecord,
   type TaskThreadSummary,
 } from "./planning";
+import type { PromptPhase, PromptProviderFamily } from "./prompt-contract";
 import {
   buildPromptContract,
   inferPromptPhase,
@@ -86,6 +87,10 @@ import {
   type SkillMeta,
   syncSkillsToVfs,
 } from "./skills";
+import {
+  buildLocalDoctrinePromptSection,
+  selectLocalDoctrineContributors,
+} from "./skills/local-doctrine";
 import { TaskTracker } from "./state/tracker";
 import {
   type ChatSession,
@@ -133,7 +138,37 @@ import {
   snapshotVfs,
   writeFile,
 } from "./vfs";
-import { buildLocalDoctrinePromptSection } from "./skills/local-doctrine";
+
+export type PromptProvenanceContributorKind =
+  | "system_prompt"
+  | "prompt_contract"
+  | "local_doctrine"
+  | "document_metadata"
+  | "attachments"
+  | "plan"
+  | "context_budget"
+  | "hook_notes"
+  | "user_request";
+
+export interface PromptProvenanceContributor {
+  id: string;
+  kind: PromptProvenanceContributorKind;
+  label: string;
+  order: number;
+  summary: string;
+  path?: string;
+}
+
+export interface PromptProvenance {
+  providerFamily: PromptProviderFamily;
+  provider: string;
+  model: string;
+  apiType: string;
+  phase: PromptPhase;
+  contributors: PromptProvenanceContributor[];
+  runtimeNotes: string[];
+  updatedAt: number;
+}
 
 export interface RuntimeAdapter {
   hostApp?: HostApp;
@@ -188,6 +223,7 @@ export interface RuntimeState {
   activeHookNames: string[];
   contextBudgetState: { action: string; usagePct: number } | null;
   lastPromptNotes: string[];
+  promptProvenance: PromptProvenance | null;
   activePlan: ExecutionPlan | null;
   activeTask: TaskRecord | null;
   planState: ExecutionPlan | null;
@@ -331,6 +367,19 @@ function summarizeJson(value: unknown): string {
     : serialized;
 }
 
+function summarizeMetadataTag(tag: string, metadata: object): string {
+  const keys = Object.keys(metadata);
+  if (keys.length === 0) return `${tag} with no fields`;
+  const preview = keys.slice(0, 3).join(", ");
+  return `${tag} with fields: ${preview}${keys.length > 3 ? ", ..." : ""}`;
+}
+
+function summarizeAttachments(attachments: string[]): string {
+  if (attachments.length === 0) return "No attachments.";
+  if (attachments.length === 1) return attachments[0] ?? "1 attachment";
+  return `${attachments.length} attachments: ${attachments.slice(0, 3).join(", ")}${attachments.length > 3 ? ", ..." : ""}`;
+}
+
 function inferPlanStepIndex(
   plan: ExecutionPlan | null,
   task: TaskRecord | null,
@@ -442,6 +491,7 @@ export class AgentRuntime {
       activeHookNames: this.hookRegistry.getRegisteredHookNames(),
       contextBudgetState: null,
       lastPromptNotes: [],
+      promptProvenance: null,
       activePlan: null,
       activeTask: null,
       planState: null,
@@ -492,6 +542,15 @@ export class AgentRuntime {
     latestCompletion: {
       summary: string;
       verificationStatus: string;
+    } | null;
+    promptProvenance: {
+      providerFamily: string;
+      provider: string;
+      model: string;
+      phase: string;
+      contributorCount: number;
+      doctrineIds: string[];
+      runtimeNotes: string[];
     } | null;
     sessionStats: {
       inputTokens: number;
@@ -544,6 +603,24 @@ export class AgentRuntime {
         ? {
             summary: s.completionArtifacts[0].summary,
             verificationStatus: s.completionArtifacts[0].verificationStatus,
+          }
+        : null,
+      promptProvenance: s.promptProvenance
+        ? {
+            providerFamily: s.promptProvenance.providerFamily,
+            provider: s.promptProvenance.provider,
+            model: s.promptProvenance.model,
+            phase: s.promptProvenance.phase,
+            contributorCount: s.promptProvenance.contributors.length,
+            doctrineIds: s.promptProvenance.contributors
+              .filter((contributor) => contributor.kind === "local_doctrine")
+              .flatMap((contributor) =>
+                contributor.summary
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean),
+              ),
+            runtimeNotes: [...s.promptProvenance.runtimeNotes],
           }
         : null,
       sessionStats: {
@@ -1866,6 +1943,7 @@ export class AgentRuntime {
         activeHookNames: this.hookRegistry.getRegisteredHookNames(),
         contextBudgetState: null,
         lastPromptNotes: [],
+        promptProvenance: null,
         activePlan,
         activeTask,
       });
@@ -2057,6 +2135,7 @@ export class AgentRuntime {
       activeHookNames: this.hookRegistry.getRegisteredHookNames(),
       contextBudgetState: null,
       lastPromptNotes: [],
+      promptProvenance: null,
       activePlan: null,
       activeTask: null,
       threads: this.currentSessionId ? [this.buildRootThread(null, null)] : [],
@@ -2112,6 +2191,7 @@ export class AgentRuntime {
         activeHookNames: this.hookRegistry.getRegisteredHookNames(),
         contextBudgetState: null,
         lastPromptNotes: [],
+        promptProvenance: null,
         activePlan: null,
         activeTask: null,
         policyTrace: [],
@@ -2172,6 +2252,7 @@ export class AgentRuntime {
         activeHookNames: this.hookRegistry.getRegisteredHookNames(),
         contextBudgetState: null,
         lastPromptNotes: [],
+        promptProvenance: null,
         activePlan,
         activeTask,
         policyTrace: [],
@@ -2245,6 +2326,7 @@ export class AgentRuntime {
       activeHookNames: this.hookRegistry.getRegisteredHookNames(),
       contextBudgetState: null,
       lastPromptNotes: [],
+      promptProvenance: null,
       activePlan,
       activeTask,
       policyTrace: [],
@@ -2417,6 +2499,7 @@ export class AgentRuntime {
         activeHookNames: this.hookRegistry.getRegisteredHookNames(),
         contextBudgetState: null,
         lastPromptNotes: [],
+        promptProvenance: null,
         activePlan,
         activeTask,
         policyTrace: [],
@@ -2633,11 +2716,42 @@ export class AgentRuntime {
     });
   }
 
+  private createPromptProvenanceContributor(
+    order: number,
+    kind: PromptProvenanceContributorKind,
+    label: string,
+    summary: string,
+    path?: string,
+  ): PromptProvenanceContributor {
+    return {
+      id: `prompt:${kind}:${order}`,
+      kind,
+      label,
+      order,
+      summary,
+      path,
+    };
+  }
+
   private async buildPromptContent(content: string, attachments?: string[]) {
     const promptParts: string[] = [];
+    const provenanceContributors: PromptProvenanceContributor[] = [];
+    let contributorOrder = 0;
 
     const providerFamily = inferProviderFamily(this.state.providerConfig);
-    const phase = inferPromptPhase(content, this.state.mode, this.state.activeTask);
+    const phase = inferPromptPhase(
+      content,
+      this.state.mode,
+      this.state.activeTask,
+    );
+    provenanceContributors.push(
+      this.createPromptProvenanceContributor(
+        contributorOrder++,
+        "system_prompt",
+        "System prompt",
+        `${this.adapter.hostApp ?? "generic"} adapter system prompt`,
+      ),
+    );
     const promptContract = buildPromptContract({
       providerConfig: this.state.providerConfig,
       mode: this.state.mode,
@@ -2646,14 +2760,38 @@ export class AgentRuntime {
       hostApp: this.adapter.hostApp,
     });
     promptParts.push(promptContract);
+    provenanceContributors.push(
+      this.createPromptProvenanceContributor(
+        contributorOrder++,
+        "prompt_contract",
+        "Prompt contract",
+        `${providerFamily} provider profile in ${phase} phase`,
+      ),
+    );
 
     const localDoctrine = buildLocalDoctrinePromptSection({
       hostApp: this.adapter.hostApp,
       providerFamily,
       phase,
     });
+    const localDoctrineContributors = selectLocalDoctrineContributors({
+      hostApp: this.adapter.hostApp,
+      providerFamily,
+      phase,
+    });
     if (localDoctrine) {
       promptParts.push(localDoctrine);
+      provenanceContributors.push(
+        this.createPromptProvenanceContributor(
+          contributorOrder++,
+          "local_doctrine",
+          "Local doctrine",
+          localDoctrineContributors
+            .map((contributor) => contributor.id)
+            .join(", "),
+          localDoctrineContributors[0]?.canonicalPath,
+        ),
+      );
     }
 
     if (this.adapter.getDocumentMetadata) {
@@ -2665,6 +2803,14 @@ export class AgentRuntime {
           const tag = this.adapter.metadataTag || "doc_context";
           promptParts.push(
             `<${tag}>\n${JSON.stringify(meta.metadata, null, 2)}\n</${tag}>`,
+          );
+          provenanceContributors.push(
+            this.createPromptProvenanceContributor(
+              contributorOrder++,
+              "document_metadata",
+              "Document metadata",
+              summarizeMetadataTag(tag, meta.metadata),
+            ),
           );
           if (meta.nameMap) {
             this.update({ nameMap: meta.nameMap });
@@ -2680,10 +2826,28 @@ export class AgentRuntime {
         .map((name) => `/home/user/uploads/${name}`)
         .join("\n");
       promptParts.push(`<attachments>\n${paths}\n</attachments>`);
+      provenanceContributors.push(
+        this.createPromptProvenanceContributor(
+          contributorOrder++,
+          "attachments",
+          "Attachments",
+          summarizeAttachments(attachments),
+        ),
+      );
     }
 
     if (this.state.activePlan) {
-      promptParts.push(this.planManager.formatPlanForPrompt(this.state.activePlan));
+      promptParts.push(
+        this.planManager.formatPlanForPrompt(this.state.activePlan),
+      );
+      provenanceContributors.push(
+        this.createPromptProvenanceContributor(
+          contributorOrder++,
+          "plan",
+          "Active plan",
+          this.state.activePlan.summary ?? this.state.activePlan.userRequest,
+        ),
+      );
     }
 
     const contextUsagePct =
@@ -2700,23 +2864,60 @@ export class AgentRuntime {
       promptParts.push(
         `<context_budget action="${contextAction}" usage_pct="${contextUsagePct}" />`,
       );
+      provenanceContributors.push(
+        this.createPromptProvenanceContributor(
+          contributorOrder++,
+          "context_budget",
+          "Context budget",
+          `${contextAction} at ${contextUsagePct}% context usage`,
+        ),
+      );
     }
     this.update({
       contextBudgetState: { action: contextAction, usagePct: contextUsagePct },
     });
 
     const hookNotes = this.hookRegistry.drainPromptNotes();
+    const runtimeNotes = hookNotes.map((note) => note.text);
     this.update({
-      lastPromptNotes: hookNotes.map((note) => note.text),
+      lastPromptNotes: runtimeNotes,
     });
     if (hookNotes.length > 0) {
       const noteText = hookNotes
         .map((note) => `[${note.level.toUpperCase()}] ${note.text}`)
         .join("\n");
       promptParts.push(`<hook_notes>\n${noteText}\n</hook_notes>`);
+      provenanceContributors.push(
+        this.createPromptProvenanceContributor(
+          contributorOrder++,
+          "hook_notes",
+          "Runtime notes",
+          `${hookNotes.length} note${hookNotes.length === 1 ? "" : "s"} from hooks`,
+        ),
+      );
     }
 
     promptParts.push(content);
+    provenanceContributors.push(
+      this.createPromptProvenanceContributor(
+        contributorOrder++,
+        "user_request",
+        "User request",
+        content,
+      ),
+    );
+    this.update({
+      promptProvenance: {
+        providerFamily,
+        provider: this.state.providerConfig?.provider ?? "unconfigured",
+        model: this.state.providerConfig?.model ?? "unknown",
+        apiType: this.state.providerConfig?.apiType ?? "default",
+        phase,
+        contributors: provenanceContributors,
+        runtimeNotes,
+        updatedAt: Date.now(),
+      },
+    });
     return promptParts.join("\n\n");
   }
 

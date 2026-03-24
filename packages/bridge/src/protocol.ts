@@ -292,6 +292,15 @@ export interface BridgeRuntimeStateSlice {
   threadCount: number;
   activeThreadId: string | null;
   degradedGuardrails: string[];
+  promptProvenance?: {
+    providerFamily: string;
+    provider: string;
+    model: string;
+    phase: string;
+    contributorCount: number;
+    doctrineIds: string[];
+    runtimeNotes: string[];
+  } | null;
 }
 
 // ---------------------------------------------------------------------------

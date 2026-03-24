@@ -300,8 +300,10 @@ describe("AgentRuntime", () => {
     expect(prompt).toContain("<active_doctrine");
     expect(prompt).toContain('provider_family="gpt"');
     expect(prompt).toContain('phase="mutation"');
-    expect(prompt).toContain("<skill id=\"gpt-prompt-architect\"");
-    expect(prompt).toContain('canonical_path="skills/word-mastery-v3/SKILL.md"');
+    expect(prompt).toContain('<skill id="gpt-prompt-architect"');
+    expect(prompt).toContain(
+      'canonical_path="skills/word-mastery-v3/SKILL.md"',
+    );
     expect(prompt).toContain("Scope discipline matters");
     expect(prompt).toContain("one bounded Word write");
     expect(prompt).toContain("Use named styles for every recurring element.");
@@ -346,6 +348,34 @@ describe("AgentRuntime", () => {
     expect(prompt).toContain("<active_doctrine");
     expect(prompt).toContain("<doc_context>");
     expect(prompt).toContain('"title": "Draft"');
+    expect(runtime.getState().promptProvenance).toMatchObject({
+      providerFamily: "gpt",
+      provider: "openai",
+      model: "gpt-5",
+      apiType: "default",
+      phase: "mutation",
+      runtimeNotes: [],
+    });
+    expect(
+      runtime
+        .getState()
+        .promptProvenance?.contributors.map((contributor) => contributor.kind),
+    ).toEqual([
+      "system_prompt",
+      "prompt_contract",
+      "local_doctrine",
+      "document_metadata",
+      "user_request",
+    ]);
+    expect(
+      runtime
+        .getState()
+        .promptProvenance?.contributors.find(
+          (contributor) => contributor.kind === "local_doctrine",
+        ),
+    ).toMatchObject({
+      summary: "gpt-prompt-architect, word-mastery-v3, openword-best-practices",
+    });
     runtime.dispose();
   });
 
@@ -429,7 +459,9 @@ describe("AgentRuntime", () => {
 
     const blockedPrompt = await (runtime as any).buildPromptContent(request);
     expect(blockedPrompt).toContain('phase="blocked"');
-    expect(blockedPrompt).toContain("Do not continue broad exploration or new writes");
+    expect(blockedPrompt).toContain(
+      "Do not continue broad exploration or new writes",
+    );
     expect(blockedPrompt).not.toContain("Stay read-only");
 
     (internals.taskTracker.getCurrentTask() as any).resumeCount = 1;
@@ -443,6 +475,94 @@ describe("AgentRuntime", () => {
     expect(resumePrompt).toContain('phase="resume"');
     expect(resumePrompt).toContain("Resume from the recorded blocker");
     expect(resumePrompt).not.toContain("Stay read-only");
+    runtime.dispose();
+  });
+
+  it("records ordered prompt provenance including plan, context budget, and runtime notes", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "anthropic",
+      apiKey: "sk-test",
+      model: "claude-sonnet-4-5",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "high",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request = "Rewrite the selected paragraph and preserve formatting.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "execute",
+    });
+    internals.planManager.replacePlan(createPlan());
+    internals.hookRegistry.addPromptNotes([
+      {
+        level: "warning",
+        text: "Reread the edited paragraph before reporting completion.",
+        source: { hookName: "word-reread-guard" },
+      },
+    ]);
+    internals.update({
+      mode: "execute",
+      activePlan: createPlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      sessionStats: {
+        ...runtime.getState().sessionStats,
+        contextWindow: 1000,
+        lastInputTokens: 600,
+      },
+    });
+
+    await (runtime as any).buildPromptContent(request);
+    const provenance = runtime.getState().promptProvenance;
+
+    expect(provenance).toMatchObject({
+      providerFamily: "claude",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      phase: "mutation",
+      runtimeNotes: [
+        "Reread the edited paragraph before reporting completion.",
+      ],
+    });
+    expect(
+      provenance?.contributors.map((contributor) => contributor.kind),
+    ).toEqual([
+      "system_prompt",
+      "prompt_contract",
+      "local_doctrine",
+      "plan",
+      "context_budget",
+      "hook_notes",
+      "user_request",
+    ]);
+    expect(
+      provenance?.contributors.find(
+        (contributor) => contributor.kind === "context_budget",
+      ),
+    ).toMatchObject({
+      summary: "summarize at 60% context usage",
+    });
+    expect(runtime.getRuntimeStateSlice().promptProvenance).toMatchObject({
+      providerFamily: "claude",
+      phase: "mutation",
+      contributorCount: 7,
+      runtimeNotes: [
+        "Reread the edited paragraph before reporting completion.",
+      ],
+      doctrineIds: [
+        "prompt-architect",
+        "word-mastery-v3",
+        "openword-best-practices",
+      ],
+    });
     runtime.dispose();
   });
 
@@ -1823,9 +1943,9 @@ describe("AgentRuntime", () => {
       "pending",
       "pending",
     ]);
-    expect(runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex).toBe(
-      1,
-    );
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(1);
 
     internals.taskTracker.recordToolExecution({
       toolCallId: "tc-2",
@@ -1855,9 +1975,9 @@ describe("AgentRuntime", () => {
       "completed",
       "active",
     ]);
-    expect(runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex).toBe(
-      2,
-    );
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(2);
 
     internals.taskTracker.recordToolExecution({
       toolCallId: "tc-3",
@@ -1887,9 +2007,9 @@ describe("AgentRuntime", () => {
       "completed",
       "completed",
     ]);
-    expect(runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex).toBe(
-      3,
-    );
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(3);
     runtime.dispose();
   });
 

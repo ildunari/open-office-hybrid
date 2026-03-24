@@ -99,6 +99,33 @@ describe("DiagnosticsPanel", () => {
           degradedGuardrails: [
             "Verification failed after 2 resume attempts; completing with degraded guardrails.",
           ],
+          promptProvenance: {
+            providerFamily: "gpt",
+            provider: "openai",
+            model: "gpt-5",
+            apiType: "default",
+            phase: "mutation",
+            runtimeNotes: [
+              "Reread the edited paragraph before reporting completion.",
+            ],
+            contributors: [
+              {
+                id: "source-system",
+                kind: "system_prompt",
+                label: "System prompt",
+                order: 0,
+                summary: "Word host system prompt",
+              },
+              {
+                id: "source-doctrine",
+                kind: "local_doctrine",
+                label: "Local doctrine",
+                order: 1,
+                summary:
+                  "gpt-prompt-architect, word-mastery-v3, openword-best-practices",
+              },
+            ],
+          },
         },
       },
     });
@@ -121,6 +148,15 @@ describe("DiagnosticsPanel", () => {
     expect(body).toContain("retryable");
     expect(body).toContain(
       "Verification failed after 2 resume attempts; completing with degraded guardrails.",
+    );
+    expect(body).toContain("prompt provenance");
+    expect(body).toContain("openai / gpt-5");
+    expect(body).toContain("mutation");
+    expect(body).toContain(
+      "gpt-prompt-architect, word-mastery-v3, openword-best-practices",
+    );
+    expect(body).toContain(
+      "Reread the edited paragraph before reporting completion.",
     );
   });
 });

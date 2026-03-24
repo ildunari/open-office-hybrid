@@ -51,6 +51,11 @@ function buildRuntimeStatus(runtimeState: BridgeRuntimeStateSlice): string[] {
   if (runtimeState.degradedGuardrails.length > 0) {
     parts.push(`degraded:${runtimeState.degradedGuardrails.length}`);
   }
+  if (runtimeState.promptProvenance) {
+    parts.push(
+      `prompt:${runtimeState.promptProvenance.providerFamily}/${runtimeState.promptProvenance.phase}/${runtimeState.promptProvenance.contributorCount}`,
+    );
+  }
   if (runtimeState.nextRecommendedAction) {
     parts.push(`next:${truncate(runtimeState.nextRecommendedAction)}`);
   }

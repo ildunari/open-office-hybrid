@@ -1,12 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import net from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { requestJson } from "../src/http-client";
-import { createBridgeServer, type BridgeServerHandle } from "../src/server";
 import type {
   BridgeResponseMessage,
   BridgeRuntimeStateSlice,
@@ -18,6 +17,7 @@ import {
   serializeForJson,
   toBridgeClassifiedError,
 } from "../src/protocol";
+import { type BridgeServerHandle, createBridgeServer } from "../src/server";
 
 const silentLogger = {
   log: () => undefined,
@@ -1209,7 +1209,8 @@ describe("bridge server state diff endpoint", () => {
       contextBudget: { usagePct: 0.88, action: "compact" },
       lastVerification: { status: "retryable", retryable: true },
       latestCompletion: {
-        summary: "Completed with degraded guardrails after verification retries.",
+        summary:
+          "Completed with degraded guardrails after verification retries.",
         verificationStatus: "retryable",
       },
       sessionStats: {
@@ -1225,6 +1226,21 @@ describe("bridge server state diff endpoint", () => {
         "Compacted 2 earlier tool execution records.",
         "Verification failed after 2 resume attempts; completing with degraded guardrails.",
       ],
+      promptProvenance: {
+        providerFamily: "gpt",
+        provider: "openai",
+        model: "gpt-5",
+        phase: "mutation",
+        contributorCount: 7,
+        doctrineIds: [
+          "gpt-prompt-architect",
+          "word-mastery-v3",
+          "openword-best-practices",
+        ],
+        runtimeNotes: [
+          "Reread the edited paragraph before reporting completion.",
+        ],
+      },
     };
 
     socket = await connectClient(server.wsUrl);
@@ -1285,5 +1301,20 @@ describe("bridge server state diff endpoint", () => {
       "Compacted 2 earlier tool execution records.",
       "Verification failed after 2 resume attempts; completing with degraded guardrails.",
     ]);
+    expect(diff.runtimeStateDiff.promptProvenance).toEqual({
+      providerFamily: "gpt",
+      provider: "openai",
+      model: "gpt-5",
+      phase: "mutation",
+      contributorCount: 7,
+      doctrineIds: [
+        "gpt-prompt-architect",
+        "word-mastery-v3",
+        "openword-best-practices",
+      ],
+      runtimeNotes: [
+        "Reread the edited paragraph before reporting completion.",
+      ],
+    });
   });
 });

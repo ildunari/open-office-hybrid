@@ -141,6 +141,9 @@ export type {
 } from "./reflection/types";
 export {
   AgentRuntime,
+  type PromptProvenance,
+  type PromptProvenanceContributor,
+  type PromptProvenanceContributorKind,
   type RuntimeAdapter,
   type RuntimeState,
   type UploadedFile,

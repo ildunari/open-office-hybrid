@@ -66,6 +66,7 @@ function createRuntimeState(
     threadCount: 1,
     activeThreadId: "thread-1",
     degradedGuardrails: [],
+    promptProvenance: null,
     ...overrides,
   };
 }
@@ -73,7 +74,23 @@ function createRuntimeState(
 describe("buildSessionSummaryLine", () => {
   it("makes the Hybrid target identity explicit in the summary", () => {
     const summary = buildSessionSummaryLine(
-      createSnapshot({ runtimeState: createRuntimeState() }),
+      createSnapshot({
+        runtimeState: createRuntimeState({
+          promptProvenance: {
+            providerFamily: "gpt",
+            provider: "openai",
+            model: "gpt-5",
+            phase: "mutation",
+            contributorCount: 5,
+            doctrineIds: [
+              "gpt-prompt-architect",
+              "word-mastery-v3",
+              "openword-best-practices",
+            ],
+            runtimeNotes: [],
+          },
+        }),
+      }),
     );
 
     expect(summary).toContain("OpenWord Hybrid");
@@ -81,6 +98,7 @@ describe("buildSessionSummaryLine", () => {
     expect(summary).toContain("session:word:hybrid-doc-1");
     expect(summary).toContain("target:https://localhost:3003/taskpane.html");
     expect(summary).toContain("plan:step2/3");
+    expect(summary).toContain("prompt:gpt/mutation/5");
   });
 
   it("surfaces blocked and degraded truth instead of stale plan progress", () => {
@@ -92,7 +110,8 @@ describe("buildSessionSummaryLine", () => {
           isStreaming: false,
           waitingState: "retry_exhausted",
           waitingReason: "Verification follow-up required",
-          handoffSummary: "Document verification is blocked on a missing reread.",
+          handoffSummary:
+            "Document verification is blocked on a missing reread.",
           nextRecommendedAction: "Resume after rereading the edited paragraph.",
           lastVerification: { status: "retryable", retryable: true },
           degradedGuardrails: [
@@ -106,7 +125,9 @@ describe("buildSessionSummaryLine", () => {
     expect(summary).toContain("waiting:retry_exhausted");
     expect(summary).toContain("verify:retryable");
     expect(summary).toContain("degraded:1");
-    expect(summary).toContain("next:Resume after rereading the edited paragraph.");
+    expect(summary).toContain(
+      "next:Resume after rereading the edited paragraph.",
+    );
     expect(summary).not.toContain("plan:step2/3");
   });
 
@@ -119,7 +140,8 @@ describe("buildSessionSummaryLine", () => {
           isStreaming: false,
           lastVerification: { status: "passed", retryable: false },
           latestCompletion: {
-            summary: "Updated the grant summary and reread the edited paragraph.",
+            summary:
+              "Updated the grant summary and reread the edited paragraph.",
             verificationStatus: "passed",
           },
         }),
@@ -127,7 +149,9 @@ describe("buildSessionSummaryLine", () => {
     );
 
     expect(summary).toContain("completed");
-    expect(summary).toContain("completion:Updated the grant summary and reread the edited paragraph.");
+    expect(summary).toContain(
+      "completion:Updated the grant summary and reread the edited paragraph.",
+    );
     expect(summary).toContain("verify:passed");
     expect(summary).not.toContain("plan:step2/3");
   });

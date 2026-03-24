@@ -4,6 +4,7 @@ import type {
   CapabilityBoundary,
   CompletionArtifact,
   PolicyTraceEntry,
+  PromptProvenance,
   RuntimeState,
   VerificationRunSummary,
 } from "@office-agents/sdk";
@@ -28,6 +29,7 @@ export type DiagnosticsStateInput = Pick<
   | "compactionState"
   | "completionArtifacts"
   | "lastVerification"
+  | "promptProvenance"
 >;
 
 export interface DiagnosticsModel {
@@ -55,6 +57,7 @@ export interface DiagnosticsModel {
   compactionState: DiagnosticsStateInput["compactionState"];
   completionArtifacts: CompletionArtifact[];
   lastVerification: VerificationRunSummary | null;
+  promptProvenance: PromptProvenance | null;
 }
 
 export function buildDiagnosticsModel(
@@ -93,5 +96,6 @@ export function buildDiagnosticsModel(
     compactionState: state.compactionState,
     completionArtifacts: state.completionArtifacts.slice(0, 5),
     lastVerification: state.lastVerification,
+    promptProvenance: state.promptProvenance,
   };
 }
