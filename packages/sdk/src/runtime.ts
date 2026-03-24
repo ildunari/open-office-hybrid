@@ -218,18 +218,13 @@ function thinkingLevelToAgent(level: ThinkingLevel): AgentThinkingLevel {
   return level === "none" ? "off" : level;
 }
 
-function toTaskPhase(
-  mode: RuntimeState["mode"],
-  hasPendingDecision: boolean,
-): TaskPhase {
+function toTaskPhase(mode: RuntimeState["mode"]): TaskPhase {
   if (mode === "awaiting_approval") return "waiting_on_user";
   if (mode === "plan") return "plan";
   if (mode === "execute") return "execute";
   if (mode === "verify") return "verify";
   if (mode === "completed") return "completed";
-  if (mode === "blocked") {
-    return hasPendingDecision ? "waiting_on_user" : "blocked";
-  }
+  if (mode === "blocked") return "blocked";
   return "discuss";
 }
 
@@ -249,14 +244,7 @@ function buildWaitingState(
       createdAt: state.approvalRequest.requestedAt,
     };
   }
-
-  if (!state.handoff) return null;
-  return {
-    kind: "clarification",
-    reason: state.handoff.nextRecommendedAction,
-    resumeMessage: state.handoff.summary || state.handoff.nextRecommendedAction,
-    createdAt: state.handoff.updatedAt,
-  };
+  return null;
 }
 
 const MAX_POLICY_TRACE_ENTRIES = 25;
@@ -640,10 +628,7 @@ export class AgentRuntime {
       ...next,
       permissionMode,
       planState: next.activePlan,
-      taskPhase: toTaskPhase(
-        next.mode,
-        Boolean(next.approvalRequest || next.handoff),
-      ),
+      taskPhase: toTaskPhase(next.mode),
       waitingState: buildWaitingState(next),
     };
   }

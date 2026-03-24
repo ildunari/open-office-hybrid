@@ -770,6 +770,114 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("surfaces retryable verification follow-up as blocked instead of waiting-on-user", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        getVerificationSuites: () => [
+          {
+            id: "retryable-suite",
+            label: "Retryable suite",
+            appliesTo: () => true,
+            verify: () => ({
+              suiteId: "retryable-suite",
+              label: "Retryable suite",
+              expectedEffect: "Latest write is reread.",
+              observedEffect: "Write happened but reread is missing.",
+              status: "retryable",
+              evidence: ["Missing reread"],
+              retryable: true,
+            }),
+          },
+        ],
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtime as unknown as {
+      taskTracker: {
+        beginTask: (
+          request: string,
+          classification: ReturnType<typeof inferTaskClassification>,
+          options?: Record<string, unknown>,
+        ) => unknown;
+      };
+    };
+
+    internals.taskTracker.beginTask(
+      "Rewrite the selected paragraph.",
+      inferTaskClassification("Rewrite the selected paragraph."),
+      { mode: "execute" },
+    );
+
+    const verification = await runtime.runVerificationPhase();
+    const slice = runtime.getRuntimeStateSlice();
+
+    expect(verification?.status).toBe("retryable");
+    expect(slice.mode).toBe("blocked");
+    expect(slice.taskPhase).toBe("blocked");
+    expect(slice.waitingState).toBeNull();
+    expect(slice.lastVerification).toEqual({ status: "retryable" });
+    expect(runtime.getState().handoff?.nextRecommendedAction).toContain(
+      "retryable verification mismatch",
+    );
+    runtime.dispose();
+  });
+
+  it("keeps degraded retryable verification completions honest after resume attempts are exhausted", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        getVerificationSuites: () => [
+          {
+            id: "retryable-suite",
+            label: "Retryable suite",
+            appliesTo: () => true,
+            verify: () => ({
+              suiteId: "retryable-suite",
+              label: "Retryable suite",
+              expectedEffect: "Latest write is reread.",
+              observedEffect: "Write happened but reread is missing.",
+              status: "retryable",
+              evidence: ["Missing reread"],
+              retryable: true,
+            }),
+          },
+        ],
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtime as unknown as {
+      taskTracker: {
+        beginTask: (
+          request: string,
+          classification: ReturnType<typeof inferTaskClassification>,
+          options?: Record<string, unknown>,
+        ) => unknown;
+        getCurrentTask: () => Record<string, unknown> | null;
+      };
+    };
+
+    internals.taskTracker.beginTask(
+      "Rewrite the selected paragraph.",
+      inferTaskClassification("Rewrite the selected paragraph."),
+      { mode: "execute" },
+    );
+    (internals.taskTracker.getCurrentTask() as any).resumeCount = 2;
+
+    const verification = await runtime.runVerificationPhase();
+    const slice = runtime.getRuntimeStateSlice();
+
+    expect(verification?.status).toBe("retryable");
+    expect(slice.mode).toBe("completed");
+    expect(slice.taskPhase).toBe("completed");
+    expect(slice.waitingState).toBeNull();
+    expect(slice.lastVerification).toEqual({ status: "retryable" });
+    expect(runtime.getState().degradedGuardrails).toContain(
+      "Verification failed after 2 resume attempts; completing with degraded guardrails.",
+    );
+    runtime.dispose();
+  });
+
   it("keeps corpus-derived review, structure, and formatting requests out of mutation gating when they are analysis-only", () => {
     const requests = corpusScenarioMap.scenarios
       .filter((scenario) =>
@@ -1197,6 +1305,136 @@ describe("AgentRuntime", () => {
     expect(
       state.activeTask?.executionDiagnostics?.noWriteRecoveryBudgetRemaining,
     ).toBe(0);
+    runtime.dispose();
+  });
+
+  it("surfaces exhausted Word no-write stalls as blocked instead of waiting-on-user", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the whole document and fix formatting issues.",
+    );
+    internals.planManager.replacePlan(
+      createPlan({
+        userRequest: "Rewrite the whole document and fix formatting issues.",
+        classification,
+        approvalRequired: false,
+      }),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the whole document and fix formatting issues.",
+      classification,
+      {
+        mode: "execute",
+        constraints: ["Preserve formatting."],
+        expectedEffects: ["Write and reread the affected scope."],
+      },
+    );
+    (internals.taskTracker.getCurrentTask() as any).noWriteRecoveryCount = 1;
+    for (const [index, toolName] of [
+      "get_document_structure",
+      "get_document_text",
+      "get_ooxml",
+      "get_document_text",
+    ].entries()) {
+      internals.taskTracker.recordToolExecution({
+        toolCallId: `tc-${index + 1}`,
+        toolName,
+        isError: false,
+        resultText: "ok",
+        timestamp: index + 1,
+      });
+    }
+    internals.update({
+      isStreaming: true,
+      mode: "execute",
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+    (runtime as any).isStreaming = true;
+
+    const interrupted = await internals.maybeInterruptNoWriteLoop();
+    const slice = runtime.getRuntimeStateSlice();
+
+    expect(interrupted).toBe(true);
+    expect(slice.mode).toBe("blocked");
+    expect(slice.taskPhase).toBe("blocked");
+    expect(slice.waitingState).toBeNull();
+    runtime.dispose();
+  });
+
+  it("clears blocked handoff presentation and re-enters execution on resume", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the whole document and fix formatting issues.",
+    );
+    internals.planManager.replacePlan(
+      createPlan({
+        userRequest: "Rewrite the whole document and fix formatting issues.",
+        classification,
+        approvalRequired: false,
+      }),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the whole document and fix formatting issues.",
+      classification,
+      {
+        mode: "execute",
+        constraints: ["Preserve formatting."],
+        expectedEffects: ["Write and reread the affected scope."],
+      },
+    );
+    (internals.taskTracker.getCurrentTask() as any).noWriteRecoveryCount = 1;
+    for (const [index, toolName] of [
+      "get_document_structure",
+      "get_document_text",
+      "get_ooxml",
+      "get_document_text",
+    ].entries()) {
+      internals.taskTracker.recordToolExecution({
+        toolCallId: `tc-${index + 1}`,
+        toolName,
+        isError: false,
+        resultText: "ok",
+        timestamp: index + 1,
+      });
+    }
+    internals.update({
+      isStreaming: true,
+      mode: "execute",
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+    (runtime as any).isStreaming = true;
+
+    await internals.maybeInterruptNoWriteLoop();
+    (runtime as any).agent = {
+      prompt: async () => undefined,
+      abort: () => undefined,
+    };
+
+    await runtime.resumeFromHandoff();
+
+    const state = runtime.getState();
+    const slice = runtime.getRuntimeStateSlice();
+    expect(state.handoff).toBeNull();
+    expect(slice.mode).toBe("execute");
+    expect(slice.taskPhase).toBe("execute");
+    expect(slice.waitingState).toBeNull();
+    expect(state.isStreaming).toBe(true);
     runtime.dispose();
   });
 
