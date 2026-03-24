@@ -87,13 +87,13 @@ export const screenshotDocumentTool = defineTool({
       );
     }
 
+    let pdfDoc: Awaited<ReturnType<typeof loadPdfDocument>> | null = null;
     try {
       const pdfData = await getDocumentAsPdf();
-      const pdfDoc = await loadPdfDocument(pdfData);
+      pdfDoc = await loadPdfDocument(pdfData);
 
       const pageNum = params.page ?? 1;
       if (pageNum < 1 || pageNum > pdfDoc.numPages) {
-        pdfDoc.destroy();
         return toolError(`Page ${pageNum} out of range (1-${pdfDoc.numPages})`);
       }
 
@@ -118,8 +118,6 @@ export const screenshotDocumentTool = defineTool({
 
       canvas.width = 0;
       canvas.height = 0;
-      pdfDoc.destroy();
-
       return await toolImage(toBase64(pngData), "image/png");
     } catch (error) {
       const message =
@@ -127,6 +125,8 @@ export const screenshotDocumentTool = defineTool({
           ? error.message
           : "Failed to screenshot document";
       return toolError(message);
+    } finally {
+      pdfDoc?.destroy();
     }
   },
 });

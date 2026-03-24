@@ -8,6 +8,11 @@ import {
   type RuntimeState,
 } from "../src/runtime";
 import { inferTaskClassification } from "../src/planning";
+import {
+  getLatestTaskRecord,
+  listThreadSummaries,
+  loadVfsFiles,
+} from "../src/storage/db";
 import { configureNamespace } from "../src/storage/namespace";
 import { resetVfs, setStaticFiles } from "../src/vfs";
 
@@ -252,7 +257,7 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
-  it("clearMessages resets state", () => {
+  it("clearMessages resets state", async () => {
     const runtime = new AgentRuntime(createAdapter());
 
     runtime.applyConfig({
@@ -266,7 +271,7 @@ describe("AgentRuntime", () => {
       expandToolCalls: false,
     });
 
-    runtime.clearMessages();
+    await runtime.clearMessages();
     const state = runtime.getState();
     expect(state.messages).toEqual([]);
     expect(state.error).toBeNull();
@@ -787,6 +792,66 @@ describe("AgentRuntime", () => {
 
     await runtime.removeUpload("temp.txt");
     expect(runtime.getState().uploads).toHaveLength(0);
+    runtime.dispose();
+  });
+
+  it("persists awaiting-approval tasks before returning from sendMessage", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime) as typeof runtimeInternals extends (
+      runtime: AgentRuntime,
+    ) => infer R
+      ? R & {
+          buildHandoff: (
+            task: Record<string, unknown>,
+            resumeMessage: string,
+          ) => Promise<Record<string, unknown>>;
+        }
+      : never;
+
+    const classification = inferTaskClassification("Rewrite the introduction");
+    internals.taskClassifier.classify = async () => classification;
+    internals.estimateScopeRisk = async () => ({
+      level: "high",
+      destructive: false,
+      requiresApproval: true,
+      reasons: ["Approval required"],
+      scopeSummary: "document scope",
+      constraints: ["Preserve formatting."],
+      expectedEffects: ["Content changes only in requested scope."],
+    });
+    internals.buildHandoff = async (task, resumeMessage) => ({
+      kind: "approval",
+      resumeMessage,
+      taskId: String(task.id),
+    });
+
+    await runtime.sendMessage("Rewrite the introduction");
+
+    const currentSession = runtime.getState().currentSession;
+    expect(currentSession).not.toBeNull();
+
+    const [taskRecord, vfsFiles, threads] = await Promise.all([
+      getLatestTaskRecord(currentSession!.id),
+      loadVfsFiles(currentSession!.id),
+      listThreadSummaries(currentSession!.id),
+    ]);
+
+    expect(taskRecord?.task.approvalPending).toBe(true);
+    expect(taskRecord?.task.mode).toBe("awaiting_approval");
+    expect(vfsFiles.some((file) => file.path === "/.oa/context/requirements.json")).toBe(true);
+    expect(threads.length).toBeGreaterThan(0);
     runtime.dispose();
   });
 

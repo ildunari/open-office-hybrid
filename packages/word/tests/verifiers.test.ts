@@ -7,6 +7,7 @@ import {
   detectRevisionSensitiveRequest,
   estimateWordScopeRisk,
   getWordVerificationSuites,
+  hasPostWriteReread,
 } from "../src/lib/verifiers";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -107,6 +108,93 @@ describe("word verifier helpers", () => {
         status: "retryable",
       }),
     );
+  });
+
+  it("anchors reread checks to the last successful write", () => {
+    expect(
+      hasPostWriteReread([
+        {
+          toolCallId: "tc-1",
+          toolName: "execute_office_js",
+          isError: false,
+          resultText: "ok",
+          timestamp: 1,
+        },
+        {
+          toolCallId: "tc-2",
+          toolName: "get_document_text",
+          isError: false,
+          resultText: "ok",
+          timestamp: 2,
+        },
+        {
+          toolCallId: "tc-3",
+          toolName: "execute_office_js",
+          isError: false,
+          resultText: "ok",
+          timestamp: 3,
+        },
+      ]),
+    ).toBe(false);
+
+    expect(
+      hasPostWriteReread([
+        {
+          toolCallId: "tc-1",
+          toolName: "execute_office_js",
+          isError: false,
+          resultText: "ok",
+          timestamp: 1,
+        },
+        {
+          toolCallId: "tc-2",
+          toolName: "execute_office_js",
+          isError: false,
+          resultText: "ok",
+          timestamp: 3,
+        },
+        {
+          toolCallId: "tc-3",
+          toolName: "get_document_text",
+          isError: false,
+          resultText: "ok",
+          timestamp: 4,
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("fails formatting verification when a reread reports formatting drift", async () => {
+    const suites = getWordVerificationSuites();
+    const formatSuite = suites.find((suite) => suite.id === "word:format-preserved");
+
+    expect(
+      await formatSuite?.verify({
+        mode: "verify",
+        request: "Rewrite the section and preserve formatting.",
+        plan: null,
+        task: null,
+        toolExecutions: [
+          {
+            toolCallId: "tc-1",
+            toolName: "execute_office_js",
+            isError: false,
+            resultText: "ok",
+            timestamp: 1,
+          },
+          {
+            toolCallId: "tc-2",
+            toolName: "get_ooxml",
+            isError: false,
+            resultText: "ok",
+            timestamp: 2,
+          },
+        ],
+        promptNotes: [
+          "Formatting fingerprint mismatch detected after rereading the edited scope.",
+        ],
+      }),
+    ).toEqual(expect.objectContaining({ status: "failed", retryable: false }));
   });
 
   it("exports the paragraph OOXML read tool for Word safety flows", () => {

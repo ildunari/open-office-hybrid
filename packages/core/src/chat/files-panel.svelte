@@ -133,10 +133,11 @@
 
   async function handleDelete(file: VfsFile) {
     try {
-      const vfs = getVfs();
-      await vfs.rm(file.path);
       if (file.path.startsWith("/home/user/uploads/")) {
         await chat.removeUpload(file.path.replace("/home/user/uploads/", ""));
+      } else {
+        const vfs = getVfs();
+        await vfs.rm(file.path);
       }
       await refresh();
     } catch (error) {

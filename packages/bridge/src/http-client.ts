@@ -1,4 +1,5 @@
 import { request as httpsRequest } from "node:https";
+import { BRIDGE_AUTH_HEADER, readBridgeAuthToken } from "./auth.js";
 import {
   DEFAULT_BRIDGE_HTTP_URL,
   DEFAULT_REQUEST_TIMEOUT_MS,
@@ -8,6 +9,8 @@ import {
 export interface BridgeRequestOptions {
   baseUrl?: string;
   timeoutMs?: number;
+  authToken?: string;
+  headers?: Record<string, string>;
 }
 
 function resolveBaseUrl(baseUrl?: string): URL {
@@ -16,7 +19,7 @@ function resolveBaseUrl(baseUrl?: string): URL {
   );
 }
 
-export function requestJson<T>(
+export async function requestJson<T>(
   method: string,
   pathname: string,
   body?: unknown,
@@ -24,9 +27,20 @@ export function requestJson<T>(
 ): Promise<T> {
   const baseUrl = resolveBaseUrl(options?.baseUrl);
   const timeoutMs = options?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const authToken = options?.authToken ?? (await readBridgeAuthToken());
 
   return new Promise<T>((resolve, reject) => {
     const payload = body === undefined ? undefined : JSON.stringify(body);
+    const headers: Record<string, string> = payload
+      ? {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload).toString(),
+        }
+      : {};
+    Object.assign(headers, options?.headers ?? {});
+    if (authToken) {
+      headers[BRIDGE_AUTH_HEADER] = authToken;
+    }
     const req = httpsRequest(
       {
         protocol: baseUrl.protocol,
@@ -35,12 +49,7 @@ export function requestJson<T>(
         path: pathname,
         method,
         rejectUnauthorized: false,
-        headers: payload
-          ? {
-              "Content-Type": "application/json",
-              "Content-Length": Buffer.byteLength(payload),
-            }
-          : undefined,
+        headers: Object.keys(headers).length > 0 ? headers : undefined,
       },
       (res) => {
         const chunks: Buffer[] = [];

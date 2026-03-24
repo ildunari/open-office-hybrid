@@ -37,6 +37,7 @@ const OPTIONS = {
   json: { type: "boolean" as const },
   stdin: { type: "boolean" as const },
   sandbox: { type: "boolean" as const },
+  unsafe: { type: "boolean" as const },
   url: { type: "string" as const },
   host: { type: "string" as const },
   port: { type: "string" as const },
@@ -122,7 +123,7 @@ Commands:
   metadata [session] [--compact] [--fields KEY1,KEY2]
   events [session] [--limit N] [--compact] [--fields KEY1,KEY2] [--max-tokens N]
   tool [session] <toolName> [--input JSON | --file PATH | --stdin]
-  exec [session] [--code JS | --file PATH | --stdin] [--sandbox]
+  exec [session] [--code JS | --file PATH | --stdin] [--sandbox | --unsafe]
   rpc [session] <method> [--input JSON | --file PATH | --stdin]
   screenshot [session] [--pages PAGES | --sheet-id ID --range A1:B2 | --slide-index N] [--out PATH]
   vfs ls [session] [prefix]
@@ -152,7 +153,7 @@ Examples:
   office-bridge list
   office-bridge inspect word
   office-bridge inspect word --compact --fields app,documentId
-  office-bridge exec word --code "return { href: window.location.href, title: document.title }"
+  office-bridge exec word --unsafe --code "return { href: window.location.href, title: document.title }"
   office-bridge exec word --sandbox --code "const body = context.document.body; body.load('text'); await context.sync(); return body.text;"
   office-bridge tool excel screenshot_range --input '{"sheetId":1,"range":"A1:F20"}' --out range.png
   office-bridge screenshot word --pages 1 --out page1.png
@@ -635,6 +636,11 @@ async function commandExec(cli: Cli) {
   const code = await loadCode(cli);
   const explanation = str(cli, "explanation");
   const sandbox = flag(cli, "sandbox");
+  const unsafe = flag(cli, "unsafe");
+
+  if (sandbox && unsafe) {
+    throw new Error("Use either --sandbox or --unsafe, not both.");
+  }
 
   if (sandbox && !getDefaultRawExecutionTool(session.snapshot.app)) {
     throw new Error(
@@ -650,7 +656,7 @@ async function commandExec(cli: Cli) {
   }>(
     "POST",
     sessionPath(session.snapshot.sessionId, "/exec"),
-    { code, explanation, unsafe: !sandbox },
+    { code, explanation, unsafe },
     reqOpts(cli),
   );
 

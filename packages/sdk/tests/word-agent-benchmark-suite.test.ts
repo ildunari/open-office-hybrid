@@ -26,6 +26,7 @@ import {
   initializeLiveReviewIssueArtifacts,
 } from "./word-benchmark/live-review-issues";
 import { buildCapabilityLiveReviewPlan } from "./word-benchmark/live-review-planner";
+import { resolveLiveReviewSession } from "./word-benchmark/run-live-review-batch.mjs";
 import {
   advanceLiveReviewBatch,
   createLiveReviewBatchRuntime,
@@ -201,6 +202,54 @@ describe("word benchmark suite", () => {
     expect(readFileSync(resolvedPaths.detailedReportPath, "utf8")).toContain(
       "Resolved by tightening harness-side scope diff checks.",
     );
+  });
+
+  it("commits the live review scaffold files in repo", () => {
+    expect(
+      existsSync(
+        path.join(
+          suiteDir,
+          "artifacts",
+          "live-review",
+          "README.md",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      existsSync(
+        path.join(
+          suiteDir,
+          "artifacts",
+          "live-review",
+          "issues",
+          "ACTIVE.md",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      existsSync(
+        path.join(
+          suiteDir,
+          "artifacts",
+          "live-review",
+          "issues",
+          "resolved",
+          "README.md",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      existsSync(
+        path.join(
+          suiteDir,
+          "artifacts",
+          "live-review",
+          "issues",
+          "resolved",
+          "index.md",
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("runs the live review batch state machine", () => {
@@ -511,6 +560,117 @@ describe("word benchmark suite", () => {
     expect(source).toContain("--task-id");
     expect(source).toContain("entryMode: \"orchestrator_led\"");
     expect(source).toContain("manual_orchestrator_led");
+  });
+
+  it("reuses the shared live-review helpers in the runner", () => {
+    const runnerPath = path.join(
+      __dirname,
+      "word-benchmark",
+      "run-live-review-batch.mjs",
+    );
+    const source = readFileSync(runnerPath, "utf8");
+
+    expect(source).toContain("./live-review-planner.ts");
+    expect(source).toContain("./live-review-runtime.ts");
+    expect(source).toContain("./live-review-reviewer.ts");
+    expect(source).toContain("./live-review-compare.ts");
+    expect(source).toContain("./live-review-issues.ts");
+    expect(source).not.toContain("function completeMinimalLiveReviewerResult(");
+  });
+
+  it("executes the shaped plan instead of hard-coding the first document and task", () => {
+    const runnerPath = path.join(
+      __dirname,
+      "word-benchmark",
+      "run-live-review-batch.mjs",
+    );
+    const source = readFileSync(runnerPath, "utf8");
+
+    expect(source).toContain("for (const document of plan.documents)");
+    expect(source).toContain("for (const task of document.tasks)");
+    expect(source).toContain("classifyHarnessVsLiveReviewMismatch");
+    expect(source).toContain("appendActiveIssueEntry");
+  });
+
+  it("resolves a unique live-review session from the fixture fingerprint when multiple Word sessions exist", () => {
+    const session = resolveLiveReviewSession({
+      sourceDocument: "report_tti_generic_v1",
+      sessions: [
+        {
+          sessionId: "word:other",
+          documentId: "doc-other",
+          documentMetadata: {
+            pageCount: 3,
+            sectionCount: 1,
+            tableCount: 1,
+            changeTrackingMode: "Off",
+          },
+        },
+        {
+          sessionId: "word:report",
+          documentId: "doc-report",
+          documentMetadata: {
+            pageCount: 19,
+            sectionCount: 9,
+            tableCount: 5,
+            changeTrackingMode: "Off",
+          },
+        },
+      ],
+    });
+
+    expect(session.sessionId).toBe("word:report");
+  });
+
+  it("fails live-review session resolution when multiple sessions remain ambiguous", () => {
+    expect(() =>
+      resolveLiveReviewSession({
+        sourceDocument: "report_tti_generic_v1",
+        sessions: [
+          {
+            sessionId: "word:a",
+            documentId: "doc-a",
+            documentMetadata: {
+              pageCount: 19,
+              sectionCount: 9,
+              tableCount: 5,
+              changeTrackingMode: "Off",
+            },
+          },
+          {
+            sessionId: "word:b",
+            documentId: "doc-b",
+            documentMetadata: {
+              pageCount: 19,
+              sectionCount: 9,
+              tableCount: 5,
+              changeTrackingMode: "Off",
+            },
+          },
+        ],
+      }),
+    ).toThrow(/multiple word sessions match/i);
+  });
+
+  it("supports explicit live-review session targeting", () => {
+    const session = resolveLiveReviewSession({
+      sourceDocument: "report_tti_generic_v1",
+      sessionSelector: "doc-target",
+      sessions: [
+        {
+          sessionId: "word:other",
+          documentId: "doc-other",
+          documentMetadata: {},
+        },
+        {
+          sessionId: "word:target",
+          documentId: "doc-target",
+          documentMetadata: {},
+        },
+      ],
+    });
+
+    expect(session.sessionId).toBe("word:target");
   });
 
   it("classifies the live execution receipts from runtime state and events", () => {

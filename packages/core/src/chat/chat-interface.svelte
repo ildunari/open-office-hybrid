@@ -114,6 +114,10 @@
     return initial;
   }
 
+  function isLocalDevRuntime(): boolean {
+    return ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  }
+
   function toggleTheme() {
     theme = theme === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", theme);
@@ -242,7 +246,7 @@
   });
 
   $effect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!isLocalDevRuntime()) return undefined;
     (
       window as typeof window & {
         __OFFICE_AGENTS_AUTOMATION__?: TaskpaneAutomation;
@@ -442,7 +446,9 @@
         {#if activeTab === "chat" && $runtimeState.messages.length > 0}
           <button
             type="button"
-            onclick={() => controller.clearMessages()}
+            onclick={async () => {
+              await controller.clearMessages();
+            }}
             class="p-1.5 text-(--chat-text-muted) hover:text-(--chat-error) transition-colors"
             data-tooltip="Clear messages"
           >

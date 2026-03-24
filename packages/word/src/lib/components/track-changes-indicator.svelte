@@ -71,7 +71,12 @@
   }
 
   async function handleToggle() {
-    if (isUpdating || mode === "Unknown") return;
+    if (isUpdating) return;
+
+    if (mode === "Unknown") {
+      await refresh();
+      if (mode === "Unknown") return;
+    }
 
     isUpdating = true;
     try {
@@ -121,8 +126,8 @@
 <button
   type="button"
   onclick={handleToggle}
-  disabled={isUpdating || mode === "Unknown"}
-  class={`p-1.5 transition-colors ${buttonClass} ${isUpdating || mode === "Unknown" ? "opacity-70" : ""}`}
+  disabled={isUpdating}
+  class={`p-1.5 transition-colors ${buttonClass} ${isUpdating ? "opacity-70" : ""}`}
   data-tooltip={getTooltip(mode)}
   aria-label={getTitle(mode)}
 >

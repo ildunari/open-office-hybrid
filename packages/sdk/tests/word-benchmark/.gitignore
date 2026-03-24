@@ -1,2 +1,12 @@
-artifacts/
+artifacts/*
+!artifacts/live-review/
+artifacts/live-review/*
+!artifacts/live-review/README.md
+!artifacts/live-review/issues/
+artifacts/live-review/issues/*
+!artifacts/live-review/issues/ACTIVE.md
+!artifacts/live-review/issues/resolved/
+artifacts/live-review/issues/resolved/*
+!artifacts/live-review/issues/resolved/README.md
+!artifacts/live-review/issues/resolved/index.md
 DocX_Files/~$*.docx

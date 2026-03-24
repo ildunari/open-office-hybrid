@@ -1,7 +1,9 @@
 import { Type } from "@sinclair/typebox";
+import { normalizeParagraphBounds } from "../tool-helpers";
 import { defineTool, toolError, toolSuccess } from "./types";
 
 /* global Word */
+export { normalizeParagraphBounds };
 
 export const getDocumentTextTool = defineTool({
   name: "get_document_text",
@@ -36,9 +38,9 @@ export const getDocumentTextTool = defineTool({
         paragraphs.load("items");
         await context.sync();
 
-        const start = params.startParagraph ?? 0;
-        const end = Math.min(
-          params.endParagraph ?? paragraphs.items.length,
+        const { start, end } = normalizeParagraphBounds(
+          params.startParagraph,
+          params.endParagraph,
           paragraphs.items.length,
         );
         const includeFormatting = params.includeFormatting !== false;

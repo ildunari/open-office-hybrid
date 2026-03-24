@@ -81,13 +81,15 @@ function hasTool(
   return toolExecutions.some((execution) => execution.toolName === toolName);
 }
 
-function hasPostWriteReread(
+export function hasPostWriteReread(
   toolExecutions: NonNullable<TaskRecord["toolExecutions"]>,
 ): boolean {
-  const writeExecution = toolExecutions.find(
-    (execution) =>
-      execution.toolName === "execute_office_js" && !execution.isError,
-  );
+  const writeExecution = [...toolExecutions]
+    .reverse()
+    .find(
+      (execution) =>
+        execution.toolName === "execute_office_js" && !execution.isError,
+    );
   if (!writeExecution) return false;
   return toolExecutions.some(
     (execution) =>
@@ -105,21 +107,30 @@ export function getWordVerificationSuites(): VerificationSuite[] {
       verify: (context) => {
         const hadWrite = hasTool(context.toolExecutions, "execute_office_js");
         const hadPostWriteReread = hasPostWriteReread(context.toolExecutions);
+        const hadFingerprintMismatch = context.promptNotes.some((note) =>
+          /format(?:ting)? fingerprint mismatch|formatting drift/i.test(note),
+        );
         return {
           suiteId: "word:format-preserved",
           label: "Formatting preserved",
           expectedEffect: "Formatting stays consistent after the edit.",
-          observedEffect: !hadWrite
+          observedEffect: hadFingerprintMismatch
+            ? "A post-write reread detected formatting drift in the edited scope."
+            : !hadWrite
             ? "No Word write detected to verify."
             : hadPostWriteReread
               ? "Word write was followed by a reread of nearby document state."
               : "Word write executed without a reread of the affected document state.",
-          status: hadWrite && hadPostWriteReread ? "passed" : "retryable",
+          status: hadFingerprintMismatch
+            ? "failed"
+            : hadWrite && hadPostWriteReread
+              ? "passed"
+              : "retryable",
           evidence: [
             ...context.toolExecutions.map((execution) => execution.toolName),
             ...context.promptNotes,
           ],
-          retryable: !(hadWrite && hadPostWriteReread),
+          retryable: !hadFingerprintMismatch && !(hadWrite && hadPostWriteReread),
         };
       },
     },

@@ -428,14 +428,12 @@ export class AgentRuntime {
       stepCount: number;
       activeStepIndex: number;
     } | null;
-    activeTaskSummary:
-      | {
-          id: string;
-          status: string;
-          mode: string;
-          toolExecutionCount: number;
-        }
-      | null;
+    activeTaskSummary: {
+      id: string;
+      status: string;
+      mode: string;
+      toolExecutionCount: number;
+    } | null;
     contextBudget: { usagePct: number; action: string };
     lastVerification: { status: string } | null;
     sessionStats: {
@@ -904,6 +902,39 @@ export class AgentRuntime {
 
   approvePending() {
     return this.approveActivePlan();
+  }
+
+  private async persistSessionState(sessionId = this.currentSessionId) {
+    if (!sessionId) return;
+
+    const activePlan = this.planManager.getActivePlan();
+    const activeTask = this.taskTracker.getCurrentTask();
+    const agentMessages = this.agent?.state.messages ?? [];
+    const vfsFiles = await snapshotVfs();
+
+    await Promise.all([
+      saveSession(sessionId, agentMessages),
+      saveVfsFiles(sessionId, vfsFiles),
+      this.planManager.persist(sessionId),
+      this.taskTracker.persist(sessionId),
+    ]);
+
+    const activeThreadId =
+      this.state.activeThreadId ?? this.state.threads[0]?.id ?? null;
+    if (activeThreadId) {
+      const thread =
+        this.state.threads.find((item) => item.id === activeThreadId) ??
+        this.buildRootThread(activeTask, activePlan);
+      await saveThreadSummary(sessionId, {
+        ...thread,
+        rootTaskId: activeTask?.id ?? thread.rootTaskId,
+        currentTaskId: activeTask?.id ?? thread.currentTaskId,
+        milestoneIds:
+          activePlan?.milestones.map((item) => item.id) ?? thread.milestoneIds,
+        updatedAt: Date.now(),
+      });
+      await this.loadThreadState(sessionId, activeTask, activePlan);
+    }
   }
 
   private applyApprovalPolicy(
@@ -1509,6 +1540,7 @@ export class AgentRuntime {
           handoff,
           activeTask: this.taskTracker.getCurrentTask(),
         });
+        await this.persistSessionState();
         return;
       }
 
@@ -1532,6 +1564,7 @@ export class AgentRuntime {
           handoff,
           activeTask: this.taskTracker.getCurrentTask(),
         });
+        await this.persistSessionState();
         return;
       }
 
@@ -1610,7 +1643,7 @@ export class AgentRuntime {
     );
   }
 
-  clearMessages() {
+  async clearMessages() {
     this.abort();
     this.agent?.reset();
     resetVfs();
@@ -1620,7 +1653,7 @@ export class AgentRuntime {
     this.patternRegistry.deactivateAll();
     if (this.currentSessionId) {
       const rootThread = this.buildRootThread(null, null);
-      Promise.all([
+      await Promise.all([
         saveSession(this.currentSessionId, []),
         saveVfsFiles(this.currentSessionId, []),
         deletePlanRecords(this.currentSessionId),
@@ -1629,9 +1662,8 @@ export class AgentRuntime {
         deleteThreadSummaries(this.currentSessionId),
         deleteCompletionArtifacts(this.currentSessionId),
         deleteCompactionArtifacts(this.currentSessionId),
-      ])
-        .then(() => saveThreadSummary(this.currentSessionId!, rootThread))
-        .catch(console.error);
+      ]);
+      await saveThreadSummary(this.currentSessionId, rootThread);
     }
     this.update({
       messages: [],
@@ -1848,7 +1880,6 @@ export class AgentRuntime {
   private async onStreamingEnd() {
     if (!this.currentSessionId) return;
     const sessionId = this.currentSessionId;
-    const agentMessages = this.agent?.state.messages ?? [];
     try {
       const taskSummary = this.state.error
         ? this.state.error
@@ -1883,12 +1914,8 @@ export class AgentRuntime {
               createdAt: Date.now(),
             }
           : null;
-      const vfsFiles = await snapshotVfs();
       await Promise.all([
-        saveSession(sessionId, agentMessages),
-        saveVfsFiles(sessionId, vfsFiles),
-        this.planManager.persist(sessionId),
-        this.taskTracker.persist(sessionId),
+        this.persistSessionState(sessionId),
         this.reflectionEngine.persist(sessionId),
         completionArtifact
           ? createCompletionArtifact(sessionId, completionArtifact)

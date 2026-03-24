@@ -88,7 +88,7 @@ export class ChatController {
   }
 
   clearMessages() {
-    this.#runtime.clearMessages();
+    return this.#runtime.clearMessages();
   }
 
   abort() {

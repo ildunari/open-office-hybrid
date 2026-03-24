@@ -101,6 +101,7 @@ async function connectClient(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url, {
       rejectUnauthorized: false,
+      origin: "https://localhost:3003",
     });
     socket.once("open", () => resolve(socket));
     socket.once("error", reject);
@@ -324,6 +325,203 @@ describe("bridge server", () => {
 
     await expect(invocation).rejects.toThrow(/disconnected/i);
   });
+
+  it("requires auth for non-health HTTPS endpoints", async () => {
+    const tls = createTempTlsMaterial();
+    tlsDir = tls.dir;
+    const port = await getFreePort();
+    server = await createBridgeServer({
+      host: "127.0.0.1",
+      port,
+      certPath: tls.certPath,
+      keyPath: tls.keyPath,
+      authToken: "bridge-test-token",
+      logger: silentLogger,
+    });
+
+    await expect(
+      requestJson("GET", "/sessions", undefined, {
+        baseUrl: server.httpUrl,
+        authToken: "wrong-token",
+      }),
+    ).rejects.toThrow(/unauthorized/i);
+
+    const health = (await requestJson("GET", "/health", undefined, {
+      baseUrl: server.httpUrl,
+      authToken: "wrong-token",
+    })) as { ok: boolean };
+    expect(health.ok).toBe(true);
+  });
+
+  it("allows requests from the known Hybrid add-in origin without an auth token", async () => {
+    const tls = createTempTlsMaterial();
+    tlsDir = tls.dir;
+    const port = await getFreePort();
+    server = await createBridgeServer({
+      host: "127.0.0.1",
+      port,
+      certPath: tls.certPath,
+      keyPath: tls.keyPath,
+      authToken: "bridge-test-token",
+      logger: silentLogger,
+    });
+
+    const result = await requestJson("GET", "/sessions", undefined, {
+      baseUrl: server.httpUrl,
+      headers: {
+        Origin: "https://localhost:3003",
+      },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      sessions: [],
+    });
+  });
+
+  it("rejects localhost browser origins outside the allowed add-in ports", async () => {
+    const tls = createTempTlsMaterial();
+    tlsDir = tls.dir;
+    const port = await getFreePort();
+    server = await createBridgeServer({
+      host: "127.0.0.1",
+      port,
+      certPath: tls.certPath,
+      keyPath: tls.keyPath,
+      authToken: "bridge-test-token",
+      logger: silentLogger,
+    });
+
+    await expect(
+      requestJson("GET", "/sessions", undefined, {
+        baseUrl: server.httpUrl,
+        headers: {
+          Origin: "https://localhost:5173",
+        },
+      }),
+    ).rejects.toThrow(/forbidden/i);
+  });
+
+  it("uses sandbox mode by default for exec and only runs unsafe when explicitly requested", async () => {
+    const tls = createTempTlsMaterial();
+    tlsDir = tls.dir;
+    const port = await getFreePort();
+    server = await createBridgeServer({
+      host: "127.0.0.1",
+      port,
+      certPath: tls.certPath,
+      keyPath: tls.keyPath,
+      authToken: "bridge-test-token",
+      logger: silentLogger,
+    });
+
+    socket = await connectClient(server.wsUrl);
+    socket.send(
+      JSON.stringify({
+        type: "hello",
+        role: "office-addin",
+        protocolVersion: 1,
+        snapshot: createSnapshot({
+          sessionId: "word:test-session",
+          app: "word",
+          tools: [{ name: "execute_office_js" }],
+        }),
+      }),
+    );
+    await waitForParsedMessage(socket);
+
+    const sandboxInvoke = waitForParsedMessage(socket).then((message) => {
+      if (message.type !== "invoke") {
+        throw new Error(`Expected invoke message, got ${message.type}`);
+      }
+      expect(message.method).toBe("execute_tool");
+      expect(message.params).toEqual({
+        toolName: "execute_office_js",
+        args: {
+          code: "return 1;",
+          explanation: undefined,
+        },
+      });
+      const response: BridgeResponseMessage = {
+        type: "response",
+        requestId: message.requestId,
+        ok: true,
+        result: { ok: true },
+      };
+      socket?.send(JSON.stringify(response));
+    });
+
+    const sandboxResult = (await requestJson(
+      "POST",
+      "/sessions/word%3Atest-session/exec",
+      { code: "return 1;" },
+      {
+        baseUrl: server.httpUrl,
+        authToken: "bridge-test-token",
+      },
+    )) as { ok: boolean; mode: string };
+
+    await sandboxInvoke;
+    expect(sandboxResult.ok).toBe(true);
+    expect(sandboxResult.mode).toBe("sandbox");
+
+    const unsafeInvoke = waitForParsedMessage(socket).then((message) => {
+      if (message.type !== "invoke") {
+        throw new Error(`Expected invoke message, got ${message.type}`);
+      }
+      expect(message.method).toBe("execute_unsafe_office_js");
+      const response: BridgeResponseMessage = {
+        type: "response",
+        requestId: message.requestId,
+        ok: true,
+        result: { ok: true },
+      };
+      socket?.send(JSON.stringify(response));
+    });
+
+    const unsafeResult = (await requestJson(
+      "POST",
+      "/sessions/word%3Atest-session/exec",
+      { code: "return 2;", unsafe: true },
+      {
+        baseUrl: server.httpUrl,
+        authToken: "bridge-test-token",
+      },
+    )) as { ok: boolean; mode: string };
+
+    await unsafeInvoke;
+    expect(unsafeResult.ok).toBe(true);
+    expect(unsafeResult.mode).toBe("unsafe");
+  });
+
+  it("rejects websocket upgrades from disallowed origins", async () => {
+    const tls = createTempTlsMaterial();
+    tlsDir = tls.dir;
+    const port = await getFreePort();
+    server = await createBridgeServer({
+      host: "127.0.0.1",
+      port,
+      certPath: tls.certPath,
+      keyPath: tls.keyPath,
+      authToken: "bridge-test-token",
+      logger: silentLogger,
+    });
+
+    await expect(
+      new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(server.wsUrl, {
+          rejectUnauthorized: false,
+          origin: "https://evil.example",
+        });
+        ws.once("open", () => {
+          ws.close();
+          reject(new Error("unexpected open"));
+        });
+        ws.once("error", () => resolve());
+        ws.once("close", () => resolve());
+      }),
+    ).resolves.toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -545,7 +743,13 @@ describe("bridge server SSE endpoint", () => {
     const ssePromise = new Promise<void>((resolve) => {
       const req = https.request(
         sseUrl,
-        { method: "GET", rejectUnauthorized: false },
+        {
+          method: "GET",
+          rejectUnauthorized: false,
+          headers: {
+            "X-Office-Bridge-Token": server?.authToken ?? "",
+          },
+        },
         (res) => {
           expect(res.headers["content-type"]).toContain("text/event-stream");
           expect(res.headers["cache-control"]).toContain("no-cache");

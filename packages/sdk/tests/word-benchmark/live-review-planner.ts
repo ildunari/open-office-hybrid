@@ -5,7 +5,7 @@ import {
   type WordBenchmarkFixture,
   type WordBenchmarkMultistepSession,
   type WordBenchmarkTask,
-} from "./benchmark-suite";
+} from "./benchmark-suite.ts";
 
 interface LiveReviewCapabilityDefinition {
   capability_id: string;
@@ -34,6 +34,7 @@ export interface PlannedLiveReviewTask extends CandidateTask {}
 export interface PlannedLiveReviewDocument {
   sourceDocument: string;
   displayName: string;
+  fixtureFile?: string;
   selectionScore: number;
   selectionReason: string;
   tasks: PlannedLiveReviewTask[];
@@ -154,6 +155,7 @@ export function buildCapabilityLiveReviewPlan(
       return {
         sourceDocument: fixture.source_doc_id,
         displayName: fixture.display_name,
+        fixtureFile: fixture.file,
         selectionScore,
         selectionReason: `artifact-risk=${topTaskRisk.toFixed(2)} difficulty=${difficultyScore.toFixed(2)} diversity=${diversityScore.toFixed(2)}`,
         tasks,

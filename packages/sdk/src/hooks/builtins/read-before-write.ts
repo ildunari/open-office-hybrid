@@ -63,7 +63,7 @@ function isPowerPointTool(toolName: string): boolean {
   );
 }
 
-function scopeKeyFromParams(
+export function scopeKeyFromParams(
   toolName: string,
   params: Record<string, unknown>,
 ): string {
@@ -104,7 +104,30 @@ function scopeKeyFromParams(
   return "all";
 }
 
-function hasReadCoverage(readScopes: Set<string>, writeScope: string): boolean {
+function parseWordScope(scope: string):
+  | { kind: "all" }
+  | { kind: "para" | "child"; start: number; end: number | null }
+  | null {
+  if (scope === "word:all") return { kind: "all" };
+  const match = /^word:(para|child):(-?\d+)-(end|-?\d+)$/.exec(scope);
+  if (!match) return null;
+  return {
+    kind: match[1] as "para" | "child",
+    start: Number(match[2]),
+    end: match[3] === "end" ? null : Number(match[3]),
+  };
+}
+
+function rangeContains(
+  outer: { start: number; end: number | null },
+  inner: { start: number; end: number | null },
+): boolean {
+  const outerEnd = outer.end ?? Number.POSITIVE_INFINITY;
+  const innerEnd = inner.end ?? Number.POSITIVE_INFINITY;
+  return outer.start <= inner.start && outerEnd >= innerEnd;
+}
+
+export function hasReadCoverage(readScopes: Set<string>, writeScope: string): boolean {
   if (readScopes.has(writeScope) || readScopes.has("all")) {
     return true;
   }
@@ -114,8 +137,20 @@ function hasReadCoverage(readScopes: Set<string>, writeScope: string): boolean {
     if (scope === `${appPrefix}:all`) {
       return true;
     }
-    if (scope.startsWith(`${appPrefix}:`)) {
-      return true;
+
+    if (appPrefix === "word") {
+      const readWordScope = parseWordScope(scope);
+      const writeWordScope = parseWordScope(writeScope);
+      if (
+        readWordScope &&
+        writeWordScope &&
+        readWordScope.kind === writeWordScope.kind &&
+        readWordScope.kind !== "all" &&
+        writeWordScope.kind !== "all" &&
+        rangeContains(readWordScope, writeWordScope)
+      ) {
+        return true;
+      }
     }
   }
 

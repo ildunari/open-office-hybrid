@@ -55,7 +55,7 @@ office-bridge list
 office-bridge inspect word
 office-bridge metadata excel
 office-bridge events word --limit 20
-office-bridge exec word --code "return { href: window.location.href, title: document.title }"
+office-bridge exec word --unsafe --code "return { href: window.location.href, title: document.title }"
 office-bridge exec word --sandbox --code "const body = context.document.body; body.load('text'); await context.sync(); return body.text;"
 office-bridge tool excel screenshot_range --input '{"sheetId":1,"range":"A1:F20"}' --out range.png
 office-bridge screenshot word --pages 1 --out page1.png
@@ -78,9 +78,18 @@ pnpm bridge:stop
 
 ## Exec modes
 
-`office-bridge exec` uses unsafe direct evaluation by default so development agents can access the full taskpane runtime, browser globals, and Office host objects without going through `sandboxedEval()`.
+`office-bridge exec` now uses sandbox mode by default so the CLI routes through the app's existing raw Office.js tool.
 
-Use `--sandbox` if you explicitly want to run through the app's existing raw Office.js tool (`eval_officejs` / `execute_office_js`).
+Use `--unsafe` only when you explicitly want direct taskpane/runtime evaluation, and `--sandbox` when you want to force the existing raw Office.js tool (`eval_officejs` / `execute_office_js`).
+
+## Auth and origin checks
+
+All non-health bridge endpoints now require either:
+
+- a valid local browser origin (`localhost` / `127.0.0.1`), or
+- the bridge auth token via `X-Office-Bridge-Token` for HTTP/SSE or `?token=...` for WebSocket.
+
+The CLI automatically reads the token from `OFFICE_BRIDGE_TOKEN` or the local bridge token file written by the server.
 
 ## Screenshot commands
 

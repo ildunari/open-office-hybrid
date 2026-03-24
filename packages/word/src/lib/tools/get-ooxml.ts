@@ -1,5 +1,6 @@
 import { writeFile } from "@office-agents/core";
 import { Type } from "@sinclair/typebox";
+import { documentBodyHasDirectChildren } from "../tool-helpers";
 import { defineTool, toolError, toolSuccess } from "./types";
 
 /* global Word */
@@ -261,6 +262,15 @@ function extractBodyContent(ooxmlPackage: string): {
   };
 }
 
+export { extractBodyContent };
+
+export function hasBodyContent(extracted: {
+  xml: string;
+  children: ChildSummary[];
+}): boolean {
+  return extracted.children.length > 0 || extracted.xml.trim().length > 0;
+}
+
 export const getOoxmlTool = defineTool({
   name: "get_ooxml",
   label: "Get OOXML",
@@ -290,21 +300,7 @@ export const getOoxmlTool = defineTool({
     try {
       const result = await Word.run(async (context) => {
         const body = context.document.body;
-        const paragraphs = body.paragraphs;
-        paragraphs.load("items");
-        await context.sync();
-
-        const totalParagraphs = paragraphs.items.length;
-        if (totalParagraphs === 0) {
-          return { error: "Document is empty" };
-        }
-
-        // Get full body OOXML
-        const startPara = paragraphs.items[0];
-        const endPara = paragraphs.items[totalParagraphs - 1];
-        const range = startPara
-          .getRange("Start")
-          .expandTo(endPara.getRange("End"));
+        const range = body.getRange();
         const ooxml = range.getOoxml();
         await context.sync();
 
@@ -315,6 +311,9 @@ export const getOoxmlTool = defineTool({
         return toolError(result.error as string);
       }
 
+      if (!documentBodyHasDirectChildren(result.ooxmlValue as string)) {
+        return toolError("Document is empty");
+      }
       const extracted = extractBodyContent(result.ooxmlValue as string);
 
       // Apply child range filtering if specified

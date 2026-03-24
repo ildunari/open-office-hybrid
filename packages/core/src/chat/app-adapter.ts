@@ -40,14 +40,12 @@ export interface BridgeRuntimeStateLike {
     stepCount: number;
     activeStepIndex: number;
   } | null;
-  activeTaskSummary:
-    | {
-        id: string;
-        status: string;
-        mode: string;
-        toolExecutionCount: number;
-      }
-    | null;
+  activeTaskSummary: {
+    id: string;
+    status: string;
+    mode: string;
+    toolExecutionCount: number;
+  } | null;
   contextBudget: { usagePct: number; action: string };
   lastVerification: { status: string } | null;
   sessionStats: {

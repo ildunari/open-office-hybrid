@@ -805,6 +805,19 @@ export function startOfficeBridge(
         state.socket.close();
         state.socket = null;
       }
+      if (
+        (
+          window as typeof window & {
+            __OFFICE_BRIDGE__?: OfficeBridgeController;
+          }
+        ).__OFFICE_BRIDGE__ === controller
+      ) {
+        delete (
+          window as typeof window & {
+            __OFFICE_BRIDGE__?: OfficeBridgeController;
+          }
+        ).__OFFICE_BRIDGE__;
+      }
     },
   };
 

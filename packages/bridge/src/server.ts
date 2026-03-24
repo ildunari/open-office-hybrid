@@ -5,6 +5,12 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { type WebSocket, WebSocketServer } from "ws";
 import {
+  BRIDGE_AUTH_HEADER,
+  BRIDGE_AUTH_QUERY_KEY,
+  DEFAULT_BRIDGE_TOKEN_PATH,
+  loadOrCreateBridgeAuthToken,
+} from "./auth.js";
+import {
   type BridgeError,
   type BridgeEventMessage,
   type BridgeInvokeRequest,
@@ -59,6 +65,8 @@ export interface BridgeServerOptions {
   port?: number;
   certPath?: string;
   keyPath?: string;
+  authToken?: string;
+  tokenPath?: string;
   eventLimit?: number;
   requestTimeoutMs?: number;
   logger?: Pick<Console, "log" | "warn" | "error">;
@@ -69,6 +77,8 @@ export interface BridgeServerHandle {
   readonly port: number;
   readonly httpUrl: string;
   readonly wsUrl: string;
+  readonly authToken: string;
+  readonly tokenPath: string;
   listSessions: () => BridgeSessionRecord[];
   getSession: (sessionId: string) => BridgeSessionRecord | undefined;
   getEvents: (sessionId: string, limit?: number) => BridgeStoredEvent[];
@@ -87,6 +97,75 @@ function jsonResponse(
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.end(JSON.stringify(payload));
+}
+
+const ALLOWED_BROWSER_ORIGIN_PORTS = new Set(["3000", "3001", "3002", "3003"]);
+
+function isAllowedBrowserOrigin(origin: string | undefined): boolean {
+  if (!origin) return false;
+  try {
+    const url = new URL(origin);
+    return (
+      url.protocol === "https:" &&
+      ["localhost", "127.0.0.1"].includes(url.hostname) &&
+      ALLOWED_BROWSER_ORIGIN_PORTS.has(url.port)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
+  const origin = req.headers.origin;
+  if (isAllowedBrowserOrigin(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin as string);
+    res.setHeader("Vary", "Origin");
+  }
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    `Content-Type, ${BRIDGE_AUTH_HEADER}`,
+  );
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+}
+
+function requestToken(
+  req: IncomingMessage,
+  url: URL,
+): string | undefined {
+  const header = req.headers[BRIDGE_AUTH_HEADER.toLowerCase()];
+  if (typeof header === "string" && header.trim()) {
+    return header.trim();
+  }
+  const query = url.searchParams.get(BRIDGE_AUTH_QUERY_KEY);
+  return query?.trim() || undefined;
+}
+
+function authorizeRequest(
+  req: IncomingMessage,
+  url: URL,
+  res: ServerResponse,
+  authToken: string,
+): boolean {
+  if (isAllowedBrowserOrigin(req.headers.origin)) {
+    return true;
+  }
+
+  const token = requestToken(req, url);
+  if (token === authToken) {
+    return true;
+  }
+
+  const statusCode = req.headers.origin ? 403 : 401;
+  jsonResponse(res, statusCode, {
+    ok: false,
+    error: {
+      message:
+        statusCode === 403
+          ? "Bridge request forbidden for this origin"
+          : "Bridge request unauthorized",
+    },
+  });
+  return false;
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -189,14 +268,21 @@ export async function createBridgeServer(
   const logger = options.logger ?? console;
 
   const tls = await loadTlsMaterial(options);
+  const auth = options.authToken
+    ? {
+        token: options.authToken,
+        tokenPath: options.tokenPath ?? DEFAULT_BRIDGE_TOKEN_PATH,
+        source: "env" as const,
+      }
+    : await loadOrCreateBridgeAuthToken(
+        options.tokenPath ?? DEFAULT_BRIDGE_TOKEN_PATH,
+      );
   const sessions = new Map<string, SessionState>();
 
   const server = createServer(
     { key: tls.key, cert: tls.cert },
     async (req, res) => {
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-      res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+      setCorsHeaders(req, res);
 
       if (req.method === "OPTIONS") {
         res.statusCode = 204;
@@ -224,6 +310,10 @@ export async function createBridgeServer(
             host,
             port,
           });
+          return;
+        }
+
+        if (!authorizeRequest(req, url, res, auth.token)) {
           return;
         }
 
@@ -512,7 +602,7 @@ export async function createBridgeServer(
             return;
           }
 
-          if (body?.unsafe !== false) {
+          if (body?.unsafe === true) {
             const result = await invokeSessionInternal({
               sessionId,
               method: "execute_unsafe_office_js",
@@ -722,6 +812,13 @@ export async function createBridgeServer(
       return;
     }
 
+    const allowedOrigin = isAllowedBrowserOrigin(request.headers.origin);
+    const token = requestToken(request, url);
+    if (!allowedOrigin && token !== auth.token) {
+      socket.destroy();
+      return;
+    }
+
     wsServer.handleUpgrade(request, socket, head, (ws) => {
       wsServer.emit("connection", ws, request);
     });
@@ -796,6 +893,8 @@ export async function createBridgeServer(
     port,
     httpUrl,
     wsUrl,
+    authToken: auth.token,
+    tokenPath: auth.tokenPath,
     listSessions: () => [...sessions.values()].map(publicSessionRecord),
     getSession: (sessionId) => {
       const session = sessions.get(sessionId);

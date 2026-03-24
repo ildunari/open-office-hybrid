@@ -207,10 +207,12 @@ curl -sk -X POST https://localhost:4017/sessions/{id}/vfs/delete \
 
 ### POST /shutdown
 
+Requires bridge auth token.
+
 Gracefully stop the bridge server.
 
 ```bash
-curl -sk -X POST https://localhost:4017/shutdown -d '{}'
+curl -sk -X POST https://localhost:4017/shutdown -H 'X-Office-Bridge-Token: <token>' -d '{}'
 ```
 
 ## CLI Commands
@@ -246,7 +248,7 @@ office-bridge diag [session]                                         # Full diag
 
 ```bash
 office-bridge tool [session] <toolName> [--input JSON | --file PATH | --stdin] [--out PATH]
-office-bridge exec [session] [--code JS | --file PATH | --stdin] [--sandbox] [--out PATH]
+office-bridge exec [session] [--code JS | --file PATH | --stdin] [--sandbox | --unsafe] [--out PATH]
 office-bridge rpc [session] <method> [--input JSON | --file PATH | --stdin]
 ```
 

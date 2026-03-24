@@ -9,6 +9,10 @@ import SelectionIndicator from "./components/selection-indicator.svelte";
 import TrackChangesIndicator from "./components/track-changes-indicator.svelte";
 import wordApiFullDts from "./docs/word-officejs-api.d.ts?raw";
 import wordApiOnlineDts from "./docs/word-officejs-api-online.d.ts?raw";
+import {
+  buildRunFormattingSample,
+  buildStyleInfoFromLoadedStyles,
+} from "./metadata-helpers";
 import { getWordReasoningPatterns } from "./patterns";
 import { buildWordSystemPrompt } from "./system-prompt";
 import { WORD_TOOLS } from "./tools";
@@ -78,16 +82,7 @@ export function createWordAdapter(): AppAdapter {
   };
 }
 
-const KEY_STYLES = [
-  "Normal",
-  "Heading1",
-  "Heading2",
-  "Heading3",
-  "ListBullet",
-  "ListNumber",
-  "Title",
-  "Subtitle",
-] as const;
+export { buildRunFormattingSample, buildStyleInfoFromLoadedStyles };
 
 async function getDocumentMetadata(): Promise<object> {
   return Word.run(async (context) => {
@@ -131,37 +126,14 @@ async function getDocumentMetadata(): Promise<object> {
     > | null = null;
     try {
       const styles = context.document.getStyles();
-      const styleObjects: Record<string, Word.Style> = {};
-      for (const name of KEY_STYLES) {
-        try {
-          const s = styles.getByNameOrNullObject(name);
-          s.load("nameLocal,builtIn,inUse");
-          s.font.load("name,size,color");
-          styleObjects[name] = s;
-        } catch {
-          // style may not exist
-        }
+      styles.load("items");
+      await context.sync();
+      for (const style of styles.items) {
+        style.load("nameLocal,builtIn,inUse");
+        style.font.load("name,size,color");
       }
       await context.sync();
-      styleInfo = {};
-      for (const name of KEY_STYLES) {
-        const s = styleObjects[name];
-        if (s && !s.isNullObject) {
-          const entry: { font?: string; size?: number; color?: string } = {};
-          if (s.font.name) entry.font = s.font.name;
-          if (s.font.size && s.font.size > 0) entry.size = s.font.size;
-          if (
-            s.font.color &&
-            s.font.color !== "Automatic" &&
-            s.font.color !== "#000000"
-          )
-            entry.color = s.font.color;
-          if (Object.keys(entry).length > 0) {
-            styleInfo[name] = entry;
-          }
-        }
-      }
-      if (Object.keys(styleInfo).length === 0) styleInfo = null;
+      styleInfo = buildStyleInfoFromLoadedStyles(styles.items);
     } catch {
       // getStyles/font API may not be available (requires WordApi 1.5)
     }
@@ -179,30 +151,26 @@ async function getDocumentMetadata(): Promise<object> {
       paragraphs.load("items");
       await context.sync();
       const sampleSize = Math.min(paragraphs.items.length, 20);
-      const sampled: typeof paragraphs.items = [];
+      const sampled = [];
       for (let i = 0; i < sampleSize; i++) {
         const p = paragraphs.items[i];
         p.load("text,style");
         p.font.load("name,size,color");
-        sampled.push(p);
+        sampled.push({ paragraph: p, index: i });
       }
       await context.sync();
-      const results: typeof runFormattingSample = [];
-      for (let i = 0; i < sampled.length; i++) {
-        const p = sampled[i];
-        if (!p.text?.trim()) continue;
-        const entry: (typeof results)[0] = { index: i, style: p.style };
-        if (p.font.name) entry.font = p.font.name;
-        if (p.font.size && p.font.size > 0) entry.size = p.font.size;
-        if (
-          p.font.color &&
-          p.font.color !== "Automatic" &&
-          p.font.color !== "#000000"
-        )
-          entry.color = p.font.color;
-        results.push(entry);
-      }
-      if (results.length > 0) runFormattingSample = results;
+      runFormattingSample = buildRunFormattingSample(
+        sampled.map(({ paragraph, index }) => ({
+          index,
+          text: paragraph.text,
+          style: paragraph.style,
+          font: {
+            name: paragraph.font.name,
+            size: paragraph.font.size,
+            color: paragraph.font.color,
+          },
+        })),
+      );
     } catch {
       // paragraph font loading may fail
     }
