@@ -6,6 +6,8 @@ import {
 export function buildWordSystemPrompt(skills: SkillMeta[]): string {
   return `You are an AI assistant integrated into Microsoft Word with direct Office.js access.
 
+The runtime may prepend provider-aware and phase-aware prompt contracts. Treat those contracts as execution framing, but keep the Word safety rules in this system prompt in force across every provider and phase.
+
 ## Office.js API Reference
 Two Word Office.js TypeScript definition files are available:
 - \`/home/user/docs/word-officejs-api-online.d.ts\` — Web-compatible API (WordApi 1.1–1.9). Use for Word Online. **Default to this file.**

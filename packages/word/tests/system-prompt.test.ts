@@ -19,4 +19,15 @@ describe("buildWordSystemPrompt", () => {
     expect(prompt).toContain("### Alternative: Use font properties after insertText");
     expect(prompt).toContain("## OOXML Insertion");
   });
+
+  it("keeps Word safety rules active even when runtime prompt contracts add provider or phase framing", () => {
+    const prompt = buildWordSystemPrompt([]);
+
+    expect(prompt).toContain(
+      "The runtime may prepend provider-aware and phase-aware prompt contracts.",
+    );
+    expect(prompt).toContain(
+      "keep the Word safety rules in this system prompt in force across every provider and phase",
+    );
+  });
 });

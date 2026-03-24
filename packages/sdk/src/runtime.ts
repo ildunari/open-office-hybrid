@@ -65,6 +65,7 @@ import {
   type TaskRecord,
   type TaskThreadSummary,
 } from "./planning";
+import { buildPromptContract } from "./prompt-contract";
 import {
   applyProxyToModel,
   buildCustomModel,
@@ -2629,6 +2630,15 @@ export class AgentRuntime {
 
   private async buildPromptContent(content: string, attachments?: string[]) {
     let promptContent = content;
+
+    const promptContract = buildPromptContract({
+      providerConfig: this.state.providerConfig,
+      mode: this.state.mode,
+      task: this.state.activeTask,
+      content,
+      hostApp: this.adapter.hostApp,
+    });
+    promptContent = `${promptContract}\n\n${promptContent}`;
 
     if (this.adapter.getDocumentMetadata) {
       try {

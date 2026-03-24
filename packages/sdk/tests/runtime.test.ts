@@ -266,6 +266,142 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("builds an explicit GPT mutation prompt contract without Claude-only guidance", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-5",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "medium",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request = "Rewrite the introduction and preserve formatting.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "execute",
+    });
+    internals.update({
+      mode: "execute",
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const prompt = await (runtime as any).buildPromptContent(request);
+
+    expect(prompt).toContain("<prompt_contract");
+    expect(prompt).toContain('provider_family="gpt"');
+    expect(prompt).toContain('phase="mutation"');
+    expect(prompt).toContain("Scope discipline matters");
+    expect(prompt).toContain("one bounded Word write");
+    expect(prompt).not.toContain("Use XML-tagged sections");
+    runtime.dispose();
+  });
+
+  it("builds a reviewer/live-review prompt contract without mutation guidance", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "anthropic",
+      apiKey: "sk-test",
+      model: "claude-sonnet-4-5",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "high",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request =
+      "Live reviewer check for task M08 in Hybrid Word. Stay read-only and capture evidence only.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "execute",
+    });
+    internals.update({
+      mode: "execute",
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const prompt = await (runtime as any).buildPromptContent(request);
+
+    expect(prompt).toContain("<prompt_contract");
+    expect(prompt).toContain('provider_family="claude"');
+    expect(prompt).toContain('phase="reviewer_live_review"');
+    expect(prompt).toContain("Use XML-tagged sections");
+    expect(prompt).toContain("Stay read-only");
+    expect(prompt).not.toContain("one bounded Word write");
+    runtime.dispose();
+  });
+
+  it("builds blocked and resume prompt contracts without leaking reviewer guidance", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request = "Rewrite the selected paragraph and preserve formatting.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "execute",
+    });
+    internals.update({
+      mode: "blocked",
+      handoff: {
+        taskId: "task-1",
+        mode: "blocked",
+        currentIntent: request,
+        summary: "Blocked pending reread.",
+        constraints: ["Preserve formatting."],
+        incompleteVerifications: [],
+        nextRecommendedAction: "Reread the edited paragraph.",
+        updatedAt: Date.now(),
+      } as any,
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const blockedPrompt = await (runtime as any).buildPromptContent(request);
+    expect(blockedPrompt).toContain('phase="blocked"');
+    expect(blockedPrompt).toContain("Do not continue broad exploration or new writes");
+    expect(blockedPrompt).not.toContain("Stay read-only");
+
+    (internals.taskTracker.getCurrentTask() as any).resumeCount = 1;
+    internals.update({
+      mode: "execute",
+      handoff: null,
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const resumePrompt = await (runtime as any).buildPromptContent(request);
+    expect(resumePrompt).toContain('phase="resume"');
+    expect(resumePrompt).toContain("Resume from the recorded blocker");
+    expect(resumePrompt).not.toContain("Stay read-only");
+    runtime.dispose();
+  });
+
   it("sendMessage errors when no config", async () => {
     const runtime = new AgentRuntime(createAdapter());
     await runtime.sendMessage("hello");
