@@ -24,3 +24,8 @@ Architecture facts and decisions relevant to this mission.
   - same-run steering
   - truthful blocked/resume/verification surfaces
   - Hybrid-only live-review targeting and evidence consistency
+- Prompt/framework hardening priorities:
+  - provider-aware prompt shaping instead of one generic instruction blob
+  - phase-aware injection for mutation, reviewer/live-review, and blocked/resume states
+  - active doctrine loading for Word editing (`word-mastery-v3`, `openword-best-practices`) and provider prompting (`prompt-architect`, `gpt-prompt-architect`)
+  - prompt provenance that explains which prompt layers actually governed a run

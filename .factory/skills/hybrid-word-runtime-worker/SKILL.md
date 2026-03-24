@@ -14,6 +14,7 @@ Use for features that change:
 - `packages/sdk/src/hooks/**`
 - `packages/sdk/src/planning/**`
 - `packages/word/src/lib/**`
+- prompt-composition or skill-loading behavior in `packages/sdk/src/skills/**`
 - `packages/bridge/src/**` when the change is in service of runtime truthfulness
 - `packages/core/src/chat/**` when the change is in service of blocked/resume/verification truth
 
@@ -28,19 +29,29 @@ Do not use for primarily live-review harness workflow/features; use `hybrid-live
 ## Work Procedure
 
 1. Read the feature, `mission.md`, mission `AGENTS.md`, and the relevant `.factory/library/*.md` files.
-2. Confirm the touched contract in current code before changing it. Re-read the adjacent runtime/hook/verifier/UI code so the diff stays minimal and correct.
-3. Write or update focused failing tests first. Prefer the narrowest suite that proves the contract gap.
-4. Implement the smallest fix that makes the new tests pass.
-5. Run focused validators for each touched package.
-6. If the feature changes runtime truth, blocked/resume behavior, or verifier state, run the nearest cross-package tests too.
-7. If a real Hybrid session is available, do a bridge-first manual verification using explicit Hybrid targeting. Never use the Dev add-in.
-8. Before finishing, run:
+2. If the feature touches prompt composition or Word editing doctrine, read the relevant repo-local skill inputs first:
+   - `skills/prompt-architect`
+   - `skills/gpt-prompt-architect`
+   - `skills/word-mastery-v3`
+   - `skills/openword-best-practices`
+3. Confirm the touched contract in current code before changing it. Re-read the adjacent runtime/hook/verifier/UI code so the diff stays minimal and correct.
+4. Write or update focused failing tests first. Prefer the narrowest suite that proves the contract gap.
+5. Implement the smallest fix that makes the new tests pass.
+6. Run focused validators for each touched package.
+7. If the feature changes runtime truth, blocked/resume behavior, verifier state, or prompt composition, run the nearest cross-package tests too.
+8. If prompt composition changes, verify both behavior and observability:
+   - which provider/model profile is used
+   - which doctrine/skill layers are active
+   - what phase-specific instructions are present or absent
+9. If a real Hybrid session is available, do a bridge-first manual verification using explicit Hybrid targeting. Never use the Dev add-in.
+10. Before finishing, run:
    - relevant targeted Vitest suites
    - `pnpm typecheck`
    - any additional package-specific checks required by touched files
-9. In the handoff, be explicit about:
+11. In the handoff, be explicit about:
    - what runtime contract changed
    - what tests were added or updated
+   - which prompt/skill/provider layers changed if prompt composition was touched
    - whether live Hybrid verification was attempted or blocked
 
 ## Example Handoff
