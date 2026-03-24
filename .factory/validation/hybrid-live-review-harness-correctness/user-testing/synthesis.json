@@ -1,0 +1,89 @@
+{
+  "milestone": "hybrid-live-review-harness-correctness",
+  "validator": "user-testing",
+  "result": "overridden_pass",
+  "overrideReason": "Auto validator startup is still failing with the worker-exit issue, so final harness assertions were validated from substitute review plus real Hybrid bridge artifacts captured from the connected session on https://localhost:4018.",
+  "assertions": {
+    "VAL-HARNESS-001": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/word-agent-benchmark-suite.test.ts session-resolution coverage",
+        "commit dab9f85",
+        "manual substitute assertion review 2026-03-24"
+      ]
+    },
+    "VAL-HARNESS-002": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/word-agent-benchmark-suite.test.ts preflight-stop coverage",
+        "commit dab9f85",
+        "manual substitute assertion review 2026-03-24"
+      ]
+    },
+    "VAL-HARNESS-003": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/word-benchmark/live-review-submission.mjs reviewer prompt contract",
+        "packages/sdk/tests/word-benchmark/artifacts/live-review/lrb-manual_orchestrator_led-report_tti_generic_v1-2026-03-24T23-09-29-531Z/T21-report-core-execution-diagnostic.json",
+        "commit 271d7c0b5375ff7be4a21a47f6f04110ea0eeec5"
+      ]
+    },
+    "VAL-HARNESS-004": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/word-benchmark/artifacts/live-review/lrb-manual_orchestrator_led-report_tti_generic_v1-2026-03-24T23-09-29-531Z/T21-report-core-reviewer-report.json",
+        "packages/sdk/tests/word-benchmark/artifacts/live-review/lrb-manual_orchestrator_led-report_tti_generic_v1-2026-03-24T23-09-29-531Z/T21-report-core-execution-diagnostic.json",
+        "same-session tuple word:word_8c47490f-c7cd-4ec4-8c9a-90500c6817e2 / 2b27d9bd-15b1-4f2e-aaf9-9459de9aa620"
+      ]
+    },
+    "VAL-HARNESS-005": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/word-benchmark/artifacts/live-review/lrb-manual_orchestrator_led-report_tti_generic_v1-2026-03-24T23-09-29-531Z/batch-report.json",
+        "packages/sdk/tests/word-benchmark/artifacts/live-review/lrb-manual_orchestrator_led-report_tti_generic_v1-2026-03-24T23-09-29-531Z/T21-report-core-task-clone.json",
+        "commit b97174a"
+      ]
+    },
+    "VAL-HARNESS-006": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/word-benchmark/artifacts/live-review/lrb-manual_orchestrator_led-report_tti_generic_v1-2026-03-24T23-09-29-531Z/batch-report.json mismatch_map=[]",
+        "commit 414e3f6",
+        "manual substitute scrutiny review PASS"
+      ]
+    },
+    "VAL-CROSS-001": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/word-benchmark/artifacts/live-review/lrb-manual_orchestrator_led-report_tti_generic_v1-2026-03-24T23-09-29-531Z/T21-report-core-execution-diagnostic.json reviewer_only_success",
+        "commit 271d7c0b5375ff7be4a21a47f6f04110ea0eeec5"
+      ]
+    },
+    "VAL-CROSS-002": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/word-agent-benchmark-suite.test.ts classification boundary coverage",
+        "commit 414e3f6",
+        "manual substitute assertion review 2026-03-24"
+      ]
+    },
+    "VAL-CROSS-003": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/word-benchmark/artifacts/live-review/lrb-manual_orchestrator_led-report_tti_generic_v1-2026-03-24T23-09-29-531Z/T21-report-core-reviewer-report.json evidence_checked includes prompt/tool/completion receipts",
+        "commit 271d7c0b5375ff7be4a21a47f6f04110ea0eeec5"
+      ]
+    },
+    "VAL-CROSS-004": {
+      "status": "passed",
+      "evidence": [
+        "packages/sdk/tests/word-benchmark/artifacts/word-benchmark/live-longrun-rerun-5/Generic-report-template.docx/S01-report-maintenance/action-log.ndjson",
+        "packages/sdk/tests/word-benchmark/artifacts/word-benchmark/live-longrun-rerun-5/run-summary.json",
+        "commit 06c6ba8a46984308dd66c7e60a508dd353337fb1"
+      ]
+    }
+  },
+  "blockedByEnvironment": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": []
+}
