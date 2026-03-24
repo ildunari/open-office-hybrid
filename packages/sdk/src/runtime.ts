@@ -18,8 +18,10 @@ import { ContextManager } from "./context/manager";
 import {
   type Disposable,
   HookRegistry,
+  hasReadCoverage,
   readBeforeWritePostHook,
   readBeforeWritePreHook,
+  scopeKeyFromParams,
 } from "./hooks";
 import {
   agentMessagesToChatMessages,
@@ -1037,6 +1039,9 @@ export class AgentRuntime {
         (execution) =>
           WORD_WRITE_TOOL_NAMES.has(execution.toolName) && !execution.isError,
       );
+    const latestSuccessfulWriteScope = latestSuccessfulWrite
+      ? this.getExecutionScopeKey(latestSuccessfulWrite)
+      : null;
     const firstRead = executions.find(
       (execution) =>
         WORD_READ_TOOL_NAMES.has(execution.toolName) && !execution.isError,
@@ -1082,7 +1087,11 @@ export class AgentRuntime {
           (execution) =>
             !execution.isError &&
             WORD_READ_TOOL_NAMES.has(execution.toolName) &&
-            execution.timestamp >= latestSuccessfulWrite.timestamp,
+            execution.timestamp >= latestSuccessfulWrite.timestamp &&
+            this.isRelevantPostWriteReread(
+              execution,
+              latestSuccessfulWriteScope,
+            ),
         ).length
       : 0;
     const activePlan = this.planManager.getActivePlan();
@@ -1113,6 +1122,51 @@ export class AgentRuntime {
         NO_WRITE_LOOP_RECOVERY_LIMIT - noWriteRecoveryAttemptCount,
       ),
     };
+  }
+
+  private getToolCallArgs(
+    toolCallId: string,
+    toolName: string,
+  ): Record<string, unknown> | null {
+    for (
+      let messageIndex = this.state.messages.length - 1;
+      messageIndex >= 0;
+      messageIndex--
+    ) {
+      const message = this.state.messages[messageIndex];
+      for (const part of message.parts) {
+        if (
+          part.type === "toolCall" &&
+          part.id === toolCallId &&
+          part.name === toolName
+        ) {
+          return part.args;
+        }
+      }
+    }
+    return null;
+  }
+
+  private getExecutionScopeKey(
+    execution: NonNullable<TaskRecord["toolExecutions"]>[number],
+  ): string | null {
+    const args = this.getToolCallArgs(execution.toolCallId, execution.toolName);
+    if (!args) return null;
+    return scopeKeyFromParams(execution.toolName, args);
+  }
+
+  private isRelevantPostWriteReread(
+    execution: NonNullable<TaskRecord["toolExecutions"]>[number],
+    writeScope: string | null,
+  ): boolean {
+    if (!writeScope) {
+      return true;
+    }
+    const readScope = this.getExecutionScopeKey(execution);
+    if (!readScope) {
+      return false;
+    }
+    return hasReadCoverage(new Set([readScope]), writeScope);
   }
 
   private async resumePendingNoWriteRecovery() {

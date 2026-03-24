@@ -123,7 +123,10 @@ export function getWordVerificationSuites(): VerificationSuite[] {
           (execution) =>
             execution.toolName === "execute_office_js" && execution.isError,
         );
-        const hadPostWriteReread = hasPostWriteReread(context.toolExecutions);
+        const hadPostWriteReread =
+          (context.task?.executionDiagnostics?.postWriteRereadCount ?? 0) > 0 ||
+          (context.task?.executionDiagnostics == null &&
+            hasPostWriteReread(context.toolExecutions));
         const loopReason =
           context.task?.executionDiagnostics?.noWriteLoopReason;
 
@@ -184,7 +187,10 @@ export function getWordVerificationSuites(): VerificationSuite[] {
       appliesTo: (context) => WORD_FORMAT_RE.test(context.request),
       verify: (context) => {
         const hadWrite = hasTool(context.toolExecutions, "execute_office_js");
-        const hadPostWriteReread = hasPostWriteReread(context.toolExecutions);
+        const hadPostWriteReread =
+          (context.task?.executionDiagnostics?.postWriteRereadCount ?? 0) > 0 ||
+          (context.task?.executionDiagnostics == null &&
+            hasPostWriteReread(context.toolExecutions));
         const hadFingerprintMismatch = context.promptNotes.some((note) =>
           /format(?:ting)? fingerprint mismatch|formatting drift/i.test(note),
         );
@@ -222,7 +228,10 @@ export function getWordVerificationSuites(): VerificationSuite[] {
         const hadWriteError = context.toolExecutions.some(
           (entry) => entry.isError,
         );
-        const hadPostWriteReread = hasPostWriteReread(context.toolExecutions);
+        const hadPostWriteReread =
+          (context.task?.executionDiagnostics?.postWriteRereadCount ?? 0) > 0 ||
+          (context.task?.executionDiagnostics == null &&
+            hasPostWriteReread(context.toolExecutions));
         const hadRevisionPromptNote = context.promptNotes.some((note) =>
           /revision layer|tracked changes|revision-safe/i.test(note),
         );

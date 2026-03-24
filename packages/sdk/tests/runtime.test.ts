@@ -1549,6 +1549,113 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("does not treat an unrelated reread after the latest successful Word write as verification", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.planManager.replacePlan(
+      buildDefaultPlan(
+        "Rewrite the introduction and preserve formatting.",
+        classification,
+      ),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.update({
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          timestamp: 1,
+          parts: [
+            {
+              type: "toolCall",
+              id: "tc-read",
+              name: "get_document_text",
+              args: { startParagraph: 1, endParagraph: 3 },
+              status: "complete",
+            },
+            {
+              type: "toolCall",
+              id: "tc-write",
+              name: "execute_office_js",
+              args: {
+                code: "const p = context.document.body.paragraphs.items[1]; p.insertText('Updated', Word.InsertLocation.replace);",
+              },
+              status: "complete",
+            },
+            {
+              type: "toolCall",
+              id: "tc-reread-wrong-scope",
+              name: "get_document_text",
+              args: { startParagraph: 8, endParagraph: 10 },
+              status: "complete",
+            },
+          ],
+        },
+      ],
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-read",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "before",
+      timestamp: 1,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-write",
+      toolName: "execute_office_js",
+      isError: false,
+      resultText: "write",
+      timestamp: 2,
+    });
+    internals.taskTracker.recordToolExecution({
+      toolCallId: "tc-reread-wrong-scope",
+      toolName: "get_document_text",
+      isError: false,
+      resultText: "different scope",
+      timestamp: 3,
+    });
+
+    const diagnostics = internals.deriveExecutionDiagnostics(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.taskTracker.setExecutionDiagnostics(diagnostics);
+    internals.planManager.syncWithExecution(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "execute",
+    });
+
+    expect(diagnostics).toEqual(
+      expect.objectContaining({
+        writeCount: 1,
+        postWriteRereadCount: 0,
+        firstWriteAt: 2,
+      }),
+    );
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(2);
+    runtime.dispose();
+  });
+
   it("marks completed plans as done in the runtime summary", async () => {
     const runtime = new AgentRuntime(
       createAdapter({
