@@ -419,6 +419,79 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("treats low-risk formatting edits as mutation-phase Word runs even without rewrite keywords", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-5",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request = "Make the title bold and center it.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "discuss",
+    });
+    internals.update({
+      mode: "discuss",
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const prompt = await (runtime as any).buildPromptContent(request);
+
+    expect(prompt).toContain('phase="mutation"');
+    expect(prompt).toContain("<active_doctrine");
+    expect(prompt).toContain("one bounded Word write");
+    runtime.dispose();
+  });
+
+  it("keeps read-only formatting inspection requests out of mutation-phase prompt framing", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-5",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    const request =
+      "Check whether the title is bold and centered. Keep this read-only.";
+    internals.taskTracker.beginTask(request, inferTaskClassification(request), {
+      mode: "discuss",
+    });
+    internals.update({
+      mode: "discuss",
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+    });
+
+    const prompt = await (runtime as any).buildPromptContent(request);
+
+    expect(prompt).toContain('phase="discuss"');
+    expect(prompt).not.toContain("<active_doctrine");
+    expect(prompt).not.toContain("one bounded Word write");
+    runtime.dispose();
+  });
+
   it("builds blocked and resume prompt contracts without leaking reviewer guidance", async () => {
     const runtime = new AgentRuntime(
       createAdapter({

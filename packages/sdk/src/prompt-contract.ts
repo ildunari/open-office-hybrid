@@ -1,5 +1,9 @@
 import type { HostApp } from "./orchestration/types";
-import type { RuntimeMode, TaskRecord } from "./planning";
+import {
+  inferTaskClassification,
+  type RuntimeMode,
+  type TaskRecord,
+} from "./planning";
 import type { ProviderConfig } from "./provider-config";
 
 export type PromptProviderFamily = "claude" | "gpt" | "gemini" | "generic";
@@ -78,6 +82,12 @@ export function inferPromptPhase(
   }
 
   if (mode === "plan" || mode === "execute" || mode === "verify") {
+    return "mutation";
+  }
+
+  const mutationIntentRequest = task?.userRequest?.trim() || content;
+  const classification = inferTaskClassification(mutationIntentRequest);
+  if (classification.risk !== "none") {
     return "mutation";
   }
 
