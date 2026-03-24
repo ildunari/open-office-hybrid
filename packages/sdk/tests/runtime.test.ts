@@ -816,7 +816,10 @@ describe("AgentRuntime", () => {
     expect(slice.mode).toBe("blocked");
     expect(slice.taskPhase).toBe("blocked");
     expect(slice.waitingState).toBeNull();
-    expect(slice.lastVerification).toEqual({ status: "retryable" });
+    expect(slice.lastVerification).toEqual({
+      status: "retryable",
+      retryable: true,
+    });
     expect(runtime.getState().handoff?.nextRecommendedAction).toContain(
       "retryable verification mismatch",
     );
@@ -871,7 +874,10 @@ describe("AgentRuntime", () => {
     expect(slice.mode).toBe("completed");
     expect(slice.taskPhase).toBe("completed");
     expect(slice.waitingState).toBeNull();
-    expect(slice.lastVerification).toEqual({ status: "retryable" });
+    expect(slice.lastVerification).toEqual({
+      status: "retryable",
+      retryable: true,
+    });
     expect(runtime.getState().degradedGuardrails).toContain(
       "Verification failed after 2 resume attempts; completing with degraded guardrails.",
     );
