@@ -37,6 +37,7 @@ Pencil/
 $tmpkh
 
 # Live Word benchmark outputs and local-only docs
-packages/sdk/tests/word-benchmark/artifacts/
+packages/sdk/tests/word-benchmark/artifacts/*
+!packages/sdk/tests/word-benchmark/artifacts/live-review/
 packages/sdk/tests/word-benchmark/fixtures/NIH Biocoating V30 km edits copy.docx
 ~$*.docx
