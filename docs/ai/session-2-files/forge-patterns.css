@@ -1,0 +1,131 @@
+/* Forge — Factory Patterns
+   Requires: tokens/forge.css
+   Signature patterns inherited from Factory Droid */
+
+/* ── Section Label (orange dot + ALL-CAPS mono) ── */
+.section-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.section-label::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent-500);
+  flex-shrink: 0;
+}
+
+/* ── Status Indicators ── */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  display: inline-block;
+}
+.status-dot-success { background: var(--success); }
+.status-dot-error   { background: var(--error); }
+.status-dot-warning { background: var(--accent-500); }
+.status-dot-info    { background: var(--info); }
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* ── Bug Tracker Row (Factory pattern) ── */
+.tracker-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  transition: border-color var(--duration-fast) var(--ease-default);
+}
+.tracker-row:hover {
+  border-color: var(--border-default);
+}
+.tracker-id {
+  color: var(--text-tertiary);
+  min-width: 56px;
+}
+.tracker-title {
+  color: var(--text-primary);
+  flex: 1;
+}
+
+/* ── Dividers ── */
+.divider {
+  height: 1px;
+  background: var(--border-subtle);
+  border: none;
+}
+.divider-dotted {
+  border: none;
+  border-top: 2px dotted var(--border-subtle);
+}
+
+/* ── CTA with arrow (Factory pattern) ── */
+.cta-arrow::after {
+  content: ' \2192';
+}
+
+/* ── Nav item (Factory ALL-CAPS mono) ── */
+.nav-item {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-default);
+}
+.nav-item:hover {
+  color: var(--text-primary);
+}
+.nav-item.active {
+  color: var(--accent-500);
+}
+
+/* ── Skeleton / Loading (uses Geist Pixel Grid concept) ── */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--gray-200) 25%,
+    var(--gray-300) 50%,
+    var(--gray-200) 75%
+  );
+  background-size: 200% 100%;
+  animation: forge-skeleton 2s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes forge-skeleton {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Terminal cursor blink ── */
+.cursor-blink::after {
+  content: '\2588';
+  animation: forge-blink 1s step-end infinite;
+  color: var(--accent-500);
+}
+@keyframes forge-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

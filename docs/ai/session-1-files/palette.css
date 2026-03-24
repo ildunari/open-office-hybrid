@@ -1,0 +1,57 @@
+/*
+ * Forge Palette — CSS Custom Properties
+ * Mode: Semi-monotone (warm grays + Factory Orange accent)
+ * Generated from palette.json
+ */
+
+:root {
+  /* ─── Backgrounds ─── */
+  --forge-bg-base: #020202;
+  --forge-bg-raised: #0A0A0A;
+  --forge-bg-surface: #111111;
+  --forge-bg-overlay: #1A1A1A;
+  --forge-bg-inset: #000000;
+
+  /* ─── Gray Scale ─── */
+  --forge-gray-100: #1C1A19;
+  --forge-gray-200: #242221;
+  --forge-gray-300: #2E2C2A;
+  --forge-gray-400: #3D3A39;
+  --forge-gray-500: #4D4947;
+  --forge-gray-600: #6B6462;
+  --forge-gray-700: #8A8380;
+  --forge-gray-800: #A49D9A;
+  --forge-gray-900: #D0CDCC;
+  --forge-gray-1000: #EEEEEE;
+
+  /* ─── Accent ─── */
+  --forge-accent-100: #1C0E04;
+  --forge-accent-200: #2D1508;
+  --forge-accent-300: #4A200D;
+  --forge-accent-400: #6B2E12;
+  --forge-accent-500: #D15010;
+  --forge-accent-600: #E8650A;
+  --forge-accent-700: #F07A1A;
+  --forge-accent-800: #F5933D;
+  --forge-accent-900: #FBBF7A;
+  --forge-accent-1000: #FEF0DC;
+
+  /* ─── Text ─── */
+  --forge-text-primary: #EEEEEE;
+  --forge-text-secondary: #A49D9A;
+  --forge-text-tertiary: #6B6462;
+  --forge-text-ghost: #3D3A39;
+  --forge-text-inverse: #020202;
+
+  /* ─── Border ─── */
+  --forge-border-subtle: #2A2827;
+  --forge-border-default: #4D4947;
+  --forge-border-strong: #8A8380;
+  --forge-border-focus: #D15010;
+
+  /* ─── Semantic ─── */
+  --forge-semantic-success: #22c55e;
+  --forge-semantic-error: #ef4444;
+  --forge-semantic-warning: #E8650A;
+  --forge-semantic-info: #0080FF;
+}

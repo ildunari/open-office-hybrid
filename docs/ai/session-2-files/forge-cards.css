@@ -1,0 +1,38 @@
+/* Forge — Cards
+   Requires: tokens/forge.css */
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-6);
+  transition: border-color var(--duration-fast) var(--ease-default);
+}
+.card:hover {
+  border-color: var(--border-strong);
+}
+
+/* Highlighted — active tier, selected */
+.card-highlighted {
+  border-color: var(--border-strong);
+}
+
+/* Card with accent border */
+.card-accent {
+  border-color: var(--accent-500);
+}
+
+/* Card content helpers */
+.card-title {
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  margin-bottom: var(--space-2);
+}
+
+.card-description {
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+}

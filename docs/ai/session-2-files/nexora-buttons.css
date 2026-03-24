@@ -1,0 +1,109 @@
+/* Nexora Mono — Buttons
+   Requires: tokens/nexora-mono.css */
+
+.btn {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-default);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  text-decoration: none;
+  line-height: 1;
+  transition: all var(--duration-fast) var(--ease-default);
+}
+
+/* Primary — black fill */
+.btn-primary {
+  color: #FFFFFF;
+  background: #000000;
+  border: 1px solid #000000;
+}
+.btn-primary:hover {
+  background: #262626;
+  border-color: #262626;
+}
+
+/* Secondary — outlined */
+.btn-secondary {
+  color: #000000;
+  background: transparent;
+  border: 1px solid #E5E5E5;
+}
+.btn-secondary:hover {
+  border-color: #000000;
+}
+
+/* Ghost — text only */
+.btn-ghost {
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+}
+.btn-ghost:hover {
+  background: #F5F5F5;
+  color: var(--text-primary);
+}
+
+/* Danger — semantic red */
+.btn-danger {
+  color: #FFFFFF;
+  background: var(--error);
+  border: 1px solid var(--error);
+}
+.btn-danger:hover {
+  opacity: 0.85;
+}
+
+/* Disabled state */
+.btn:disabled,
+.btn[disabled] {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ── Dark mode inversions ── */
+.dark .btn-primary,
+[data-theme="dark"] .btn-primary {
+  color: #000000;
+  background: #FFFFFF;
+  border-color: #FFFFFF;
+}
+.dark .btn-primary:hover,
+[data-theme="dark"] .btn-primary:hover {
+  background: #E5E5E5;
+  border-color: #E5E5E5;
+}
+
+.dark .btn-secondary,
+[data-theme="dark"] .btn-secondary {
+  color: #FAFAFA;
+  border-color: #404040;
+}
+.dark .btn-secondary:hover,
+[data-theme="dark"] .btn-secondary:hover {
+  border-color: #FAFAFA;
+}
+
+.dark .btn-ghost:hover,
+[data-theme="dark"] .btn-ghost:hover {
+  background: #1C1C1C;
+}
+
+/* ── Size variants ── */
+.btn-sm {
+  font-size: 0.6875rem;
+  padding: var(--space-1) var(--space-3);
+}
+
+.btn-lg {
+  font-size: var(--text-sm);
+  padding: var(--space-3) var(--space-6);
+}

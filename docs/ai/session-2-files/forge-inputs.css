@@ -1,0 +1,44 @@
+/* Forge — Form Inputs
+   Requires: tokens/forge.css */
+
+.input {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  outline: none;
+  width: 100%;
+  transition: border-color var(--duration-fast) var(--ease-default);
+}
+.input:focus {
+  border-color: var(--accent-500);
+}
+.input::placeholder {
+  color: var(--text-ghost);
+}
+.input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Label */
+.input-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  display: block;
+  margin-bottom: var(--space-1);
+}
+
+/* Input group (label + input) */
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}

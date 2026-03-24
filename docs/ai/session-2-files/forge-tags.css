@@ -1,0 +1,40 @@
+/* Forge — Tags / Chips
+   Requires: tokens/forge.css */
+
+.tag {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
+.tag-default {
+  color: var(--text-secondary);
+  background: var(--gray-100);
+}
+
+.tag-accent {
+  color: var(--accent-900);
+  background: var(--accent-300);
+}
+
+.tag-success {
+  color: var(--green-900);
+  background: var(--green-100);
+}
+
+.tag-error {
+  color: var(--red-900);
+  background: var(--red-100);
+}
+
+.tag-info {
+  color: var(--blue-900);
+  background: var(--blue-100);
+}

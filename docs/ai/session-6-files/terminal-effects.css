@@ -1,0 +1,101 @@
+/* ═══════════════════════════════════════════════
+   Terminal Effects — CSS-only ambient layer
+   ═══════════════════════════════════════════════
+   Keep Motion for stateful choreography.
+   Keep CSS for tiny ambient loops. */
+
+/* ── Caret blink ── */
+@keyframes caret-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.terminal-caret {
+  display: inline-block;
+  width: 8px;
+  height: 1.1em;
+  background: var(--caret-color, #5EEAD4);
+  vertical-align: text-bottom;
+  animation: caret-blink 1s step-end infinite;
+}
+.terminal-caret--fade {
+  animation: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+/* ── Scanline overlay ── */
+@keyframes scanline-scroll {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 4px; }
+}
+.scanline-overlay {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(255, 255, 255, 0.015) 2px,
+    rgba(255, 255, 255, 0.015) 4px
+  );
+  animation: scanline-scroll 0.15s linear infinite;
+  z-index: 1;
+}
+
+/* ── Phosphor glow ── */
+.phosphor-glow {
+  text-shadow:
+    0 0 4px var(--glow-color, rgba(94, 234, 212, 0.2)),
+    0 0 12px var(--glow-color, rgba(94, 234, 212, 0.08));
+}
+
+/* ── Focus ring ── */
+.terminal-focus-ring:focus-within {
+  box-shadow:
+    0 0 0 1px var(--ring-color, #D15010),
+    0 0 12px rgba(209, 80, 16, 0.15);
+}
+
+/* ── Running accent line ── */
+@keyframes running-line {
+  0% { transform: scaleX(0); transform-origin: left; }
+  50% { transform: scaleX(1); transform-origin: left; }
+  50.01% { transform-origin: right; }
+  100% { transform: scaleX(0); transform-origin: right; }
+}
+.running-line {
+  height: 2px;
+  background: var(--line-color, #D15010);
+  animation: running-line 1.2s ease-in-out infinite;
+}
+
+/* ── Status orb ambient ── */
+@keyframes orb-breathe {
+  0%, 100% { box-shadow: 0 0 4px var(--orb-color, #5EEAD4), 0 0 8px var(--orb-color-dim, rgba(94,234,212,0.2)); }
+  50% { box-shadow: 0 0 8px var(--orb-color, #5EEAD4), 0 0 20px var(--orb-color-dim, rgba(94,234,212,0.3)); }
+}
+.orb-breathe {
+  animation: orb-breathe 2s ease-in-out infinite;
+}
+
+/* ── Spinner segments ── */
+@keyframes segment-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.segment-spinner {
+  animation: segment-spin 1s linear infinite;
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .terminal-caret,
+  .scanline-overlay,
+  .running-line,
+  .orb-breathe,
+  .segment-spinner {
+    animation: none !important;
+  }
+  .terminal-caret { opacity: 1; }
+}

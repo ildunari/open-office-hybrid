@@ -1,0 +1,73 @@
+/* Forge — Buttons
+   Requires: tokens/forge.css */
+
+.btn {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  text-decoration: none;
+  line-height: 1;
+  transition: all var(--duration-fast) var(--ease-default);
+}
+
+/* Primary — filled white (dark) / black (light) */
+.btn-primary {
+  color: var(--text-inverse);
+  background: var(--text-primary);
+  border: 1px solid var(--text-primary);
+}
+.btn-primary:hover { opacity: 0.85; }
+
+/* Secondary — outlined */
+.btn-secondary {
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+}
+.btn-secondary:hover { border-color: var(--text-primary); }
+
+/* Ghost — text only, arrow suffix */
+.btn-ghost {
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid transparent;
+  padding-left: 0;
+  padding-right: 0;
+}
+.btn-ghost::after { content: ' \2192'; }
+.btn-ghost:hover { color: var(--text-primary); }
+
+/* Accent — orange CTA */
+.btn-accent {
+  color: var(--text-primary);
+  background: var(--accent-500);
+  border: 1px solid var(--accent-500);
+}
+.btn-accent:hover {
+  background: var(--accent-600);
+  border-color: var(--accent-600);
+}
+
+/* Danger — red destructive */
+.btn-danger {
+  color: var(--gray-1000);
+  background: var(--error);
+  border: 1px solid var(--error);
+}
+.btn-danger:hover { opacity: 0.85; }
+
+/* Disabled state */
+.btn:disabled,
+.btn[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
