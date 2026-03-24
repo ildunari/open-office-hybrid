@@ -62,6 +62,19 @@ const LOCAL_WORD_MUTATION_PATTERNS = [
   /insertComment\s*\(/i,
 ];
 
+function inferParagraphWriteScope(code: string): string | null {
+  const directParagraphMatch =
+    /paragraphs\.items\s*\[\s*(\d+)\s*\]\s*\.(?:insertText|insertParagraph|insertHtml|insertOoxml|clear|delete)\s*\(/i.exec(
+      code,
+    );
+  if (directParagraphMatch) {
+    const paragraphIndex = Number(directParagraphMatch[1]) + 1;
+    return `word:para:${paragraphIndex}-${paragraphIndex}`;
+  }
+
+  return null;
+}
+
 function isWordTool(toolName: string): boolean {
   return (
     toolName.startsWith("get_document") ||
@@ -119,6 +132,10 @@ export function scopeKeyFromParams(
         BROAD_WORD_MUTATION_PATTERNS.some((pattern) => pattern.test(code))
       ) {
         return "word:all";
+      }
+      const inferredParagraphWriteScope = inferParagraphWriteScope(code);
+      if (inferredParagraphWriteScope) {
+        return inferredParagraphWriteScope;
       }
       if (
         !code ||
@@ -196,9 +213,6 @@ export function hasReadCoverage(
       if (!readWordScope || !writeWordScope) {
         continue;
       }
-      if (writeWordScope.kind === "local") {
-        return true;
-      }
       if (
         (readWordScope.kind === "para" || readWordScope.kind === "child") &&
         (writeWordScope.kind === "para" || writeWordScope.kind === "child") &&
@@ -250,8 +264,8 @@ export const readBeforeWritePreHook: PreHookDefinition = {
         writeScope === "word:all"
           ? "Detected a broad Word write. Read a broad document or structure scope first."
           : writeScope === WORD_LOCAL_WRITE_SCOPE
-            ? "Read the target Word scope first, then perform the bounded write."
-            : `Attempted write scope: ${writeScope}`;
+            ? "Read the target Word scope first, then perform the bounded write. The runtime could not prove overlapping read coverage for this bounded Word write, so it is failing closed."
+            : `Read the target Word scope first, then perform the bounded write. Attempted write scope: ${writeScope}`;
       return {
         action: "abort",
         errorMessage:

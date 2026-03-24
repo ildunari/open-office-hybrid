@@ -30,9 +30,45 @@ describe("read-before-write guards", () => {
       `,
     });
 
-    expect(writeScope).toBe("word:local");
+    expect(writeScope).toBe("word:para:5-5");
     expect(hasReadCoverage(new Set(["word:para:5-5"]), writeScope)).toBe(true);
-    expect(hasReadCoverage(new Set(["word:child:2-4"]), writeScope)).toBe(true);
+    expect(hasReadCoverage(new Set(["word:child:2-4"]), writeScope)).toBe(
+      false,
+    );
+  });
+
+  it("rejects non-overlapping local Word reads for bounded local writes", () => {
+    const writeScope = scopeKeyFromParams("execute_office_js", {
+      code: `
+        const paragraphs = context.document.body.paragraphs;
+        paragraphs.load("items");
+        await context.sync();
+        paragraphs.items[6].insertText("Updated", "Replace");
+        await context.sync();
+      `,
+    });
+
+    expect(writeScope).toBe("word:para:7-7");
+    expect(hasReadCoverage(new Set(["word:para:2-2"]), writeScope)).toBe(
+      false,
+    );
+    expect(hasReadCoverage(new Set(["word:para:6-8"]), writeScope)).toBe(true);
+  });
+
+  it("fails closed for bounded local writes when overlap cannot be proven", () => {
+    const writeScope = scopeKeyFromParams("execute_office_js", {
+      code: `
+        const range = context.document.getSelection();
+        range.insertText("Updated", "Replace");
+        await context.sync();
+      `,
+    });
+
+    expect(writeScope).toBe("word:local");
+    expect(hasReadCoverage(new Set(["word:para:0-0"]), writeScope)).toBe(
+      false,
+    );
+    expect(hasReadCoverage(new Set(["word:all"]), writeScope)).toBe(true);
   });
 
   it("keeps broad execute_office_js edits gated on broad Word reads", () => {
@@ -71,6 +107,19 @@ describe("read-before-write guards", () => {
     expect(localResult.action).toBe("abort");
     expect(localResult.errorMessage).toContain(
       "Read the target Word scope first, then perform the bounded write.",
+    );
+    expect(localResult.errorMessage).toContain("Attempted write scope: word:para:1-1");
+
+    const unresolvedLocalResult = readBeforeWritePreHook.execute({
+      toolName: "execute_office_js",
+      params: {
+        code: 'context.document.getSelection().insertText("x", "Replace")',
+      },
+      sessionState: { readScopes: new Set(["word:para:0-0"]) },
+    } as never);
+    expect(unresolvedLocalResult.action).toBe("abort");
+    expect(unresolvedLocalResult.errorMessage).toContain(
+      "runtime could not prove overlapping read coverage",
     );
 
     const broadResult = readBeforeWritePreHook.execute({
