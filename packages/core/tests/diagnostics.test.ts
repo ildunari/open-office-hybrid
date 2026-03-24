@@ -22,6 +22,8 @@ const corpusScenarios = JSON.parse(
 describe("buildDiagnosticsModel", () => {
   it("selects the active thread and sorts diagnostic collections predictably", () => {
     const model = buildDiagnosticsModel({
+      mode: "blocked",
+      taskPhase: "blocked",
       permissionMode: "confirm_risky",
       capabilityBoundary: {
         mode: "standard",
@@ -96,6 +98,22 @@ describe("buildDiagnosticsModel", () => {
         },
       ],
       activeThreadId: "thread-1",
+      waitingState: {
+        kind: "retry_exhausted",
+        reason: "Verification follow-up required",
+        resumeMessage: "Resume after rereading the edited paragraph.",
+        createdAt: 25,
+      },
+      handoff: {
+        taskId: "task-1",
+        mode: "execute",
+        currentIntent: "Update the grant summary",
+        constraints: [],
+        incompleteVerifications: ["word-reread"],
+        nextRecommendedAction: "Resume after rereading the edited paragraph.",
+        summary: "Verification is blocked on a missing reread of the edited paragraph.",
+        updatedAt: 26,
+      },
       compactionState: {
         artifactCount: 2,
         lastCompactedThreadId: "thread-2",
@@ -113,10 +131,13 @@ describe("buildDiagnosticsModel", () => {
         },
       ],
       lastVerification: {
-        status: "passed",
-        retryable: false,
+        status: "retryable",
+        retryable: true,
         results: [],
       },
+      degradedGuardrails: [
+        "Verification failed after 2 resume attempts; completing with degraded guardrails.",
+      ],
     });
 
     expect(model.activeThread?.id).toBe("thread-1");
@@ -131,10 +152,26 @@ describe("buildDiagnosticsModel", () => {
       "trace-2",
       "trace-1",
     ]);
+    expect(model.runtimeTruth.waitingState).toBe("retry_exhausted");
+    expect(model.runtimeTruth.waitingReason).toBe(
+      "Verification follow-up required",
+    );
+    expect(model.runtimeTruth.handoffSummary).toBe(
+      "Verification is blocked on a missing reread of the edited paragraph.",
+    );
+    expect(model.runtimeTruth.nextRecommendedAction).toBe(
+      "Resume after rereading the edited paragraph.",
+    );
+    expect(model.runtimeTruth.verificationRetryable).toBe(true);
+    expect(model.runtimeTruth.degradedGuardrails).toEqual([
+      "Verification failed after 2 resume attempts; completing with degraded guardrails.",
+    ]);
   });
 
   it("trims crowded diagnostics collections to the latest policy trace entries and first completion artifacts", () => {
     const model = buildDiagnosticsModel({
+      mode: "execute",
+      taskPhase: "execute",
       permissionMode: "confirm_risky",
       capabilityBoundary: {
         mode: "standard",
@@ -160,6 +197,8 @@ describe("buildDiagnosticsModel", () => {
       activeVerifierIds: [],
       threads: [],
       activeThreadId: null,
+      waitingState: null,
+      handoff: null,
       compactionState: null,
       completionArtifacts: Array.from({ length: 7 }, (_, index) => ({
         id: `artifact-${index + 1}`,
@@ -171,6 +210,7 @@ describe("buildDiagnosticsModel", () => {
         createdAt: index + 1,
       })),
       lastVerification: null,
+      degradedGuardrails: [],
     });
 
     expect(model.recentPolicyTrace).toHaveLength(6);
@@ -202,6 +242,8 @@ describe("buildDiagnosticsModel", () => {
     }));
 
     const model = buildDiagnosticsModel({
+      mode: "discuss",
+      taskPhase: "discuss",
       permissionMode: "confirm_risky",
       capabilityBoundary: {
         mode: "standard",
@@ -219,9 +261,12 @@ describe("buildDiagnosticsModel", () => {
       activeVerifierIds: [],
       threads: [],
       activeThreadId: null,
+      waitingState: null,
+      handoff: null,
       compactionState: null,
       completionArtifacts: [],
       lastVerification: null,
+      degradedGuardrails: [],
     });
 
     expect(model.instructionSources).toHaveLength(corpusScenarios.scenarios.length);

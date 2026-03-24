@@ -466,6 +466,9 @@ export class AgentRuntime {
     isStreaming: boolean;
     permissionMode: string;
     waitingState: string | null;
+    waitingReason: string | null;
+    handoffSummary: string | null;
+    nextRecommendedAction: string | null;
     activePlanSummary: {
       id: string;
       status: string;
@@ -479,7 +482,11 @@ export class AgentRuntime {
       toolExecutionCount: number;
     } | null;
     contextBudget: { usagePct: number; action: string };
-    lastVerification: { status: string } | null;
+    lastVerification: { status: string; retryable: boolean } | null;
+    latestCompletion: {
+      summary: string;
+      verificationStatus: string;
+    } | null;
     sessionStats: {
       inputTokens: number;
       outputTokens: number;
@@ -501,6 +508,9 @@ export class AgentRuntime {
       isStreaming: s.isStreaming,
       permissionMode: s.permissionMode,
       waitingState: s.waitingState?.kind ?? null,
+      waitingReason: s.waitingState?.reason ?? null,
+      handoffSummary: s.handoff?.summary ?? null,
+      nextRecommendedAction: s.handoff?.nextRecommendedAction ?? null,
       activePlanSummary: plan
         ? {
             id: plan.id,
@@ -519,7 +529,16 @@ export class AgentRuntime {
         : null,
       contextBudget: s.contextBudgetState ?? { usagePct: 0, action: "none" },
       lastVerification: s.lastVerification
-        ? { status: s.lastVerification.status }
+        ? {
+            status: s.lastVerification.status,
+            retryable: s.lastVerification.retryable,
+          }
+        : null,
+      latestCompletion: s.completionArtifacts[0]
+        ? {
+            summary: s.completionArtifacts[0].summary,
+            verificationStatus: s.completionArtifacts[0].verificationStatus,
+          }
         : null,
       sessionStats: {
         inputTokens: stats.inputTokens,

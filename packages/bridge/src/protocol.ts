@@ -261,6 +261,9 @@ export interface BridgeRuntimeStateSlice {
   isStreaming: boolean;
   permissionMode: string;
   waitingState: string | null;
+  waitingReason?: string | null;
+  handoffSummary?: string | null;
+  nextRecommendedAction?: string | null;
   activePlanSummary: {
     id: string;
     status: string;
@@ -271,9 +274,14 @@ export interface BridgeRuntimeStateSlice {
     id: string;
     status: string;
     mode: string;
+    toolExecutionCount?: number;
   } | null;
   contextBudget: { usagePct: number; action: string };
-  lastVerification: { status: string } | null;
+  lastVerification: { status: string; retryable?: boolean } | null;
+  latestCompletion?: {
+    summary: string;
+    verificationStatus: string;
+  } | null;
   sessionStats: {
     inputTokens: number;
     outputTokens: number;

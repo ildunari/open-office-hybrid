@@ -1126,10 +1126,14 @@ describe("bridge server state diff endpoint", () => {
       isStreaming: true,
       permissionMode: "auto",
       waitingState: null,
+      waitingReason: null,
+      handoffSummary: null,
+      nextRecommendedAction: null,
       activePlanSummary: null,
       activeTaskSummary: null,
       contextBudget: { usagePct: 0.25, action: "continue" },
       lastVerification: null,
+      latestCompletion: null,
       sessionStats: {
         inputTokens: 100,
         outputTokens: 200,
@@ -1187,6 +1191,9 @@ describe("bridge server state diff endpoint", () => {
       isStreaming: false,
       permissionMode: "confirm_risky",
       waitingState: "approval",
+      waitingReason: "Verification follow-up required",
+      handoffSummary: "Verification is blocked on a missing reread.",
+      nextRecommendedAction: "Resume after rereading the edited paragraph.",
       activePlanSummary: {
         id: "plan-1",
         status: "in_progress",
@@ -1197,9 +1204,14 @@ describe("bridge server state diff endpoint", () => {
         id: "task-1",
         status: "blocked",
         mode: "verify",
+        toolExecutionCount: 6,
       },
       contextBudget: { usagePct: 0.88, action: "compact" },
-      lastVerification: { status: "retryable" },
+      lastVerification: { status: "retryable", retryable: true },
+      latestCompletion: {
+        summary: "Completed with degraded guardrails after verification retries.",
+        verificationStatus: "retryable",
+      },
       sessionStats: {
         inputTokens: 321,
         outputTokens: 654,
@@ -1238,6 +1250,15 @@ describe("bridge server state diff endpoint", () => {
 
     expect(diff.ok).toBe(true);
     expect(diff.runtimeStateDiff.waitingState).toBe("approval");
+    expect(diff.runtimeStateDiff.waitingReason).toBe(
+      "Verification follow-up required",
+    );
+    expect(diff.runtimeStateDiff.handoffSummary).toBe(
+      "Verification is blocked on a missing reread.",
+    );
+    expect(diff.runtimeStateDiff.nextRecommendedAction).toBe(
+      "Resume after rereading the edited paragraph.",
+    );
     expect(diff.runtimeStateDiff.activePlanSummary).toEqual({
       id: "plan-1",
       status: "in_progress",
@@ -1248,6 +1269,15 @@ describe("bridge server state diff endpoint", () => {
       id: "task-1",
       status: "blocked",
       mode: "verify",
+      toolExecutionCount: 6,
+    });
+    expect(diff.runtimeStateDiff.lastVerification).toEqual({
+      status: "retryable",
+      retryable: true,
+    });
+    expect(diff.runtimeStateDiff.latestCompletion).toEqual({
+      summary: "Completed with degraded guardrails after verification retries.",
+      verificationStatus: "retryable",
     });
     expect(diff.runtimeStateDiff.threadCount).toBe(2);
     expect(diff.runtimeStateDiff.activeThreadId).toBe("thread-2");

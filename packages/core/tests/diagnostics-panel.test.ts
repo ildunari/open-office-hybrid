@@ -8,6 +8,8 @@ describe("DiagnosticsPanel", () => {
       props: {
         initiallyExpanded: true,
         runtimeState: {
+          mode: "blocked",
+          taskPhase: "blocked",
           permissionMode: "confirm_risky",
           capabilityBoundary: {
             mode: "standard",
@@ -55,6 +57,24 @@ describe("DiagnosticsPanel", () => {
             },
           ],
           activeThreadId: "thread-1",
+          waitingState: {
+            kind: "retry_exhausted",
+            reason: "Verification follow-up required",
+            resumeMessage: "Resume after rereading the edited paragraph.",
+            createdAt: Date.now(),
+          },
+          handoff: {
+            taskId: "task-1",
+            mode: "execute",
+            currentIntent: "Update the grant summary",
+            constraints: [],
+            incompleteVerifications: ["word-reread"],
+            nextRecommendedAction:
+              "Resume after rereading the edited paragraph.",
+            summary:
+              "Verification is blocked on a missing reread of the edited paragraph.",
+            updatedAt: Date.now(),
+          },
           compactionState: {
             artifactCount: 1,
             lastCompactedThreadId: "thread-old",
@@ -72,10 +92,13 @@ describe("DiagnosticsPanel", () => {
             },
           ],
           lastVerification: {
-            status: "passed",
-            retryable: false,
+            status: "retryable",
+            retryable: true,
             results: [],
           },
+          degradedGuardrails: [
+            "Verification failed after 2 resume attempts; completing with degraded guardrails.",
+          ],
         },
       },
     });
@@ -88,5 +111,16 @@ describe("DiagnosticsPanel", () => {
     expect(body).toContain("verifier-a");
     expect(body).toContain("Main thread");
     expect(body).toContain("Completed safely");
+    expect(body).toContain("runtime truth");
+    expect(body).toContain("retry_exhausted");
+    expect(body).toContain("Verification follow-up required");
+    expect(body).toContain(
+      "Verification is blocked on a missing reread of the edited paragraph.",
+    );
+    expect(body).toContain("Resume after rereading the edited paragraph.");
+    expect(body).toContain("retryable");
+    expect(body).toContain(
+      "Verification failed after 2 resume attempts; completing with degraded guardrails.",
+    );
   });
 });
