@@ -240,43 +240,42 @@ export class ContextCompactor {
     diskState: { plan?: ExecutionPlan | null; task?: TaskRecord | null },
     keepTurns = 3,
   ): AgentMessage[] {
-    // Collect the last keepTurns user→assistant exchanges from the tail
+    // Collect the last keepTurns user-initiated exchanges from the tail.
+    // A "turn" is one user message plus ALL subsequent assistant/toolResult
+    // messages until the next user message. This correctly handles multi-hop
+    // tool sequences (user → assistant → toolResult → assistant → ...).
     const recentTurns: AgentMessage[] = [];
     let turnsCollected = 0;
     let i = allMessages.length - 1;
 
     while (i >= 0 && turnsCollected < keepTurns) {
-      // Walk backward: find an assistant message, then its preceding user message
-      while (i >= 0 && allMessages[i]!.role !== "assistant") {
+      // Walk backward to find the next user message
+      while (i >= 0 && allMessages[i]!.role !== "user") {
         i--;
       }
       if (i < 0) break;
 
-      // Collect any trailing toolResult messages that belong to this assistant turn
-      const turnMessages: AgentMessage[] = [];
-      // Collect assistant message
-      turnMessages.unshift(allMessages[i]!);
-      i--;
-
-      // Collect tool results that precede this assistant message in the array
-      // (tool results come after the assistant message that issued the call)
-      // Actually in pi-agent layout: user → assistant → toolResult* → assistant ...
-      // Walk forward from this assistant to collect its tool results
-      // But since we're going backward, recentTurns already has those.
-      // Re-approach: walk backwards collecting assistant+preceding user block.
-      while (i >= 0 && allMessages[i]!.role === "toolResult") {
-        turnMessages.unshift(allMessages[i]!);
-        i--;
+      // Found a user message at index i. Collect everything from here
+      // forward until the next user message (or end of the collected range).
+      const turnStart = i;
+      // Find the end: scan forward from turnStart to find where the next
+      // already-collected turn begins, or the end of allMessages.
+      let turnEnd = turnStart + 1;
+      while (
+        turnEnd < allMessages.length &&
+        allMessages[turnEnd]!.role !== "user" &&
+        // Stop before messages already in recentTurns
+        (recentTurns.length === 0 ||
+          turnEnd < allMessages.length - recentTurns.length)
+      ) {
+        turnEnd++;
       }
 
-      // Now expect a user message
-      if (i >= 0 && allMessages[i]!.role === "user") {
-        turnMessages.unshift(allMessages[i]!);
-        i--;
-      }
-
+      // Prepend this turn's messages
+      const turnMessages = allMessages.slice(turnStart, turnEnd);
       recentTurns.unshift(...turnMessages);
       turnsCollected++;
+      i = turnStart - 1;
     }
 
     // Build the synthetic context recovery message text

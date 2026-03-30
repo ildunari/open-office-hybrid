@@ -1053,16 +1053,28 @@ export class AgentRuntime {
    * `trigger` distinguishes user-initiated compaction from the auto-trigger
    * that fires when context usage crosses the 90 % threshold.
    */
+  private isCompacting = false;
+
   async compactContext(trigger: "auto" | "manual" = "manual"): Promise<boolean> {
     if (!this.agent || !this.currentSessionId) return false;
     if (this.state.isStreaming) return false;
+    if (this.isCompacting) return false; // serialization guard
 
-    const messages = this.agent.state.messages ?? [];
+    this.isCompacting = true;
+    try {
+      return await this.doCompaction(trigger);
+    } finally {
+      this.isCompacting = false;
+    }
+  }
+
+  private async doCompaction(trigger: "auto" | "manual"): Promise<boolean> {
+    const messages = this.agent!.state.messages ?? [];
     if (messages.length < 4) return false;
 
     const usage = this.state.sessionStats.lastInputTokens;
-    const window = this.state.sessionStats.contextWindow;
-    const isEmergency = this.contextManager.shouldEmergencyCompact(usage, window);
+    const ctxWindow = this.state.sessionStats.contextWindow;
+    const isEmergency = this.contextManager.shouldEmergencyCompact(usage, ctxWindow);
 
     try {
       let rebuiltMessages: AgentMessage[];
@@ -1091,7 +1103,7 @@ export class AgentRuntime {
         );
       } else {
         const filtered = this.compactor.preFilter(messages);
-        const ledger = await loadLedger(this.currentSessionId);
+        const ledger = await loadLedger(this.currentSessionId!);
         const prompt = this.compactor.buildSummarizerPrompt(filtered, ledger);
 
         const cfg = this.config ?? this.state.providerConfig;
@@ -1132,6 +1144,12 @@ export class AgentRuntime {
 
         const summary = this.compactor.parseSummary(responseText, messages.length);
 
+        // Abort if summarizer returned garbage — don't destroy history with empty summary
+        if (!summary.currentState || summary.currentState.length < 10) {
+          console.warn("[Runtime] Summarizer returned weak summary, aborting compaction.");
+          return false;
+        }
+
         rebuiltMessages = this.compactor.rebuildMessages(
           summary,
           messages,
@@ -1148,10 +1166,10 @@ export class AgentRuntime {
           cascadeDepth: (ledger[ledger.length - 1]?.cascadeDepth ?? 0) + 1,
           createdAt: Date.now(),
         };
-        await appendLedger(this.currentSessionId, ledgerEntry);
+        await appendLedger(this.currentSessionId!, ledgerEntry);
       }
 
-      this.agent.replaceMessages(rebuiltMessages);
+      this.agent!.replaceMessages(rebuiltMessages);
 
       const chatMessages = agentMessagesToChatMessages(rebuiltMessages);
       const stats = deriveStats(rebuiltMessages);
@@ -1168,7 +1186,7 @@ export class AgentRuntime {
           : [],
         createdAt: Date.now(),
       };
-      await createCompactionArtifact(this.currentSessionId, artifact);
+      await createCompactionArtifact(this.currentSessionId!, artifact);
 
       this.update({
         messages: chatMessages,
@@ -1180,6 +1198,9 @@ export class AgentRuntime {
         },
       });
 
+      // Persist session so compacted messages survive reload
+      await this.persistSessionState();
+
       this.emitBridgeEvent("context:compacted", {
         artifactCount: (this.state.compactionState?.artifactCount ?? 0) + 1,
         threadId: activeThreadId ?? null,
@@ -1188,9 +1209,7 @@ export class AgentRuntime {
       return true;
     } catch (error) {
       console.error("[Runtime] Compaction failed:", error);
-      if (!isEmergency && trigger === "auto") {
-        return this.compactContext("auto");
-      }
+      // No retry — failed compaction should not recurse
       return false;
     }
   }

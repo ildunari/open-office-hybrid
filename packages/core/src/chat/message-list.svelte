@@ -36,6 +36,8 @@
 
   const DEFAULT_HEIGHT = 80;
   const BUFFER = 3;
+  /** Gap between items from space-y-3 (0.75rem = 12px at default font size) */
+  const ITEM_GAP = 12;
 
   // ── grouping (unchanged logic) ───────────────────────────────────────────────
   function flattenAssistantParts(messages: ChatMessage[]) {
@@ -103,7 +105,9 @@
     for (let i = 0; i < groups.length; i++) {
       const key = groupKey(groups[i]);
       const h = measuredHeights.get(key) ?? DEFAULT_HEIGHT;
-      offsets[i + 1] = offsets[i] + h;
+      // Add inter-item gap (space-y-3 = 12px) for all items after the first
+      const gap = i > 0 ? ITEM_GAP : 0;
+      offsets[i + 1] = offsets[i] + h + gap;
     }
     return offsets;
   });
@@ -193,6 +197,9 @@
     // Schedule measurement after DOM settles
     void tick().then(() => {
       let changed = false;
+      let scrollDelta = 0;
+      const currentScrollTop = container?.scrollTop ?? 0;
+
       for (let i = 0; i < items.length; i++) {
         const el = itemRefs[i];
         if (!el) continue;
@@ -201,6 +208,11 @@
         if (measured > 0) {
           const prev = measuredHeights.get(key) ?? DEFAULT_HEIGHT;
           if (Math.abs(prev - measured) > 4) {
+            // If this item is above the viewport, compensate scroll position
+            const itemOffset = cumulativeHeights[items[i].originalIndex] ?? 0;
+            if (itemOffset < currentScrollTop) {
+              scrollDelta += measured - prev;
+            }
             measuredHeights.set(key, measured);
             changed = true;
           }
@@ -210,6 +222,10 @@
         // Reassign the map to trigger $state reactivity, then bump revision
         measuredHeights = new Map(measuredHeights);
         heightRevision += 1;
+        // Compensate scroll position to prevent visible jump
+        if (scrollDelta !== 0 && container) {
+          container.scrollTop = currentScrollTop + scrollDelta;
+        }
       }
     });
   });
