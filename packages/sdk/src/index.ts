@@ -2,7 +2,14 @@
 
 // Context
 export { type ContextAction, ContextManager } from "./context/manager";
-export type { ContextBudget, DocumentMap } from "./context/types";
+export { ContextCompactor } from "./context/compactor";
+export { loadLedger, appendLedger } from "./context/compaction-ledger";
+export type {
+  CompactionLedgerEntry,
+  CompactionSummary,
+  ContextBudget,
+  DocumentMap,
+} from "./context/types";
 export type {
   Disposable,
   DocumentScope,

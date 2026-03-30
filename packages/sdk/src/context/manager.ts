@@ -105,6 +105,16 @@ export class ContextManager {
     return { kept, summary };
   }
 
+  shouldCompact(lastInputTokens: number, contextWindow: number): boolean {
+    if (contextWindow <= 0) return false;
+    return (lastInputTokens / contextWindow) * 100 >= 90;
+  }
+
+  shouldEmergencyCompact(lastInputTokens: number, contextWindow: number): boolean {
+    if (contextWindow <= 0) return false;
+    return (lastInputTokens / contextWindow) * 100 >= 95;
+  }
+
   buildHandoff(
     task: TaskRecord,
     incompleteVerifications: string[],

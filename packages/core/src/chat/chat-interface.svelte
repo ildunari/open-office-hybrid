@@ -7,6 +7,7 @@
     EyeOff,
     FolderOpen,
     MessageSquare,
+    Minimize2,
     Moon,
     Plus,
     Settings,
@@ -28,6 +29,7 @@
   import SettingsPanel from "./settings-panel.svelte";
   import StatusStrip from "./status-strip.svelte";
   import ResizeHandle from "./resize-handle.svelte";
+  import ControlPanelsWrapper from "./control-panels-wrapper.svelte";
   import type { ChatTab } from "./types";
   import { emitBridgeUIEvent } from "./bridge-ui-events.js";
 
@@ -458,7 +460,7 @@
     </div>
   </div>
 
-  {#if activeTab === "chat"}
+  <div class="flex flex-col flex-1 min-h-0 {activeTab !== 'chat' ? 'hidden' : ''}">
     <StatusStrip
       phase={$runtimeState.taskPhase}
       permissionMode={$runtimeState.permissionMode}
@@ -474,15 +476,18 @@
       permissionMode={$runtimeState.permissionMode}
     />
 
-    <PlanPanel
-      plan={$runtimeState.planState}
-      approvalMessage={$runtimeState.approvalRequest?.uiMessage ?? null}
-    />
-
-    <div bind:this={diagnosticsWrapperRef} class="shrink-0 overflow-hidden">
-      <DiagnosticsPanel runtimeState={$runtimeState} />
-    </div>
-    <ResizeHandle target={() => diagnosticsWrapperRef} direction="above" min={32} max={500} />
+    <ControlPanelsWrapper>
+      {#snippet children()}
+        <PlanPanel
+          plan={$runtimeState.planState}
+          approvalMessage={$runtimeState.approvalRequest?.uiMessage ?? null}
+        />
+        <div bind:this={diagnosticsWrapperRef} class="shrink-0 overflow-hidden">
+          <DiagnosticsPanel runtimeState={$runtimeState} />
+        </div>
+        <ResizeHandle target={() => diagnosticsWrapperRef} direction="above" min={32} max={500} />
+      {/snippet}
+    </ControlPanelsWrapper>
 
     <MessageList />
     {#if SelectionIndicator}
@@ -525,6 +530,17 @@
                 $runtimeState.sessionStats.contextWindow,
               )}
             </span>
+            {#if ($runtimeState.sessionStats.lastInputTokens / $runtimeState.sessionStats.contextWindow) > 0.5}
+              <button
+                type="button"
+                onclick={() => controller.compactContext()}
+                disabled={$runtimeState.isStreaming}
+                class="text-(--chat-text-muted) hover:text-(--chat-accent) disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="Compact context"
+              >
+                <Minimize2 size={10} />
+              </button>
+            {/if}
           {/if}
         </div>
         <div class="flex items-center gap-1">
@@ -540,11 +556,13 @@
         </div>
       </div>
     {/if}
-  {:else if activeTab === "files"}
+  </div>
+  <div class="{activeTab !== 'files' ? 'hidden' : ''}">
     <FilesPanel />
-  {:else}
+  </div>
+  <div class="{activeTab !== 'settings' ? 'hidden' : ''}">
     <SettingsPanel />
-  {/if}
+  </div>
 
   {#if isDragOver}
     <div

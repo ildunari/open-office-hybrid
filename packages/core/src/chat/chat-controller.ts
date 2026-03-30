@@ -172,6 +172,10 @@ export class ChatController {
     return this.#runtime.uninstallSkill(name);
   }
 
+  compactContext() {
+    return this.#runtime.compactContext("manual");
+  }
+
   #attachBridgeRuntimeState(adapter: AppAdapter) {
     adapter.getRuntimeState = this.#bridgeRuntimeState;
   }

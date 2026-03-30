@@ -17,6 +17,21 @@ export interface ChatSession {
   workbookId: string;
   name: string;
   agentMessages: AgentMessage[];
+  /** Persisted count of user+assistant messages. Written by saveSession(). */
+  messageCount?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * Lightweight session descriptor that omits the agentMessages array.
+ * Use listSessionsMeta() to populate session lists without loading message
+ * history into memory.
+ */
+export interface SessionMeta {
+  id: string;
+  title: string;
+  messageCount: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -260,6 +275,46 @@ export async function listSessions(workbookId: string): Promise<ChatSession[]> {
   return sessions;
 }
 
+/**
+ * List sessions for a workbook returning only metadata — no agentMessages
+ * arrays are retained in memory after this call.
+ *
+ * The function iterates an IndexedDB cursor so that each full record is
+ * eligible for GC before the next one is read, rather than accumulating all
+ * records in a single array first.
+ *
+ * messageCount is read from the persisted field written by saveSession().
+ * For sessions that pre-date the field (messageCount === undefined) the value
+ * falls back to 0 rather than loading agentMessages.
+ *
+ * @param workbookId - The workbook whose sessions to list.
+ */
+export async function listSessionsMeta(
+  workbookId: string,
+): Promise<SessionMeta[]> {
+  const db = await getDb();
+  const results: SessionMeta[] = [];
+  let cursor = await db
+    .transaction("sessions")
+    .store.index("workbookId")
+    .openCursor(workbookId);
+
+  while (cursor) {
+    const { id, name, messageCount, createdAt, updatedAt } = cursor.value;
+    results.push({
+      id,
+      title: name,
+      messageCount: messageCount ?? 0,
+      createdAt,
+      updatedAt,
+    });
+    cursor = await cursor.continue();
+  }
+
+  results.sort((a, b) => b.updatedAt - a.updatedAt);
+  return results;
+}
+
 export async function createSession(
   workbookId: string,
   name?: string,
@@ -310,10 +365,14 @@ export async function saveSession(
     const derivedName = deriveSessionName(agentMessages);
     if (derivedName) name = derivedName;
   }
+  const messageCount = agentMessages.filter(
+    (m) => m.role === "user" || m.role === "assistant",
+  ).length;
   await db.put("sessions", {
     ...session,
     agentMessages,
     name,
+    messageCount,
     updatedAt: Date.now(),
   });
   console.log("[DB] saveSession complete");

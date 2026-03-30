@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Paperclip, Send, Square, X } from "lucide-svelte";
   import { getChatContext } from "./chat-runtime-context";
+  import SlashCommandDropdown from "./slash-command-dropdown.svelte";
+  import { defaultCommands, filterCommands, type SlashCommand } from "./slash-commands";
 
   const LINE_HEIGHT = 20;
   const MIN_ROWS = 1;
@@ -12,6 +14,12 @@
   let input = $state("");
   let textareaRef: HTMLTextAreaElement | null = null;
   let fileInputRef: HTMLInputElement | null = null;
+  let slashSelectedIndex = $state(0);
+
+  const isSlashMode = $derived(input.startsWith("/") && !input.includes(" "));
+  const matchedCommands = $derived(
+    isSlashMode ? filterCommands(input.slice(1), defaultCommands) : [],
+  );
 
   function formatFileSize(bytes: number): string {
     if (bytes < 1024) return `${bytes}B`;
@@ -19,18 +27,39 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
   }
 
+  let rafId = 0;
+
+  function scheduleResize() {
+    cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(autoResize);
+  }
+
   function autoResize() {
     if (!textareaRef) return;
+    // Use overflow:hidden + auto height to measure natural content height
+    // without collapsing to 0px (which causes visible flash)
+    textareaRef.style.overflow = "hidden";
     textareaRef.style.height = "auto";
     const min = LINE_HEIGHT * MIN_ROWS;
     const max = LINE_HEIGHT * MAX_ROWS;
-    const clamped = Math.max(min, Math.min(textareaRef.scrollHeight, max));
+    const scrollH = textareaRef.scrollHeight;
+    const clamped = Math.max(min, Math.min(scrollH, max));
     textareaRef.style.height = `${clamped}px`;
-    textareaRef.style.overflowY =
-      textareaRef.scrollHeight > max ? "auto" : "hidden";
+    textareaRef.style.overflow = scrollH > max ? "auto" : "hidden";
+  }
+
+  function selectSlashCommand(command: SlashCommand) {
+    input = "";
+    slashSelectedIndex = 0;
+    void command.handler(chat);
   }
 
   async function handleSubmit() {
+    if (isSlashMode && matchedCommands.length > 0) {
+      selectSlashCommand(matchedCommands[slashSelectedIndex]!);
+      return;
+    }
+
     const trimmed = input.trim();
     if (!trimmed || $runtimeState.isStreaming) return;
 
@@ -54,8 +83,15 @@
   }
 
   $effect(() => {
+    // Reset selection index whenever the input value changes
     input;
-    queueMicrotask(autoResize);
+    slashSelectedIndex = 0;
+  });
+
+  $effect(() => {
+    input;
+    slashSelectedIndex;
+    scheduleResize();
   });
 </script>
 
@@ -107,15 +143,44 @@
   />
 
   <div
-    class="bg-(--chat-input-bg) border border-(--chat-border) focus-within:border-(--chat-border-active) transition-colors"
+    class="relative bg-(--chat-input-bg) border border-(--chat-border) focus-within:border-(--chat-border-active) transition-colors"
     style="border-radius: var(--chat-radius)"
   >
+    {#if isSlashMode && matchedCommands.length > 0}
+      <SlashCommandDropdown
+        commands={matchedCommands}
+        selectedIndex={slashSelectedIndex}
+        onselect={selectSlashCommand}
+      />
+    {/if}
     <textarea
       bind:this={textareaRef}
       bind:value={input}
       data-live-review-textarea
       oninput={autoResize}
       onkeydown={(event) => {
+        if (isSlashMode && matchedCommands.length > 0) {
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            slashSelectedIndex = (slashSelectedIndex + 1) % matchedCommands.length;
+            return;
+          }
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            slashSelectedIndex = (slashSelectedIndex - 1 + matchedCommands.length) % matchedCommands.length;
+            return;
+          }
+          if (event.key === "Tab") {
+            event.preventDefault();
+            selectSlashCommand(matchedCommands[slashSelectedIndex]!);
+            return;
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            input = "";
+            return;
+          }
+        }
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
           void handleSubmit();
@@ -125,6 +190,8 @@
         ? "Type a message..."
         : "Configure API key in settings"}
       disabled={!$runtimeState.providerConfig}
+      aria-label="Chat message"
+      aria-activedescendant={isSlashMode && matchedCommands.length > 0 ? `slash-cmd-${matchedCommands[slashSelectedIndex]?.name}` : undefined}
       class="w-full resize-none bg-transparent text-(--chat-text-primary) text-sm px-3 pt-2 pb-0 border-none outline-none placeholder:text-(--chat-text-muted) disabled:opacity-50 disabled:cursor-not-allowed"
       style={`font-family: var(--chat-font-mono); line-height: ${LINE_HEIGHT}px; height: ${LINE_HEIGHT * MIN_ROWS}px;`}
     ></textarea>

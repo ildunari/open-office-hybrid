@@ -20,9 +20,24 @@
   const messagesState = chat.messagesState;
   const adapter = chat.adapter;
 
+  // ── scroll container ────────────────────────────────────────────────────────
   let container = $state<HTMLDivElement | null>(null);
   let shouldAutoScroll = true;
 
+  // ── virtual scroll state ────────────────────────────────────────────────────
+  /** Current scroll offset of the container, updated on every scroll event */
+  let scrollTop = $state(0);
+  /** Visible height of the container, updated by ResizeObserver */
+  let viewportHeight = $state(0);
+  /** Measured pixel heights keyed by group stable key */
+  let measuredHeights = $state(new Map<string, number>());
+  /** Trigger re-derivation of layout when heights change */
+  let heightRevision = $state(0);
+
+  const DEFAULT_HEIGHT = 80;
+  const BUFFER = 3;
+
+  // ── grouping (unchanged logic) ───────────────────────────────────────────────
   function flattenAssistantParts(messages: ChatMessage[]) {
     const allParts: { part: MessagePart; messageId: string; isLast: boolean }[] =
       [];
@@ -42,22 +57,6 @@
     return allParts;
   }
 
-  let scrollDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function handleScroll() {
-    if (!container) return;
-    const { scrollTop, scrollHeight, clientHeight } = container;
-    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-    shouldAutoScroll = distanceFromBottom < 100;
-
-    if (scrollDebounceTimer) clearTimeout(scrollDebounceTimer);
-    scrollDebounceTimer = setTimeout(() => {
-      if (!container) return;
-      const pct = container.scrollHeight > 0 ? Math.round(container.scrollTop / container.scrollHeight * 100) : 0;
-      emitBridgeUIEvent("ui:scroll_position", { atBottom: shouldAutoScroll, scrollPct: pct });
-    }, 500);
-  }
-
   let groupCache: MessageGroupCache | null = null;
 
   const groups = $derived.by(() => {
@@ -65,11 +64,19 @@
     groupCache = result.cache;
     return result.groups;
   });
+
+  /** Stable key for a group — used as Map key for height measurement */
+  function groupKey(group: MessageGroup): string {
+    return group.type === "user" ? group.message.id : group.messages[0].id;
+  }
+
+  /** Flattened assistant parts for ALL groups, indexed by original group index */
   const flattenedAssistantParts = $derived.by(() =>
     groups.map((group) =>
       group.type === "assistant" ? flattenAssistantParts(group.messages) : [],
     ),
   );
+
   const lastMessage = $derived(
     $messagesState.messages[$messagesState.messages.length - 1],
   );
@@ -81,6 +88,159 @@
     $messagesState.isStreaming && lastGroup?.type === "assistant",
   );
 
+  // ── virtual scroll layout ───────────────────────────────────────────────────
+
+  /**
+   * Cumulative heights array: cumulativeHeights[i] is the pixel offset at
+   * which group i starts. cumulativeHeights[groups.length] is total content
+   * height.  Re-derived whenever heightRevision bumps or groups change.
+   */
+  const cumulativeHeights = $derived.by(() => {
+    // Touch heightRevision so this re-runs when heights are measured
+    void heightRevision;
+    const offsets = new Array<number>(groups.length + 1);
+    offsets[0] = 0;
+    for (let i = 0; i < groups.length; i++) {
+      const key = groupKey(groups[i]);
+      const h = measuredHeights.get(key) ?? DEFAULT_HEIGHT;
+      offsets[i + 1] = offsets[i] + h;
+    }
+    return offsets;
+  });
+
+  /** Total estimated scroll height of all content */
+  const totalContentHeight = $derived(
+    cumulativeHeights[groups.length] ?? 0,
+  );
+
+  /**
+   * The visible window: startIndex..endIndex (exclusive) with BUFFER padding.
+   * When the list is tiny enough to fit in viewport, we render everything.
+   */
+  const visibleRange = $derived.by(() => {
+    const total = groups.length;
+    if (total === 0) return { start: 0, end: 0 };
+
+    const top = scrollTop;
+    const bottom = top + viewportHeight;
+    const offsets = cumulativeHeights;
+
+    // Binary search for the first group whose bottom edge is at/after scrollTop
+    let lo = 0;
+    let hi = total - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (offsets[mid + 1] < top) lo = mid + 1;
+      else hi = mid;
+    }
+    const firstVisible = lo;
+
+    // Linear scan forward for last visible group
+    let lastVisible = firstVisible;
+    while (lastVisible < total - 1 && offsets[lastVisible] < bottom) {
+      lastVisible++;
+    }
+
+    const start = Math.max(0, firstVisible - BUFFER);
+    const end = Math.min(total, lastVisible + 1 + BUFFER);
+    return { start, end };
+  });
+
+  /** Groups actually rendered to the DOM */
+  const visibleItems = $derived(
+    groups.slice(visibleRange.start, visibleRange.end).map((group, i) => ({
+      group,
+      originalIndex: visibleRange.start + i,
+    })),
+  );
+
+  /** Height of the spacer above visible items */
+  const topSpacerHeight = $derived(
+    cumulativeHeights[visibleRange.start] ?? 0,
+  );
+
+  /** Height of the spacer below visible items */
+  const bottomSpacerHeight = $derived(
+    totalContentHeight - (cumulativeHeights[visibleRange.end] ?? totalContentHeight),
+  );
+
+  // ── ResizeObserver for viewport height ──────────────────────────────────────
+  $effect(() => {
+    const el = container;
+    if (!el) return () => {};
+
+    viewportHeight = el.clientHeight;
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        viewportHeight = entry.contentRect.height;
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+
+  // ── height measurement for rendered items ───────────────────────────────────
+  /**
+   * Element refs for currently rendered item wrappers.
+   * Indexed by position in visibleItems array.
+   */
+  let itemRefs = $state<Array<HTMLDivElement | null>>([]);
+
+  $effect(() => {
+    // Re-run whenever visibleItems changes (new slice rendered)
+    const items = visibleItems;
+    // Schedule measurement after DOM settles
+    void tick().then(() => {
+      let changed = false;
+      for (let i = 0; i < items.length; i++) {
+        const el = itemRefs[i];
+        if (!el) continue;
+        const key = groupKey(items[i].group);
+        const measured = el.offsetHeight;
+        if (measured > 0) {
+          const prev = measuredHeights.get(key) ?? DEFAULT_HEIGHT;
+          if (Math.abs(prev - measured) > 4) {
+            measuredHeights.set(key, measured);
+            changed = true;
+          }
+        }
+      }
+      if (changed) {
+        // Reassign the map to trigger $state reactivity, then bump revision
+        measuredHeights = new Map(measuredHeights);
+        heightRevision += 1;
+      }
+    });
+  });
+
+  // ── scroll event ────────────────────────────────────────────────────────────
+  let scrollDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function handleScroll() {
+    if (!container) return;
+    const { scrollTop: st, scrollHeight, clientHeight } = container;
+    scrollTop = st;
+    const distanceFromBottom = scrollHeight - st - clientHeight;
+    shouldAutoScroll = distanceFromBottom < 100;
+
+    if (scrollDebounceTimer) clearTimeout(scrollDebounceTimer);
+    scrollDebounceTimer = setTimeout(() => {
+      if (!container) return;
+      const pct =
+        container.scrollHeight > 0
+          ? Math.round(
+              (container.scrollTop / container.scrollHeight) * 100,
+            )
+          : 0;
+      emitBridgeUIEvent("ui:scroll_position", {
+        atBottom: shouldAutoScroll,
+        scrollPct: pct,
+      });
+    }, 500);
+  }
+
+  // ── auto-scroll on new messages / streaming ─────────────────────────────────
   let scrollRaf: number | null = null;
   let prevMessageCount = 0;
 
@@ -132,6 +292,7 @@
 
 {#if $messagesState.messages.length === 0}
   <div
+    role="status"
     class="flex-1 flex flex-col items-center justify-center p-6 text-center"
     style="font-family: var(--chat-font-mono)"
   >
@@ -146,31 +307,40 @@
   <div
     bind:this={container}
     onscroll={handleScroll}
+    role="log"
+    aria-label="Chat messages"
     class="flex-1 overflow-y-auto p-3 space-y-3"
     style="scrollbar-width: thin; scrollbar-color: var(--chat-scrollbar) transparent; scrollbar-gutter: stable;"
   >
-    {#each groups as group, index (group.type === "user" ? group.message.id : group.messages[0].id)}
-      {#if group.type === "user"}
-        <div
-          class="ml-8 px-3 py-2 text-sm leading-relaxed bg-(--chat-user-bg) border border-(--chat-border)"
-          style="border-radius: var(--chat-radius); font-family: var(--chat-font-mono)"
-        >
-          {#each group.message.parts as part, partIndex (`${group.message.id}-${part.type}-${partIndex}`)}
-            {@render renderPart(part, false)}
-          {/each}
-        </div>
-      {:else}
-        {@const allParts = flattenedAssistantParts[index] ?? []}
-        <div class="text-sm leading-relaxed" style="font-family: var(--chat-font-mono)">
-          {#each allParts as entry, partIndex (entry.part.type === "toolCall" ? entry.part.id : `${entry.messageId}-${entry.part.type}-${partIndex}`)}
-            {@render renderPart(entry.part, isStreamingAssistant && index === groups.length - 1 && entry.isLast)}
-          {/each}
+    <!-- top spacer — holds scroll position for items above the visible window -->
+    {#if topSpacerHeight > 0}
+      <div style="height: {topSpacerHeight}px; flex-shrink: 0;"></div>
+    {/if}
 
-          {#if isStreamingAssistant && allParts.length === 0}
-            <span class="animate-pulse" style="will-change: opacity;">▊</span>
-          {/if}
-        </div>
-      {/if}
+    {#each visibleItems as { group, originalIndex }, slotIndex (groupKey(group))}
+      <div bind:this={itemRefs[slotIndex]}>
+        {#if group.type === "user"}
+          <div
+            class="ml-8 px-3 py-2 text-sm leading-relaxed bg-(--chat-user-bg) border border-(--chat-border)"
+            style="border-radius: var(--chat-radius); font-family: var(--chat-font-mono)"
+          >
+            {#each group.message.parts as part, partIndex (`${group.message.id}-${part.type}-${partIndex}`)}
+              {@render renderPart(part, false)}
+            {/each}
+          </div>
+        {:else}
+          {@const allParts = flattenedAssistantParts[originalIndex] ?? []}
+          <div class="text-sm leading-relaxed" style="font-family: var(--chat-font-mono)">
+            {#each allParts as entry, partIndex (entry.part.type === "toolCall" ? entry.part.id : `${entry.messageId}-${entry.part.type}-${partIndex}`)}
+              {@render renderPart(entry.part, isStreamingAssistant && originalIndex === groups.length - 1 && entry.isLast)}
+            {/each}
+
+            {#if isStreamingAssistant && allParts.length === 0 && originalIndex === groups.length - 1}
+              <span class="animate-pulse" style="will-change: opacity;">▊</span>
+            {/if}
+          </div>
+        {/if}
+      </div>
     {/each}
 
     {#if showLoading}
@@ -181,6 +351,11 @@
         <Loader2 size={14} class="animate-spin" style="will-change: transform;" />
         <span>thinking...</span>
       </div>
+    {/if}
+
+    <!-- bottom spacer — maintains total scroll height for items below visible window -->
+    {#if bottomSpacerHeight > 0}
+      <div style="height: {bottomSpacerHeight}px; flex-shrink: 0;"></div>
     {/if}
   </div>
 {/if}

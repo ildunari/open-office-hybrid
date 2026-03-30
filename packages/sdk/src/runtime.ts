@@ -1,6 +1,7 @@
 import {
   Agent,
   type AgentEvent,
+  type AgentMessage,
   type ThinkingLevel as AgentThinkingLevel,
   type AgentTool,
 } from "@mariozechner/pi-agent-core";
@@ -14,7 +15,10 @@ import {
   streamSimple,
 } from "@mariozechner/pi-ai";
 import type { CustomCommand } from "just-bash/browser";
+import { appendLedger, loadLedger } from "./context/compaction-ledger";
+import { ContextCompactor } from "./context/compactor";
 import { ContextManager } from "./context/manager";
+import type { CompactionLedgerEntry, CompactionSummary } from "./context/types";
 import {
   type Disposable,
   HookRegistry,
@@ -436,6 +440,7 @@ export class AgentRuntime {
   private taskTracker = new TaskTracker();
   private reflectionEngine = new ReflectionEngine();
   private contextManager = new ContextManager();
+  private readonly compactor = new ContextCompactor();
   private patternRegistry = new PatternRegistry();
   private verificationEngine = new VerificationEngine();
   private listeners: Set<StateListener> = new Set();
@@ -1039,6 +1044,155 @@ export class AgentRuntime {
       },
     });
     return compacted;
+  }
+
+  /**
+   * Compact the current context window by summarizing the message history and
+   * replacing the agent's message array with a minimal recovery set.
+   *
+   * `trigger` distinguishes user-initiated compaction from the auto-trigger
+   * that fires when context usage crosses the 90 % threshold.
+   */
+  async compactContext(trigger: "auto" | "manual" = "manual"): Promise<boolean> {
+    if (!this.agent || !this.currentSessionId) return false;
+    if (this.state.isStreaming) return false;
+
+    const messages = this.agent.state.messages ?? [];
+    if (messages.length < 4) return false;
+
+    const usage = this.state.sessionStats.lastInputTokens;
+    const window = this.state.sessionStats.contextWindow;
+    const isEmergency = this.contextManager.shouldEmergencyCompact(usage, window);
+
+    try {
+      let rebuiltMessages: AgentMessage[];
+
+      if (isEmergency) {
+        const fallbackSummary: CompactionSummary = {
+          decisions: [],
+          constraints: [],
+          progress: [
+            "Emergency compaction — prior context was dropped to prevent session loss.",
+          ],
+          currentState:
+            "Context was critically full. Continuing with minimal history.",
+          nextSteps: [],
+          sourceMessageCount: messages.length,
+          timestamp: Date.now(),
+        };
+        rebuiltMessages = this.compactor.rebuildMessages(
+          fallbackSummary,
+          messages,
+          {
+            plan: this.planManager.getActivePlan(),
+            task: this.taskTracker.getCurrentTask(),
+          },
+          2,
+        );
+      } else {
+        const filtered = this.compactor.preFilter(messages);
+        const ledger = await loadLedger(this.currentSessionId);
+        const prompt = this.compactor.buildSummarizerPrompt(filtered, ledger);
+
+        const cfg = this.config ?? this.state.providerConfig;
+        if (!cfg) return false;
+
+        const apiKey = await this.getActiveApiKey(cfg);
+        let baseModel: Model<Api>;
+        try {
+          baseModel = (getModel as (p: string, m: string) => Model<Api>)(
+            cfg.provider,
+            cfg.model,
+          );
+        } catch {
+          return false;
+        }
+
+        const stream = streamSimple(
+          baseModel,
+          {
+            messages: [
+              {
+                role: "user",
+                content: prompt,
+                timestamp: Date.now(),
+              },
+            ],
+          },
+          { apiKey },
+        );
+
+        const assistantMsg = await stream.result();
+        const responseText = assistantMsg.content
+          .filter(
+            (b): b is { type: "text"; text: string } => b.type === "text",
+          )
+          .map((b) => b.text)
+          .join("");
+
+        const summary = this.compactor.parseSummary(responseText, messages.length);
+
+        rebuiltMessages = this.compactor.rebuildMessages(
+          summary,
+          messages,
+          {
+            plan: this.planManager.getActivePlan(),
+            task: this.taskTracker.getCurrentTask(),
+          },
+          3,
+        );
+
+        const ledgerEntry: CompactionLedgerEntry = {
+          id: crypto.randomUUID(),
+          summary,
+          cascadeDepth: (ledger[ledger.length - 1]?.cascadeDepth ?? 0) + 1,
+          createdAt: Date.now(),
+        };
+        await appendLedger(this.currentSessionId, ledgerEntry);
+      }
+
+      this.agent.replaceMessages(rebuiltMessages);
+
+      const chatMessages = agentMessagesToChatMessages(rebuiltMessages);
+      const stats = deriveStats(rebuiltMessages);
+
+      const activeThreadId =
+        this.state.activeThreadId ?? this.state.threads[0]?.id ?? null;
+
+      const artifact: CompactionArtifact = {
+        id: crypto.randomUUID(),
+        threadId: activeThreadId ?? "default",
+        summary: `Context compacted (${trigger}): ${messages.length} → ${rebuiltMessages.length} messages`,
+        sourceTaskIds: this.state.activeTask?.id
+          ? [this.state.activeTask.id]
+          : [],
+        createdAt: Date.now(),
+      };
+      await createCompactionArtifact(this.currentSessionId, artifact);
+
+      this.update({
+        messages: chatMessages,
+        sessionStats: { ...this.state.sessionStats, ...stats },
+        compactionState: {
+          artifactCount: (this.state.compactionState?.artifactCount ?? 0) + 1,
+          lastCompactedThreadId: activeThreadId,
+          updatedAt: Date.now(),
+        },
+      });
+
+      this.emitBridgeEvent("context:compacted", {
+        artifactCount: (this.state.compactionState?.artifactCount ?? 0) + 1,
+        threadId: activeThreadId ?? null,
+      });
+
+      return true;
+    } catch (error) {
+      console.error("[Runtime] Compaction failed:", error);
+      if (!isEmergency && trigger === "auto") {
+        return this.compactContext("auto");
+      }
+      return false;
+    }
   }
 
   approvePending() {
@@ -2421,6 +2575,13 @@ export class AgentRuntime {
       }
       await this.refreshInstructionSources();
       this.bumpVfs();
+
+      // Auto-compact: trigger compaction when context usage reaches 90 %
+      const autoUsage = this.state.sessionStats.lastInputTokens;
+      const autoWindow = this.state.sessionStats.contextWindow;
+      if (autoWindow > 0 && this.contextManager.shouldCompact(autoUsage, autoWindow)) {
+        await this.compactContext("auto");
+      }
     } catch (e) {
       console.error("[Runtime] Failed to save session:", e);
       this.update({
