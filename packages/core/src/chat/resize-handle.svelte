@@ -26,6 +26,8 @@
   let dragging = $state(false);
   let startY = 0;
   let startHeight = 0;
+  let pendingHeight: number | null = null;
+  let resizeFrame: number | null = null;
 
   function onPointerDown(e: PointerEvent) {
     const el = target();
@@ -44,9 +46,15 @@
     const el = target();
     if (!el) return;
     const delta = direction === "above" ? e.clientY - startY : startY - e.clientY;
-    const newHeight = Math.min(max, Math.max(min, startHeight + delta));
-    el.style.height = `${newHeight}px`;
-    el.style.maxHeight = `${newHeight}px`;
+    pendingHeight = Math.min(max, Math.max(min, startHeight + delta));
+    if (resizeFrame !== null) return;
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = null;
+      const nextTarget = target();
+      if (!nextTarget || pendingHeight === null) return;
+      nextTarget.style.height = `${pendingHeight}px`;
+      nextTarget.style.maxHeight = `${pendingHeight}px`;
+    });
   }
 
   function onPointerUp() {
@@ -55,8 +63,18 @@
     document.removeEventListener("pointerup", onPointerUp);
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
+    if (resizeFrame !== null) {
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = null;
+    }
+    const nextHeight = pendingHeight;
+    pendingHeight = null;
     const el = target();
     if (el) {
+      if (nextHeight !== null) {
+        el.style.height = `${nextHeight}px`;
+        el.style.maxHeight = `${nextHeight}px`;
+      }
       emitBridgeUIEvent("ui:resize", { target: "resize-handle", height: el.getBoundingClientRect().height });
     }
   }

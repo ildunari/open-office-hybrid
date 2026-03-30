@@ -17,7 +17,7 @@
   type ThinkingPart = Extract<MessagePart, { type: "thinking" }>;
 
   const chat = getChatContext();
-  const runtimeState = chat.state;
+  const messagesState = chat.messagesState;
   const adapter = chat.adapter;
 
   let container = $state<HTMLDivElement | null>(null);
@@ -61,27 +61,32 @@
   let groupCache: MessageGroupCache | null = null;
 
   const groups = $derived.by(() => {
-    const result = getGroupedMessages($runtimeState.messages, groupCache);
+    const result = getGroupedMessages($messagesState.messages, groupCache);
     groupCache = result.cache;
     return result.groups;
   });
+  const flattenedAssistantParts = $derived.by(() =>
+    groups.map((group) =>
+      group.type === "assistant" ? flattenAssistantParts(group.messages) : [],
+    ),
+  );
   const lastMessage = $derived(
-    $runtimeState.messages[$runtimeState.messages.length - 1],
+    $messagesState.messages[$messagesState.messages.length - 1],
   );
   const showLoading = $derived(
-    $runtimeState.isStreaming && lastMessage?.role === "user",
+    $messagesState.isStreaming && lastMessage?.role === "user",
   );
   const lastGroup = $derived(groups[groups.length - 1]);
   const isStreamingAssistant = $derived(
-    $runtimeState.isStreaming && lastGroup?.type === "assistant",
+    $messagesState.isStreaming && lastGroup?.type === "assistant",
   );
 
   let scrollRaf: number | null = null;
   let prevMessageCount = 0;
 
   $effect(() => {
-    const msgs = $runtimeState.messages;
-    const streaming = $runtimeState.isStreaming;
+    const msgs = $messagesState.messages;
+    const streaming = $messagesState.isStreaming;
     const count = msgs.length;
     const isNewMessage = count !== prevMessageCount;
     prevMessageCount = count;
@@ -125,7 +130,7 @@
   {/if}
 {/snippet}
 
-{#if $runtimeState.messages.length === 0}
+{#if $messagesState.messages.length === 0}
   <div
     class="flex-1 flex flex-col items-center justify-center p-6 text-center"
     style="font-family: var(--chat-font-mono)"
@@ -155,7 +160,7 @@
           {/each}
         </div>
       {:else}
-        {@const allParts = flattenAssistantParts(group.messages)}
+        {@const allParts = flattenedAssistantParts[index] ?? []}
         <div class="text-sm leading-relaxed" style="font-family: var(--chat-font-mono)">
           {#each allParts as entry, partIndex (entry.part.type === "toolCall" ? entry.part.id : `${entry.messageId}-${entry.part.type}-${partIndex}`)}
             {@render renderPart(entry.part, isStreamingAssistant && index === groups.length - 1 && entry.isLast)}

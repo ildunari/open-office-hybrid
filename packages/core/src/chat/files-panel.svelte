@@ -82,23 +82,24 @@
     try {
       const vfs = getVfs();
       const allPaths = vfs.getAllPaths();
-      const result: VfsFile[] = [];
-
-      for (const path of allPaths) {
-        if (!isUserFile(path)) continue;
-        try {
-          const stat = await vfs.stat(path);
-          if (stat.isFile) {
-            result.push({
+      const stats = await Promise.all(
+        allPaths.map(async (path) => {
+          if (!isUserFile(path)) return null;
+          try {
+            const stat = await vfs.stat(path);
+            if (!stat.isFile) return null;
+            return {
               path,
               name: path.split("/").pop() ?? path,
               size: stat.size,
-            });
+            } satisfies VfsFile;
+          } catch {
+            return null;
           }
-        } catch {
-          // skip invalid entries
-        }
-      }
+        }),
+      );
+
+      const result = stats.filter((file): file is VfsFile => file !== null);
 
       result.sort((a, b) => a.path.localeCompare(b.path));
       files = result;

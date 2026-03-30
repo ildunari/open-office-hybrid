@@ -9,11 +9,19 @@ import {
 import { get, type Writable, writable } from "svelte/store";
 import type { AppAdapter, BridgeRuntimeStateLike } from "./app-adapter";
 
+type ChatMessagesState = Pick<RuntimeState, "messages" | "isStreaming">;
+export type ChatUiState = Omit<RuntimeState, "messages"> & {
+  messageCount: number;
+};
+
 export class ChatController {
-  readonly state: Writable<RuntimeState>;
+  readonly state: Writable<ChatUiState>;
+  readonly messagesState: Writable<ChatMessagesState>;
   adapter: AppAdapter;
   #runtime: AgentRuntime;
   #unsubscribe: (() => void) | null = null;
+  #stateSnapshot: ChatUiState;
+  #messagesSnapshot: ChatMessagesState;
   readonly #bridgeRuntimeState = (): BridgeRuntimeStateLike =>
     this.#runtime.getRuntimeStateSlice();
 
@@ -25,13 +33,22 @@ export class ChatController {
 
     this.#runtime = new AgentRuntime(adapter);
     this.#attachBridgeRuntimeState(adapter);
-    this.state = writable(this.#runtime.getState());
-    this.#unsubscribe = this.#runtime.subscribe((next) => this.state.set(next));
+    const initialState = this.#runtime.getState();
+    this.#stateSnapshot = this.#selectUiState(initialState);
+    this.#messagesSnapshot = this.#selectMessagesState(initialState);
+    this.state = writable(this.#stateSnapshot);
+    this.messagesState = writable(this.#messagesSnapshot);
+    this.#unsubscribe = this.#runtime.subscribe((next) =>
+      this.#syncStateStores(next),
+    );
     this.#runtime.init();
   }
 
   get snapshot() {
-    return get(this.state);
+    return {
+      ...get(this.state),
+      ...get(this.messagesState),
+    } satisfies RuntimeState;
   }
 
   get availableProviders() {
@@ -163,5 +180,48 @@ export class ChatController {
     if (adapter.getRuntimeState === this.#bridgeRuntimeState) {
       delete adapter.getRuntimeState;
     }
+  }
+
+  #selectUiState(state: RuntimeState): ChatUiState {
+    const { messages, ...rest } = state;
+    return {
+      ...rest,
+      messageCount: messages.length,
+    };
+  }
+
+  #selectMessagesState(state: RuntimeState): ChatMessagesState {
+    return {
+      messages: state.messages,
+      isStreaming: state.isStreaming,
+    };
+  }
+
+  #syncStateStores(next: RuntimeState) {
+    const nextMessages = this.#selectMessagesState(next);
+    if (
+      nextMessages.messages !== this.#messagesSnapshot.messages ||
+      nextMessages.isStreaming !== this.#messagesSnapshot.isStreaming
+    ) {
+      this.#messagesSnapshot = nextMessages;
+      this.messagesState.set(nextMessages);
+    }
+
+    const nextUiState = this.#selectUiState(next);
+    if (this.#hasUiStateChanged(nextUiState)) {
+      this.#stateSnapshot = nextUiState;
+      this.state.set(nextUiState);
+    }
+  }
+
+  #hasUiStateChanged(next: ChatUiState): boolean {
+    const prev = this.#stateSnapshot;
+    const keys = Object.keys(next) as Array<keyof ChatUiState>;
+    for (const key of keys) {
+      if (prev[key] !== next[key]) {
+        return true;
+      }
+    }
+    return false;
   }
 }

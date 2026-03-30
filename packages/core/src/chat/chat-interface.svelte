@@ -60,7 +60,6 @@
   })();
 
   const runtimeState = controller.state;
-
   let activeTab = $state<ChatTab>("chat");
   let isDragOver = $state(false);
   let dragCounter = $state(0);
@@ -443,7 +442,7 @@
           {/if}
         </button>
 
-        {#if activeTab === "chat" && $runtimeState.messages.length > 0}
+        {#if activeTab === "chat" && $runtimeState.messageCount > 0}
           <button
             type="button"
             onclick={async () => {

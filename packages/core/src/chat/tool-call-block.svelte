@@ -65,6 +65,8 @@
   const ToolExtras = $derived(chat.adapter.ToolExtras);
   const split = $derived(splitArgs(part.args));
   const hasRestArgs = $derived(Object.keys(split.rest).length > 0);
+  const restArgsJson = $derived(JSON.stringify(split.rest, null, 2));
+  const restArgsMarkdown = $derived(`\`\`\`json\n${restArgsJson}\n\`\`\``);
   let cachedResultRaw: string | undefined;
   let cachedResultClean: string | undefined;
   const resultText = $derived.by(() => {
@@ -144,7 +146,7 @@
           </div>
           <div class="max-h-32 overflow-y-auto">
             <MarkdownContent
-              text={`\`\`\`json\n${JSON.stringify(split.rest, null, 2)}\n\`\`\``}
+              text={restArgsMarkdown}
               isStreaming={isStreaming}
             />
           </div>

@@ -1,11 +1,13 @@
 <script lang="ts">
-  import type { RuntimeState } from "@office-agents/sdk";
   import { ChevronDown } from "lucide-svelte";
-  import { buildDiagnosticsModel } from "./diagnostics";
+  import {
+    buildDiagnosticsModel,
+    type DiagnosticsStateInput,
+  } from "./diagnostics";
   import { emitBridgeUIEvent } from "./bridge-ui-events.js";
 
   interface Props {
-    runtimeState: RuntimeState;
+    runtimeState: DiagnosticsStateInput;
     initiallyExpanded?: boolean;
   }
 
@@ -13,8 +15,16 @@
   let expanded = $state(false);
   let hasToggled = $state(false);
   const isExpanded = $derived(hasToggled ? expanded : initiallyExpanded);
+  const summary = $derived({
+    instructionSourceCount: runtimeState.instructionSources.length,
+    activeHookCount: runtimeState.activeHookNames.length,
+    activePatternCount: runtimeState.activePatternMetadata.length,
+    activeVerifierCount: runtimeState.activeVerifierIds.length,
+  });
 
-  const model = $derived(buildDiagnosticsModel(runtimeState));
+  const model = $derived.by(() =>
+    isExpanded ? buildDiagnosticsModel(runtimeState) : null,
+  );
 
   function formatWhen(timestamp?: number | null): string {
     if (!timestamp) return "n/a";
@@ -41,7 +51,7 @@
         diagnostics
       </div>
       <div class="text-xs text-(--chat-text-primary) mt-0.5 truncate">
-        {model.instructionSources.length} instruction sources, {model.activeHooks.length} hooks, {model.activePatterns.length} patterns, {model.activeVerifierIds.length} verifiers
+        {summary.instructionSourceCount} instruction sources, {summary.activeHookCount} hooks, {summary.activePatternCount} patterns, {summary.activeVerifierCount} verifiers
       </div>
     </div>
     <ChevronDown
@@ -51,21 +61,23 @@
   </button>
 
   {#if isExpanded}
+    {@const expandedModel = model}
+    {#if expandedModel}
     <div class="panel-expandable mt-3 grid gap-3 text-[11px]">
       <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">runtime truth</div>
         <div class="text-(--chat-text-primary) break-words">
-          mode: {model.runtimeTruth.mode}
+          mode: {expandedModel.runtimeTruth.mode}
         </div>
         <div class="text-(--chat-text-primary) break-words">
-          task phase: {model.runtimeTruth.taskPhase}
+          task phase: {expandedModel.runtimeTruth.taskPhase}
         </div>
         <div class="text-(--chat-text-primary) break-words">
           waiting:
-          {#if model.runtimeTruth.waitingState}
-            {model.runtimeTruth.waitingState}
-            {#if model.runtimeTruth.waitingReason}
-              {" - "}{model.runtimeTruth.waitingReason}
+          {#if expandedModel.runtimeTruth.waitingState}
+            {expandedModel.runtimeTruth.waitingState}
+            {#if expandedModel.runtimeTruth.waitingReason}
+              {" - "}{expandedModel.runtimeTruth.waitingReason}
             {/if}
           {:else}
             none
@@ -73,17 +85,17 @@
         </div>
         <div class="text-(--chat-text-primary) break-words">
           handoff:
-          {model.runtimeTruth.handoffSummary ?? "none"}
+          {expandedModel.runtimeTruth.handoffSummary ?? "none"}
         </div>
         <div class="text-(--chat-text-primary) break-words">
           next action:
-          {model.runtimeTruth.nextRecommendedAction ?? "none"}
+          {expandedModel.runtimeTruth.nextRecommendedAction ?? "none"}
         </div>
         <div class="text-(--chat-text-primary) break-words">
           verification:
-          {#if model.runtimeTruth.verificationStatus}
-            {model.runtimeTruth.verificationStatus}
-            {#if model.runtimeTruth.verificationRetryable}
+          {#if expandedModel.runtimeTruth.verificationStatus}
+            {expandedModel.runtimeTruth.verificationStatus}
+            {#if expandedModel.runtimeTruth.verificationRetryable}
               {" (retryable)"}
             {/if}
           {:else}
@@ -92,8 +104,8 @@
         </div>
         <div class="text-(--chat-text-primary) break-words">
           degraded guardrails:
-          {#if model.runtimeTruth.degradedGuardrails.length > 0}
-            {model.runtimeTruth.degradedGuardrails.join(" | ")}
+          {#if expandedModel.runtimeTruth.degradedGuardrails.length > 0}
+            {expandedModel.runtimeTruth.degradedGuardrails.join(" | ")}
           {:else}
             none
           {/if}
@@ -106,16 +118,16 @@
           mode: {runtimeState.permissionMode}
         </div>
         <div class="text-(--chat-text-primary) break-words">
-          boundary: {model.capabilityBoundary.mode} - {model.capabilityBoundary.description}
+          boundary: {expandedModel.capabilityBoundary.mode} - {expandedModel.capabilityBoundary.description}
         </div>
         <div class="text-(--chat-text-primary) break-words">
-          approvals: {model.approvalPolicy.mode} - {model.approvalPolicy.description}
+          approvals: {expandedModel.approvalPolicy.mode} - {expandedModel.approvalPolicy.description}
         </div>
       </section>
 
       <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">instruction sources</div>
-        {#each model.instructionSources as source (source.id)}
+        {#each expandedModel.instructionSources as source (source.id)}
           <div class="rounded-sm border border-(--chat-border) px-2 py-1 min-w-0">
             <div class="text-(--chat-text-primary) break-words">
               {source.label} <span class="text-(--chat-text-muted)">({source.kind})</span>
@@ -127,25 +139,25 @@
 
       <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">prompt provenance</div>
-        {#if model.promptProvenance}
+        {#if expandedModel.promptProvenance}
           <div class="text-(--chat-text-primary) break-words">
-            provider/model: {model.promptProvenance.provider} / {model.promptProvenance.model}
+            provider/model: {expandedModel.promptProvenance.provider} / {expandedModel.promptProvenance.model}
           </div>
           <div class="text-(--chat-text-primary) break-words">
-            provider family: {model.promptProvenance.providerFamily}
+            provider family: {expandedModel.promptProvenance.providerFamily}
           </div>
           <div class="text-(--chat-text-primary) break-words">
-            phase: {model.promptProvenance.phase}
+            phase: {expandedModel.promptProvenance.phase}
           </div>
           <div class="text-(--chat-text-primary) break-words">
             runtime notes:
-            {#if model.promptProvenance.runtimeNotes.length > 0}
-              {model.promptProvenance.runtimeNotes.join(" | ")}
+            {#if expandedModel.promptProvenance.runtimeNotes.length > 0}
+              {expandedModel.promptProvenance.runtimeNotes.join(" | ")}
             {:else}
               none
             {/if}
           </div>
-          {#each model.promptProvenance.contributors as contributor (contributor.id)}
+          {#each expandedModel.promptProvenance.contributors as contributor (contributor.id)}
             <div class="rounded-sm border border-(--chat-border) px-2 py-1 min-w-0">
               <div class="text-(--chat-text-primary) break-words">
                 {contributor.order + 1}. {contributor.label}
@@ -165,41 +177,41 @@
       <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">active framework</div>
         <div class="text-(--chat-text-primary) break-words">
-          hooks: {model.activeHooks.length > 0 ? model.activeHooks.join(", ") : "none"}
+          hooks: {expandedModel.activeHooks.length > 0 ? expandedModel.activeHooks.join(", ") : "none"}
         </div>
         <div class="text-(--chat-text-primary) break-words">
           patterns:
-          {model.activePatterns.length > 0
-            ? model.activePatterns.map((pattern) => pattern.id).join(", ")
+          {expandedModel.activePatterns.length > 0
+            ? expandedModel.activePatterns.map((pattern) => pattern.id).join(", ")
             : "none"}
         </div>
         <div class="text-(--chat-text-primary) break-words">
           verifiers:
-          {model.activeVerifierIds.length > 0
-            ? model.activeVerifierIds.join(", ")
+          {expandedModel.activeVerifierIds.length > 0
+            ? expandedModel.activeVerifierIds.join(", ")
             : "none"}
         </div>
       </section>
 
       <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">threads</div>
-        {#if model.activeThread}
+        {#if expandedModel.activeThread}
           <div class="text-(--chat-text-primary) break-words">
-            active: {model.activeThread.title} ({model.activeThread.status})
+            active: {expandedModel.activeThread.title} ({expandedModel.activeThread.status})
           </div>
         {:else}
           <div class="text-(--chat-text-muted)">No active thread.</div>
         {/if}
-        {#if model.otherThreads.length > 0}
+        {#if expandedModel.otherThreads.length > 0}
           <div class="text-(--chat-text-secondary) break-words">
             archived/other:
-            {model.otherThreads.map((thread) => `${thread.title} (${thread.status})`).join(", ")}
+            {expandedModel.otherThreads.map((thread) => `${thread.title} (${thread.status})`).join(", ")}
           </div>
         {/if}
         <div class="text-(--chat-text-primary) break-words">
           compaction:
-          {#if model.compactionState}
-            {model.compactionState.artifactCount} artifacts, last thread {model.compactionState.lastCompactedThreadId ?? "n/a"} at {formatWhen(model.compactionState.updatedAt)}
+          {#if expandedModel.compactionState}
+            {expandedModel.compactionState.artifactCount} artifacts, last thread {expandedModel.compactionState.lastCompactedThreadId ?? "n/a"} at {formatWhen(expandedModel.compactionState.updatedAt)}
           {:else}
             none
           {/if}
@@ -208,8 +220,8 @@
 
       <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">policy trace</div>
-        {#if model.recentPolicyTrace.length > 0}
-          {#each model.recentPolicyTrace as trace (trace.id)}
+        {#if expandedModel.recentPolicyTrace.length > 0}
+          {#each expandedModel.recentPolicyTrace as trace (trace.id)}
             <div class="rounded-sm border border-(--chat-border) px-2 py-1 min-w-0">
               <div class="text-(--chat-text-primary) break-words">
                 {trace.event} -> {trace.outcome}
@@ -225,8 +237,8 @@
 
       <section class="grid gap-1 min-w-0">
         <div class="uppercase tracking-wider text-(--chat-text-muted)">completion</div>
-        {#if model.completionArtifacts.length > 0}
-          {#each model.completionArtifacts as artifact (artifact.id)}
+        {#if expandedModel.completionArtifacts.length > 0}
+          {#each expandedModel.completionArtifacts as artifact (artifact.id)}
             <div class="rounded-sm border border-(--chat-border) px-2 py-1 min-w-0">
               <div class="text-(--chat-text-primary) break-words">
                 {artifact.summary}
@@ -243,13 +255,14 @@
 
         <div class="text-(--chat-text-primary)">
           latest verification:
-          {#if model.lastVerification}
-            {model.lastVerification.status} across {model.lastVerification.results.length} suites
+          {#if expandedModel.lastVerification}
+            {expandedModel.lastVerification.status} across {expandedModel.lastVerification.results.length} suites
           {:else}
             none
           {/if}
         </div>
       </section>
     </div>
+    {/if}
   {/if}
 </div>
