@@ -192,8 +192,11 @@
   let itemRefs = $state<Array<HTMLDivElement | null>>([]);
 
   $effect(() => {
-    // Re-run whenever visibleItems changes (new slice rendered)
+    // Re-run whenever visibleItems changes (new slice rendered).
+    // Capture both items AND refs in the same closure to avoid stale ref reads.
     const items = visibleItems;
+    const refs = itemRefs;
+    const heights = cumulativeHeights;
     // Schedule measurement after DOM settles
     void tick().then(() => {
       let changed = false;
@@ -201,7 +204,7 @@
       const currentScrollTop = container?.scrollTop ?? 0;
 
       for (let i = 0; i < items.length; i++) {
-        const el = itemRefs[i];
+        const el = refs[i];
         if (!el) continue;
         const key = groupKey(items[i].group);
         const measured = el.offsetHeight;
@@ -209,7 +212,7 @@
           const prev = measuredHeights.get(key) ?? DEFAULT_HEIGHT;
           if (Math.abs(prev - measured) > 4) {
             // If this item is above the viewport, compensate scroll position
-            const itemOffset = cumulativeHeights[items[i].originalIndex] ?? 0;
+            const itemOffset = heights[items[i].originalIndex] ?? 0;
             if (itemOffset < currentScrollTop) {
               scrollDelta += measured - prev;
             }
@@ -219,8 +222,8 @@
         }
       }
       if (changed) {
-        // Reassign the map to trigger $state reactivity, then bump revision
-        measuredHeights = new Map(measuredHeights);
+        // Bump revision counter to trigger layout re-derivation without
+        // cloning the entire Map (avoids O(n) copy on every measurement)
         heightRevision += 1;
         // Compensate scroll position to prevent visible jump
         if (scrollDelta !== 0 && container) {
