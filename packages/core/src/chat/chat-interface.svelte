@@ -494,7 +494,7 @@
       <SelectionIndicator />
     {/if}
     <ResizeHandle target={() => inputWrapperRef} direction="below" min={48} max={300} />
-    <div bind:this={inputWrapperRef} class="shrink-0">
+    <div bind:this={inputWrapperRef} class="shrink-0 flex flex-col">
       <ChatInput />
     </div>
     {#if $runtimeState.providerConfig}

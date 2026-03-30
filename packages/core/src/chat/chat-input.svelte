@@ -103,7 +103,7 @@
 </script>
 
 <div
-  class="border-t border-(--chat-border) px-3 py-2 bg-(--chat-bg)"
+  class="border-t border-(--chat-border) px-3 py-2 bg-(--chat-bg) flex-1 flex flex-col min-h-0"
   style="font-family: var(--chat-font-mono)"
 >
   {#if $runtimeState.error}
@@ -150,7 +150,7 @@
   />
 
   <div
-    class="relative bg-(--chat-input-bg) border border-(--chat-border) focus-within:border-(--chat-border-active) transition-colors"
+    class="relative bg-(--chat-input-bg) border border-(--chat-border) focus-within:border-(--chat-border-active) transition-colors flex-1 flex flex-col min-h-0"
     style="border-radius: var(--chat-radius)"
   >
     {#if isSlashMode && matchedCommands.length > 0}
@@ -199,8 +199,8 @@
       disabled={!$runtimeState.providerConfig}
       aria-label="Chat message"
       aria-activedescendant={isSlashMode && matchedCommands.length > 0 ? `slash-cmd-${matchedCommands[slashSelectedIndex]?.name}` : undefined}
-      class="w-full resize-none bg-transparent text-(--chat-text-primary) text-sm px-3 pt-2 pb-0 border-none outline-none placeholder:text-(--chat-text-muted) disabled:opacity-50 disabled:cursor-not-allowed"
-      style={`font-family: var(--chat-font-mono); line-height: ${LINE_HEIGHT}px; height: ${LINE_HEIGHT * MIN_ROWS}px;`}
+      class="w-full flex-1 resize-none bg-transparent text-(--chat-text-primary) text-sm px-3 pt-2 pb-0 border-none outline-none placeholder:text-(--chat-text-muted) disabled:opacity-50 disabled:cursor-not-allowed"
+      style={`font-family: var(--chat-font-mono); line-height: ${LINE_HEIGHT}px; min-height: ${LINE_HEIGHT * MIN_ROWS}px;`}
     ></textarea>
 
     <div class="flex items-center justify-between px-1.5 py-1">
