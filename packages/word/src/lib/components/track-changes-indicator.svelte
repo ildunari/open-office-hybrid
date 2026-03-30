@@ -11,6 +11,7 @@
 
   let mode = $state<ChangeTrackingMode | null>(null);
   let isUpdating = $state(false);
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function getChangeTrackingMode(): Promise<ChangeTrackingMode> {
     return Word.run(async (context) => {
@@ -70,6 +71,16 @@
     }
   }
 
+  function scheduleRefresh() {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+    }
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      void refresh();
+    }, 300);
+  }
+
   async function handleToggle() {
     if (isUpdating) return;
 
@@ -92,10 +103,10 @@
     void refresh();
 
     const handleFocus = () => {
-      void refresh();
+      scheduleRefresh();
     };
     const handleSelectionChanged = () => {
-      void refresh();
+      scheduleRefresh();
     };
 
     window.addEventListener("focus", handleFocus);
@@ -108,6 +119,10 @@
     );
 
     return () => {
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+        refreshTimer = null;
+      }
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleFocus);
       window.removeEventListener(TRACKING_MODE_CHANGED_EVENT, handleFocus);

@@ -10,6 +10,7 @@
   }
 
   let selection = $state<SelectionState | null>(null);
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   function getSelectionState(): Promise<SelectionState> {
     return Word.run(async (context) => {
@@ -34,18 +35,36 @@
     }
   }
 
+  function scheduleRefresh() {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+    }
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      void refresh();
+    }, 300);
+  }
+
   onMount(() => {
     void refresh();
 
     const handleSelectionChanged = () => {
-      void refresh();
+      scheduleRefresh();
     };
 
-    return bindOfficeDocumentHandler(
+    const detach = bindOfficeDocumentHandler(
       Office?.context?.document,
       Office.EventType.DocumentSelectionChanged,
       handleSelectionChanged,
     );
+
+    return () => {
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+        refreshTimer = null;
+      }
+      detach();
+    };
   });
 </script>
 
