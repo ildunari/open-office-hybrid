@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { Paperclip, Send, Square, X } from "lucide-svelte";
   import { getChatContext } from "./chat-runtime-context";
   import SlashCommandDropdown from "./slash-command-dropdown.svelte";
@@ -16,6 +17,8 @@
   let fileInputRef: HTMLInputElement | null = null;
   let slashSelectedIndex = $state(0);
 
+  // Intentional: a leading slash with no spaces opens slash-command mode.
+  // Users can send a message starting with "/" by adding a space after it.
   const isSlashMode = $derived(input.startsWith("/") && !input.includes(" "));
   const matchedCommands = $derived(
     isSlashMode ? filterCommands(input.slice(1), defaultCommands) : [],
@@ -33,6 +36,10 @@
     cancelAnimationFrame(rafId);
     rafId = requestAnimationFrame(autoResize);
   }
+
+  onDestroy(() => {
+    cancelAnimationFrame(rafId);
+  });
 
   function autoResize() {
     if (!textareaRef) return;

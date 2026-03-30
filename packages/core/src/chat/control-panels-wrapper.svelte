@@ -10,9 +10,15 @@
 
   const PANELS_COLLAPSED_KEY = "oa-panels-collapsed";
 
-  let collapsed = $state(
-    localStorage.getItem(PANELS_COLLAPSED_KEY) === "true",
-  );
+  function getInitialCollapsedState(): boolean {
+    try {
+      return localStorage.getItem(PANELS_COLLAPSED_KEY) === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  let collapsed = $state(getInitialCollapsedState());
 
   function toggle() {
     collapsed = !collapsed;

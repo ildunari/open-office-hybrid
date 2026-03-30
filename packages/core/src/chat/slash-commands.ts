@@ -10,7 +10,9 @@ export const defaultCommands: SlashCommand[] = [
   {
     name: "compact",
     description: "Compact context — summarize history and free up space",
-    handler: (chat) => { void chat.compactContext(); },
+    handler: (chat) => {
+      void chat.compactContext().catch(console.error);
+    },
   },
 ];
 

@@ -1107,7 +1107,12 @@ export class AgentRuntime {
         const prompt = this.compactor.buildSummarizerPrompt(filtered, ledger);
 
         const cfg = this.config ?? this.state.providerConfig;
-        if (!cfg) return false;
+        if (!cfg) {
+          console.warn(
+            "[office-agents] compactContext skipped because provider config is missing.",
+          );
+          return false;
+        }
 
         const apiKey = await this.getActiveApiKey(cfg);
         let baseModel: Model<Api>;
