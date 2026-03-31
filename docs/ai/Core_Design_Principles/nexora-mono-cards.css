@@ -1,0 +1,123 @@
+/* Nexora Mono — Cards
+   Requires: tokens/nexora-mono.css */
+
+.card {
+  background: #FFFFFF;
+  border: 1px solid #E5E5E5;
+  border-radius: var(--radius-default);
+  padding: var(--space-6);
+  transition: border-color var(--duration-fast) var(--ease-default);
+}
+.card:hover {
+  border-color: #A3A3A3;
+}
+
+/* ── Feature Card ── */
+.card-feature {
+  background: #FFFFFF;
+  border: 1px solid #E5E5E5;
+  border-radius: var(--radius-default);
+  padding: var(--space-6);
+}
+.card-feature .card-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  color: var(--text-primary);
+  margin-bottom: var(--space-2);
+}
+.card-feature .card-description {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+}
+
+/* ── Stat Card (large metric number) ── */
+.card-stat {
+  background: #FFFFFF;
+  border: 1px solid #E5E5E5;
+  border-radius: var(--radius-default);
+  padding: var(--space-6);
+  text-align: left;
+}
+.card-stat .stat-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-4xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--text-primary);
+  line-height: var(--leading-tight);
+  margin-bottom: var(--space-1);
+}
+.card-stat .stat-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* ── Dark Variant ── */
+.card-dark,
+.dark .card,
+[data-theme="dark"] .card {
+  background: #171717;
+  border-color: #404040;
+}
+.card-dark:hover,
+.dark .card:hover,
+[data-theme="dark"] .card:hover {
+  border-color: #737373;
+}
+.card-dark .card-label,
+.dark .card .card-label,
+[data-theme="dark"] .card .card-label {
+  color: #FAFAFA;
+}
+.card-dark .card-description,
+.dark .card .card-description,
+[data-theme="dark"] .card .card-description {
+  color: #A3A3A3;
+}
+.card-dark .stat-value,
+.dark .card .stat-value,
+[data-theme="dark"] .card .stat-value {
+  color: #FAFAFA;
+}
+.card-dark .stat-label,
+.dark .card .stat-label,
+[data-theme="dark"] .card .stat-label {
+  color: #737373;
+}
+
+/* ── Card content helpers ── */
+.card-title {
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-primary);
+  margin-bottom: var(--space-2);
+}
+
+.card-description {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+}
+
+/* ── Card Grid ── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-4);
+}
+.card-grid-3 {
+  grid-template-columns: repeat(3, 1fr);
+}

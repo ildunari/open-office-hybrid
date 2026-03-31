@@ -1,0 +1,100 @@
+{
+  "$schema": "https://tr.designtokens.org/format/",
+  "name": "Nexora Mono",
+  "version": "1.0.0",
+  "color": {
+    "background": {
+      "base": { "dark": "#000000", "light": "#FFFFFF" },
+      "raised": { "dark": "#0A0A0A", "light": "#FAFAFA" },
+      "surface": { "dark": "#141414", "light": "#F5F5F5" },
+      "overlay": { "dark": "#171717", "light": "#FFFFFF" },
+      "inset": { "dark": "#000000", "light": "#F0F0F0" }
+    },
+    "gray": {
+      "100": { "dark": "#141414", "light": "#FAFAFA" },
+      "200": { "dark": "#1C1C1C", "light": "#F5F5F5" },
+      "300": { "dark": "#262626", "light": "#E5E5E5" },
+      "400": { "dark": "#404040", "light": "#D4D4D4" },
+      "500": { "dark": "#525252", "light": "#A3A3A3" },
+      "600": { "dark": "#737373", "light": "#737373" },
+      "700": { "dark": "#A3A3A3", "light": "#525252" },
+      "800": { "dark": "#D4D4D4", "light": "#404040" },
+      "900": { "dark": "#E5E5E5", "light": "#262626" },
+      "1000": { "dark": "#FAFAFA", "light": "#0A0A0A" }
+    },
+    "accent": {
+      "100": { "value": "#0A0A0A" },
+      "200": { "value": "#1C1C1C" },
+      "300": { "value": "#262626" },
+      "400": { "value": "#404040" },
+      "500": { "value": "#000000" },
+      "600": { "value": "#171717" },
+      "700": { "value": "#262626" },
+      "800": { "value": "#525252" },
+      "900": { "value": "#A3A3A3" },
+      "1000": { "value": "#E5E5E5" }
+    },
+    "border": {
+      "subtle": { "dark": "#1C1C1C", "light": "#F5F5F5" },
+      "default": { "dark": "#404040", "light": "#E5E5E5" },
+      "strong": { "dark": "#737373", "light": "#A3A3A3" },
+      "focus": { "value": "#000000" }
+    },
+    "text": {
+      "primary": { "dark": "#FAFAFA", "light": "#000000" },
+      "secondary": { "dark": "#A3A3A3", "light": "#525252" },
+      "tertiary": { "dark": "#737373", "light": "#737373" },
+      "ghost": { "dark": "#404040", "light": "#D4D4D4" },
+      "inverse": { "dark": "#000000", "light": "#FAFAFA" }
+    },
+    "semantic": {
+      "success": { "value": "#16a34a" },
+      "error": { "value": "#ef4444" },
+      "warning": { "value": "#eab308" },
+      "info": { "value": "#2563eb" }
+    }
+  },
+  "typography": {
+    "fontFamily": {
+      "sans": "'Inter', system-ui, sans-serif",
+      "mono": "'JetBrains Mono', monospace"
+    },
+    "fontSize": {
+      "xs": { "rem": "0.75", "px": 12 },
+      "sm": { "rem": "0.875", "px": 14 },
+      "base": { "rem": "1", "px": 16 },
+      "lg": { "rem": "1.125", "px": 18 },
+      "xl": { "rem": "1.25", "px": 20 },
+      "2xl": { "rem": "1.5", "px": 24 },
+      "3xl": { "rem": "1.875", "px": 30 },
+      "4xl": { "rem": "2.25", "px": 36 },
+      "5xl": { "rem": "3", "px": 48 },
+      "8xl": { "rem": "6", "px": 96 }
+    },
+    "fontWeight": {
+      "regular": 400,
+      "medium": 500,
+      "semibold": 600,
+      "bold": 700
+    }
+  },
+  "spacing": {
+    "0": { "$value": "0px" },
+    "1": { "$value": "4px" },
+    "2": { "$value": "8px" },
+    "3": { "$value": "12px" },
+    "4": { "$value": "16px" },
+    "6": { "$value": "24px" },
+    "8": { "$value": "32px" },
+    "12": { "$value": "48px" },
+    "16": { "$value": "64px" },
+    "32": { "$value": "128px" }
+  },
+  "radius": {
+    "none": { "$value": "0px" },
+    "sm": { "$value": "4px" },
+    "default": { "$value": "8px" },
+    "lg": { "$value": "12px" },
+    "full": { "$value": "9999px" }
+  }
+}

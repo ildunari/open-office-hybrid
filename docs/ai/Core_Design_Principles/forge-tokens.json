@@ -1,0 +1,145 @@
+{
+  "$schema": "https://tr.designtokens.org/format/",
+  "name": "Forge",
+  "version": "1.0.0",
+  "heritage": ["Vercel Geist", "Factory Droid"],
+
+  "color": {
+    "background": {
+      "base":    { "dark": "#020202", "light": "#FAFAFA" },
+      "raised":  { "dark": "#0A0A0A", "light": "#FFFFFF" },
+      "surface": { "dark": "#111111", "light": "#F4F4F4" },
+      "overlay": { "dark": "#1A1A1A", "light": "#FFFFFF" },
+      "inset":   { "dark": "#000000", "light": "#F0EFEE" }
+    },
+    "gray": {
+      "100":  { "dark": "#1C1A19", "light": "#F8F7F6" },
+      "200":  { "dark": "#242221", "light": "#F0EFEE" },
+      "300":  { "dark": "#2E2C2A", "light": "#E0DEDD" },
+      "400":  { "dark": "#3D3A39", "light": "#D0CDCC" },
+      "500":  { "dark": "#4D4947", "light": "#B8B3B0" },
+      "600":  { "dark": "#6B6462", "light": "#8A8380" },
+      "700":  { "dark": "#8A8380", "light": "#6B6462" },
+      "800":  { "dark": "#A49D9A", "light": "#4D4947" },
+      "900":  { "dark": "#D0CDCC", "light": "#2E2C2A" },
+      "1000": { "dark": "#EEEEEE", "light": "#1C1A19" }
+    },
+    "accent": {
+      "100":  { "value": "#1C0E04" },
+      "200":  { "value": "#2D1508" },
+      "300":  { "value": "#4A200D" },
+      "400":  { "value": "#6B2E12" },
+      "500":  { "value": "#D15010" },
+      "600":  { "value": "#E8650A" },
+      "700":  { "value": "#F07A1A" },
+      "800":  { "value": "#F5933D" },
+      "900":  { "value": "#FBBF7A" },
+      "1000": { "value": "#FEF0DC" }
+    },
+    "border": {
+      "subtle":  { "dark": "#2A2827", "light": "#EEEDEC" },
+      "default": { "dark": "#4D4947", "light": "#E0DEDD" },
+      "strong":  { "dark": "#8A8380", "light": "#B8B3B0" },
+      "focus":   { "value": "#D15010" }
+    },
+    "text": {
+      "primary":   { "dark": "#EEEEEE", "light": "#111111" },
+      "secondary": { "dark": "#A49D9A", "light": "#6B6462" },
+      "tertiary":  { "dark": "#6B6462", "light": "#A49D9A" },
+      "ghost":     { "dark": "#3D3A39", "light": "#D0CDCC" },
+      "inverse":   { "dark": "#020202", "light": "#EEEEEE" }
+    },
+    "semantic": {
+      "success": { "value": "hsl(135, 70%, 34%)" },
+      "error":   { "value": "hsl(358, 75%, 59%)" },
+      "warning": { "value": "#E8650A" },
+      "info":    { "value": "hsl(206, 100%, 50%)" }
+    }
+  },
+
+  "typography": {
+    "fontFamily": {
+      "sans":      "'Geist', 'Geist Fallback', -apple-system, system-ui, sans-serif",
+      "mono":      "'Geist Mono', 'Geist Mono Fallback', 'SF Mono', 'Fira Code', monospace",
+      "pixel":     "'Geist Pixel Square'",
+      "pixelGrid": "'Geist Pixel Grid'",
+      "pixelLine": "'Geist Pixel Line'"
+    },
+    "fontSize": {
+      "xs":   { "rem": "0.694",  "px": 11.1 },
+      "sm":   { "rem": "0.833",  "px": 13.3 },
+      "base": { "rem": "1",      "px": 16 },
+      "md":   { "rem": "1.2",    "px": 19.2 },
+      "lg":   { "rem": "1.44",   "px": 23 },
+      "xl":   { "rem": "1.728",  "px": 27.6 },
+      "2xl":  { "rem": "2.074",  "px": 33.2 },
+      "3xl":  { "rem": "2.488",  "px": 39.8 }
+    },
+    "fontWeight": {
+      "regular":  400,
+      "medium":   500,
+      "semibold": 600,
+      "bold":     700
+    },
+    "lineHeight": {
+      "tight":   1.2,
+      "normal":  1.5,
+      "relaxed": 1.65
+    },
+    "letterSpacing": {
+      "tight":  "-0.02em",
+      "normal": "0em",
+      "wide":   "0.08em"
+    },
+    "roles": [
+      { "name": "Display",       "font": "pixel",  "weight": 700, "size": "3xl", "tracking": "tight",  "case": "mixed" },
+      { "name": "Page Title",    "font": "sans",   "weight": 600, "size": "xl",  "tracking": "tight",  "case": "mixed" },
+      { "name": "Section Head",  "font": "sans",   "weight": 600, "size": "lg",  "tracking": "tight",  "case": "mixed" },
+      { "name": "Section Label", "font": "mono",   "weight": 500, "size": "xs",  "tracking": "wide",   "case": "uppercase" },
+      { "name": "Body",          "font": "sans",   "weight": 400, "size": "base","tracking": "normal", "case": "mixed" },
+      { "name": "Code",          "font": "mono",   "weight": 400, "size": "sm",  "tracking": "normal", "case": "mixed" },
+      { "name": "Nav Item",      "font": "mono",   "weight": 500, "size": "sm",  "tracking": "wide",   "case": "uppercase" },
+      { "name": "Caption",       "font": "sans",   "weight": 400, "size": "sm",  "tracking": "normal", "case": "mixed" },
+      { "name": "Badge",         "font": "mono",   "weight": 500, "size": "xs",  "tracking": "wide",   "case": "uppercase" }
+    ]
+  },
+
+  "spacing": {
+    "0":  "0",
+    "1":  "0.25rem",
+    "2":  "0.5rem",
+    "3":  "0.75rem",
+    "4":  "1rem",
+    "5":  "1.25rem",
+    "6":  "1.5rem",
+    "8":  "2rem",
+    "10": "2.5rem",
+    "12": "3rem",
+    "16": "4rem",
+    "20": "5rem",
+    "24": "6rem"
+  },
+
+  "borderRadius": {
+    "none": "0",
+    "sm":   "4px",
+    "md":   "8px",
+    "lg":   "12px",
+    "xl":   "16px",
+    "full": "9999px"
+  },
+
+  "motion": {
+    "duration": {
+      "instant": "75ms",
+      "fast":    "150ms",
+      "normal":  "250ms",
+      "slow":    "400ms"
+    },
+    "easing": {
+      "default": "cubic-bezier(0.25, 0.1, 0.25, 1)",
+      "out":     "cubic-bezier(0, 0, 0.25, 1)",
+      "inOut":   "cubic-bezier(0.42, 0, 0.58, 1)"
+    }
+  }
+}

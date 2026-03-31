@@ -1,0 +1,260 @@
+/*
+ * FORGE DESIGN SYSTEM — CSS Custom Properties
+ * Geist x Factory Droid | v1.0 | March 2026
+ *
+ * Usage: Add this file to your project, then reference tokens as var(--token-name).
+ * Default theme is dark. Add data-theme="light" to <html> for light mode.
+ *
+ * Fonts: Load Geist via Google Fonts CDN:
+ * <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+ */
+
+/* ================================================
+   DARK MODE (default)
+   ================================================ */
+:root,
+[data-theme="dark"] {
+
+  /* ── Backgrounds ── */
+  --bg-base:        #020202;
+  --bg-raised:      #0A0A0A;
+  --bg-surface:     #111111;
+  --bg-overlay:     #1A1A1A;
+  --bg-inset:       #000000;
+
+  /* ── Warm Gray Scale (10 steps) ── */
+  --gray-100:       #1C1A19;
+  --gray-200:       #242221;
+  --gray-300:       #2E2C2A;
+  --gray-400:       #3D3A39;
+  --gray-500:       #4D4947;
+  --gray-600:       #6B6462;
+  --gray-700:       #8A8380;
+  --gray-800:       #A49D9A;
+  --gray-900:       #D0CDCC;
+  --gray-1000:      #EEEEEE;
+
+  /* ── Forge Orange Accent (10 steps) ── */
+  --accent-100:     #1C0E04;
+  --accent-200:     #2D1508;
+  --accent-300:     #4A200D;
+  --accent-400:     #6B2E12;
+  --accent-500:     #D15010;
+  --accent-600:     #E8650A;
+  --accent-700:     #F07A1A;
+  --accent-800:     #F5933D;
+  --accent-900:     #FBBF7A;
+  --accent-1000:    #FEF0DC;
+
+  /* ── Borders ── */
+  --border-subtle:  #2A2827;
+  --border-default: #4D4947;
+  --border-strong:  #8A8380;
+  --border-focus:   var(--accent-500);
+
+  /* ── Text ── */
+  --text-primary:   #EEEEEE;
+  --text-secondary: #A49D9A;
+  --text-tertiary:  #6B6462;
+  --text-ghost:     #3D3A39;
+  --text-inverse:   #020202;
+
+  /* ── Semantic Colors ── */
+  --success:        hsl(135, 70%, 34%);
+  --error:          hsl(358, 75%, 59%);
+  --warning:        var(--accent-600);
+  --info:           hsl(206, 100%, 50%);
+
+  /* ── Shadows ── */
+  --shadow-none:    none;
+  --shadow-sm:      0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md:      0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.7);
+
+  /* ── Semantic Blue (Geist-derived) ── */
+  --blue-100:       hsl(216, 50%, 12%);
+  --blue-200:       hsl(214, 59%, 15%);
+  --blue-300:       hsl(213, 71%, 20%);
+  --blue-400:       hsl(212, 78%, 23%);
+  --blue-500:       hsl(211, 86%, 27%);
+  --blue-600:       hsl(206, 100%, 50%);
+  --blue-700:       hsl(212, 100%, 48%);
+  --blue-800:       hsl(212, 100%, 41%);
+  --blue-900:       hsl(210, 100%, 66%);
+  --blue-1000:      hsl(206, 100%, 96%);
+
+  /* ── Semantic Red (Geist-derived) ── */
+  --red-100:        hsl(357, 37%, 12%);
+  --red-200:        hsl(357, 46%, 16%);
+  --red-300:        hsl(356, 54%, 22%);
+  --red-400:        hsl(357, 55%, 26%);
+  --red-500:        hsl(357, 60%, 32%);
+  --red-600:        hsl(358, 75%, 59%);
+  --red-700:        hsl(358, 75%, 59%);
+  --red-800:        hsl(358, 69%, 52%);
+  --red-900:        hsl(358, 100%, 69%);
+  --red-1000:       hsl(353, 90%, 96%);
+
+  /* ── Semantic Green (Geist-derived) ── */
+  --green-100:      hsl(136, 50%, 9%);
+  --green-200:      hsl(137, 50%, 12%);
+  --green-300:      hsl(136, 50%, 14%);
+  --green-400:      hsl(135, 70%, 16%);
+  --green-500:      hsl(135, 70%, 23%);
+  --green-600:      hsl(135, 70%, 34%);
+  --green-700:      hsl(131, 41%, 46%);
+  --green-800:      hsl(132, 43%, 39%);
+  --green-900:      hsl(131, 43%, 57%);
+  --green-1000:     hsl(136, 73%, 94%);
+
+  /* ── Semantic Teal (Geist-derived) ── */
+  --teal-100:       hsl(169, 78%, 7%);
+  --teal-200:       hsl(170, 74%, 9%);
+  --teal-300:       hsl(171, 75%, 13%);
+  --teal-400:       hsl(171, 85%, 13%);
+  --teal-500:       hsl(172, 85%, 20%);
+  --teal-600:       hsl(172, 85%, 32%);
+  --teal-700:       hsl(173, 80%, 36%);
+  --teal-800:       hsl(173, 83%, 30%);
+  --teal-900:       hsl(174, 90%, 41%);
+  --teal-1000:      hsl(166, 71%, 93%);
+
+  /* ── Typography ── */
+  --font-sans:      'Geist', 'Geist Fallback', -apple-system, system-ui, sans-serif;
+  --font-mono:      'Geist Mono', 'Geist Mono Fallback', 'SF Mono', 'Fira Code', monospace;
+  --font-pixel:     'Geist Pixel Square', var(--font-mono);
+  --font-pixel-grid:'Geist Pixel Grid', var(--font-mono);
+  --font-pixel-line:'Geist Pixel Line', var(--font-mono);
+
+  /* ── Type Scale (1.2 modular ratio) ── */
+  --text-xs:        0.694rem;   /* 11.1px */
+  --text-sm:        0.833rem;   /* 13.3px */
+  --text-base:      1rem;       /* 16px   */
+  --text-md:        1.2rem;     /* 19.2px */
+  --text-lg:        1.44rem;    /* 23px   */
+  --text-xl:        1.728rem;   /* 27.6px */
+  --text-2xl:       2.074rem;   /* 33.2px */
+  --text-3xl:       2.488rem;   /* 39.8px */
+
+  /* ── Font Weights ── */
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  /* ── Line Heights ── */
+  --leading-tight:   1.2;
+  --leading-normal:  1.5;
+  --leading-relaxed: 1.65;
+
+  /* ── Letter Spacing ── */
+  --tracking-tight:  -0.02em;
+  --tracking-normal:  0em;
+  --tracking-wide:    0.08em;
+
+  /* ── Spacing Scale ── */
+  --space-0:        0;
+  --space-1:        0.25rem;   /*  4px */
+  --space-2:        0.5rem;    /*  8px */
+  --space-3:        0.75rem;   /* 12px */
+  --space-4:        1rem;      /* 16px */
+  --space-5:        1.25rem;   /* 20px */
+  --space-6:        1.5rem;    /* 24px */
+  --space-8:        2rem;      /* 32px */
+  --space-10:       2.5rem;    /* 40px */
+  --space-12:       3rem;      /* 48px */
+  --space-16:       4rem;      /* 64px */
+  --space-20:       5rem;      /* 80px */
+  --space-24:       6rem;      /* 96px */
+
+  /* ── Border Radius ── */
+  --radius-none:    0;
+  --radius-sm:      4px;
+  --radius-md:      8px;
+  --radius-lg:      12px;
+  --radius-xl:      16px;
+  --radius-full:    9999px;
+
+  /* ── Motion ── */
+  --duration-instant:  75ms;
+  --duration-fast:     150ms;
+  --duration-normal:   250ms;
+  --duration-slow:     400ms;
+  --ease-default:      cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-out:          cubic-bezier(0, 0, 0.25, 1);
+  --ease-in-out:       cubic-bezier(0.42, 0, 0.58, 1);
+
+  /* ── Chat Interface ── */
+  --chat-max-width:         640px;
+  --chat-message-gap:       var(--space-4);
+  --chat-bubble-padding:    var(--space-3) var(--space-4);
+  --chat-input-height:      48px;
+  --chat-user-bg:           var(--bg-surface);
+  --chat-user-border:       var(--border-default);
+  --chat-agent-bg:          transparent;
+  --chat-tool-bg:           var(--bg-inset);
+  --chat-tool-border:       var(--border-subtle);
+  --chat-tool-accent:       var(--accent-500);
+  --chat-input-bg:          var(--bg-raised);
+  --chat-input-border:      var(--border-default);
+  --chat-input-focus:       var(--accent-500);
+  --chat-typing-color:      var(--accent-500);
+}
+
+
+/* ================================================
+   LIGHT MODE
+   ================================================ */
+[data-theme="light"] {
+
+  /* ── Backgrounds ── */
+  --bg-base:        #FAFAFA;
+  --bg-raised:      #FFFFFF;
+  --bg-surface:     #F4F4F4;
+  --bg-overlay:     #FFFFFF;
+  --bg-inset:       #F0EFEE;
+
+  /* ── Warm Gray Scale (inverted) ── */
+  --gray-100:       #F8F7F6;
+  --gray-200:       #F0EFEE;
+  --gray-300:       #E0DEDD;
+  --gray-400:       #D0CDCC;
+  --gray-500:       #B8B3B0;
+  --gray-600:       #8A8380;
+  --gray-700:       #6B6462;
+  --gray-800:       #4D4947;
+  --gray-900:       #2E2C2A;
+  --gray-1000:      #1C1A19;
+
+  /* ── Borders ── */
+  --border-subtle:  #EEEDEC;
+  --border-default: #E0DEDD;
+  --border-strong:  #B8B3B0;
+
+  /* ── Text ── */
+  --text-primary:   #111111;
+  --text-secondary: #6B6462;
+  --text-tertiary:  #A49D9A;
+  --text-ghost:     #D0CDCC;
+  --text-inverse:   #EEEEEE;
+
+  /* ── Shadows (softer for light) ── */
+  --shadow-sm:      0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md:      0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.12);
+
+  /* ── Semantic Blue (light mode) ── */
+  --blue-100:       hsl(216, 50%, 96%);
+  --blue-600:       hsl(206, 100%, 50%);
+  --blue-900:       hsl(212, 80%, 30%);
+
+  /* ── Semantic Red (light mode) ── */
+  --red-100:        hsl(353, 90%, 96%);
+  --red-600:        hsl(358, 75%, 52%);
+  --red-900:        hsl(357, 60%, 30%);
+
+  /* ── Semantic Green (light mode) ── */
+  --green-100:      hsl(136, 73%, 94%);
+  --green-600:      hsl(135, 70%, 34%);
+  --green-900:      hsl(135, 70%, 20%);
+}

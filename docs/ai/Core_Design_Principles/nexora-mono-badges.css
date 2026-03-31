@@ -1,0 +1,109 @@
+/* Nexora Mono — Badges
+   Requires: tokens/nexora-mono.css */
+
+.badge {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* ── Status dot ── */
+.badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+/* ── LIVE — green ── */
+.badge-live {
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.08);
+  border: 1px solid rgba(22, 163, 74, 0.2);
+}
+.badge-live .badge-dot {
+  background: #16a34a;
+  box-shadow: 0 0 6px rgba(22, 163, 74, 0.5);
+}
+
+/* ── READY — blue ── */
+.badge-ready {
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.2);
+}
+.badge-ready .badge-dot {
+  background: #2563eb;
+  box-shadow: 0 0 6px rgba(37, 99, 235, 0.5);
+}
+
+/* ── BUILDING — yellow ── */
+.badge-building {
+  color: #ca8a04;
+  background: rgba(234, 179, 8, 0.08);
+  border: 1px solid rgba(234, 179, 8, 0.2);
+}
+.badge-building .badge-dot {
+  background: #eab308;
+  box-shadow: 0 0 6px rgba(234, 179, 8, 0.5);
+}
+
+/* ── ERROR — red ── */
+.badge-error {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+.badge-error .badge-dot {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+}
+
+/* ── Neutral — gray (default) ── */
+.badge-neutral {
+  color: #525252;
+  background: #F5F5F5;
+  border: 1px solid #E5E5E5;
+}
+.badge-neutral .badge-dot {
+  background: #A3A3A3;
+}
+
+/* ── Inverted (for dark backgrounds) ── */
+.badge-inverted {
+  color: #E5E5E5;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* Dark mode overrides */
+.dark .badge-live,
+[data-theme="dark"] .badge-live {
+  background: rgba(22, 163, 74, 0.12);
+  border-color: rgba(22, 163, 74, 0.25);
+}
+.dark .badge-ready,
+[data-theme="dark"] .badge-ready {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.25);
+}
+.dark .badge-building,
+[data-theme="dark"] .badge-building {
+  background: rgba(234, 179, 8, 0.12);
+  border-color: rgba(234, 179, 8, 0.25);
+}
+.dark .badge-neutral,
+[data-theme="dark"] .badge-neutral {
+  color: #A3A3A3;
+  background: #1C1C1C;
+  border-color: #404040;
+}
