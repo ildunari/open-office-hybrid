@@ -126,7 +126,8 @@ export const readTool = defineTool({
       let outputText: string;
 
       if (truncation.truncated) {
-        const endLineDisplay = startLineDisplay + truncation.outputLines - 1;
+        const endLineDisplay =
+          startLineDisplay + Math.max(truncation.outputLines, 1) - 1;
         const nextOffset = endLineDisplay + 1;
         outputText = truncation.content;
 
@@ -147,7 +148,26 @@ export const readTool = defineTool({
         outputText = truncation.content;
       }
 
-      return toolText(outputText);
+      const outputAdapterText =
+        truncation.truncated || userLimitedLines !== undefined
+          ? `read preview ${filename}:${startLineDisplay}-${Math.min(
+              totalFileLines,
+              startLineDisplay +
+                Math.max(truncation.outputLines, userLimitedLines ?? 0, 1) -
+                1,
+            )} of ${totalFileLines}`
+          : undefined;
+
+      return toolText(
+        outputText,
+        outputAdapterText
+          ? {
+              outputAdapter: {
+                text: outputAdapterText,
+              },
+            }
+          : undefined,
+      );
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unknown error reading file";

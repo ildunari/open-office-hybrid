@@ -56,6 +56,35 @@ function getProxyUrl(): string | undefined {
   return config?.useProxy && config?.proxyUrl ? config.proxyUrl : undefined;
 }
 
+function compactSnippet(text: string | undefined, maxChars = 160): string {
+  if (!text) return "";
+  const compact = text.replace(/\s+/g, " ").trim();
+  return compact.length <= maxChars
+    ? compact
+    : `${compact.slice(0, maxChars - 1)}…`;
+}
+
+function buildCappedPreviewSummary(
+  heading: string,
+  entries: string[],
+  maxPreviewItems: number,
+  omittedLabel: string,
+): string {
+  const preview = entries.slice(0, maxPreviewItems);
+  const omitted = Math.max(0, entries.length - preview.length);
+
+  if (omitted === 0) {
+    return `${heading}:\n${entries.map((entry) => `  ${entry}`).join("\n")}`;
+  }
+
+  return [
+    heading,
+    "Preview:",
+    ...preview.map((entry) => `  ${entry}`),
+    `${omitted} additional ${omittedLabel} omitted`,
+  ].join("\n");
+}
+
 const pdfToText: CustomCommand = {
   name: "pdf-to-text",
   load: async () =>
@@ -186,7 +215,12 @@ const pdfToImages: CustomCommand = {
         }
 
         return {
-          stdout: `Converted ${outputs.length} page(s) from ${doc.numPages} total to ${outDir}/:\n${outputs.map((o) => `  ${o}`).join("\n")}`,
+          stdout: buildCappedPreviewSummary(
+            `Converted ${outputs.length} page(s) from ${doc.numPages} total to ${outDir}/`,
+            outputs,
+            3,
+            "rendered page(s)",
+          ),
           stderr: "",
           exitCode: 0,
         };
@@ -336,7 +370,12 @@ const xlsxToCsv: CustomCommand = {
         }
 
         return {
-          stdout: `Converted ${names.length} sheets:\n${outputs.join("\n")}`,
+          stdout: buildCappedPreviewSummary(
+            `Converted ${names.length} sheets`,
+            outputs,
+            3,
+            "sheet export(s)",
+          ),
           stderr: "",
           exitCode: 0,
         };
@@ -381,17 +420,24 @@ const webSearchCmd: Command = defineCommand("web-search", async (args) => {
       return { stdout: "No results found.", stderr: "", exitCode: 0 };
     }
 
+    const compactResults = results.map((result, index) => ({
+      rank: index + 1,
+      title: result.title,
+      url: result.href,
+      snippet: compactSnippet(result.body),
+    }));
+
     if (flags.json === "true") {
       return {
-        stdout: JSON.stringify(results, null, 2),
+        stdout: JSON.stringify(compactResults, null, 2),
         stderr: "",
         exitCode: 0,
       };
     }
 
-    const lines = results.map(
+    const lines = compactResults.map(
       (result, index) =>
-        `${index + 1}. ${result.title}\n   ${result.href}\n   ${result.body}`,
+        `${index + 1}. ${result.title}\n   ${result.url}\n   ${result.snippet}`,
     );
     return {
       stdout: lines.join("\n\n"),
@@ -506,17 +552,29 @@ const imageSearchCmd: Command = defineCommand("image-search", async (args) => {
       return { stdout: "No images found.", stderr: "", exitCode: 0 };
     }
 
+    const compactResults = results.map((result, index) => ({
+      rank: index + 1,
+      title: result.title,
+      imageUrl: result.imageUrl,
+      pageUrl: result.link,
+      domain: result.domain,
+      size:
+        result.imageWidth && result.imageHeight
+          ? `${result.imageWidth}x${result.imageHeight}`
+          : "unknown",
+    }));
+
     if (flags.json === "true") {
       return {
-        stdout: JSON.stringify(results, null, 2),
+        stdout: JSON.stringify(compactResults, null, 2),
         stderr: "",
         exitCode: 0,
       };
     }
 
-    const lines = results.map(
+    const lines = compactResults.map(
       (result, index) =>
-        `${index + 1}. ${result.title}\n   Image: ${result.imageUrl} (${result.imageWidth}×${result.imageHeight})\n   Source: ${result.source} (${result.domain})\n   Page: ${result.link}`,
+        `${index + 1}. ${result.title}\n   Image: ${result.imageUrl} (${result.size})\n   Source: ${result.domain}\n   Page: ${result.pageUrl}`,
     );
     return {
       stdout: lines.join("\n\n"),

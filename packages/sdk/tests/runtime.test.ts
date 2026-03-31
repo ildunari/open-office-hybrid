@@ -9,9 +9,15 @@ import {
   type RuntimeState,
 } from "../src/runtime";
 import {
+  getPlanRecord,
+  getTaskRecord,
+  saveExecutionManifest,
   getLatestTaskRecord,
   listThreadSummaries,
   loadVfsFiles,
+  saveSession,
+  savePlanRecord,
+  saveTaskRecord,
 } from "../src/storage/db";
 import { configureNamespace } from "../src/storage/namespace";
 import { resetVfs, setStaticFiles } from "../src/vfs";
@@ -1143,6 +1149,284 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("uses output-adapter fallback text for follow-mode and task tracking", async () => {
+    const onToolResultCalls: Array<{
+      toolCallId: string;
+      resultText: string;
+      isError: boolean;
+    }> = [];
+    const runtime = new AgentRuntime(
+      createAdapter({
+        onToolResult: (toolCallId, resultText, isError) => {
+          onToolResultCalls.push({ toolCallId, resultText, isError });
+        },
+      }),
+    );
+
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    internals.taskTracker.beginTask(
+      "Compact tool output",
+      inferTaskClassification("Compact tool output"),
+      { mode: "execute" },
+    );
+
+    internals.update({
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [
+            {
+              type: "toolCall",
+              id: "tc_adapter",
+              name: "bash",
+              args: { command: "echo hi" },
+              status: "running",
+            },
+          ],
+          timestamp: 1,
+        },
+      ],
+    });
+
+    await (runtime as any).handleAgentEvent({
+      type: "tool_execution_end",
+      toolCallId: "tc_adapter",
+      toolName: "bash",
+      isError: false,
+      result: {
+        content: [{ type: "image", data: "abc123", mimeType: "image/png" }],
+        details: {
+          outputAdapter: {
+            text: "Compacted bash summary",
+          },
+        },
+      },
+    });
+
+    const state = runtime.getState();
+    expect(onToolResultCalls).toEqual([
+      {
+        toolCallId: "tc_adapter",
+        resultText: "Compacted bash summary",
+        isError: false,
+      },
+    ]);
+    expect(state.messages[0]?.parts[0]).toMatchObject({
+      type: "toolCall",
+      result: "Compacted bash summary",
+      status: "complete",
+    });
+    const task = internals.taskTracker.getCurrentTask();
+    expect(task?.toolExecutions?.[0]?.resultText).toBe("");
+    expect(task?.toolExecutions?.[0]?.resultSummary).toBe(
+      "Compacted bash summary",
+    );
+    runtime.dispose();
+  });
+
+  it("prefers output-adapter text over raw text when both are present", async () => {
+    const onToolResultCalls: string[] = [];
+    const runtime = new AgentRuntime(
+      createAdapter({
+        onToolResult: (_toolCallId, resultText) => {
+          onToolResultCalls.push(resultText);
+        },
+      }),
+    );
+
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    internals.taskTracker.beginTask(
+      "Compact tool output",
+      inferTaskClassification("Compact tool output"),
+      { mode: "execute" },
+    );
+    internals.update({
+      messages: [
+        {
+          id: "assistant-2",
+          role: "assistant",
+          parts: [
+            {
+              type: "toolCall",
+              id: "tc_adapter_pref",
+              name: "bash",
+              args: { command: "echo hi" },
+              status: "running",
+            },
+          ],
+          timestamp: 1,
+        },
+      ],
+    });
+
+    await (runtime as any).handleAgentEvent({
+      type: "tool_execution_end",
+      toolCallId: "tc_adapter_pref",
+      toolName: "bash",
+      isError: false,
+      result: {
+        content: [{ type: "text", text: "very long raw text body" }],
+        details: {
+          outputAdapter: {
+            text: "Compacted bash summary",
+          },
+        },
+      },
+    });
+
+    const task = internals.taskTracker.getCurrentTask();
+    expect(onToolResultCalls).toEqual(["Compacted bash summary"]);
+    expect(task?.toolExecutions?.[0]?.resultText).toBe("very long raw text body");
+    expect(task?.toolExecutions?.[0]?.resultSummary).toBe(
+      "Compacted bash summary",
+    );
+    runtime.dispose();
+  });
+
+  it("stores compact tool summaries alongside legacy result text in task history", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    internals.taskTracker.beginTask(
+      "Compact tool output",
+      inferTaskClassification("Compact tool output"),
+      { mode: "execute" },
+    );
+    internals.update({
+      messages: [
+        {
+          id: "assistant-summary-contract",
+          role: "assistant",
+          parts: [
+            {
+              type: "toolCall",
+              id: "tc_summary_contract",
+              name: "bash",
+              args: { command: "cat huge-file.txt" },
+              status: "running",
+            },
+          ],
+          timestamp: 1,
+        },
+      ],
+    });
+
+    await (runtime as any).handleAgentEvent({
+      type: "tool_execution_end",
+      toolCallId: "tc_summary_contract",
+      toolName: "bash",
+      isError: false,
+      result: {
+        content: [
+          {
+            type: "text",
+            text: "Very long legacy tool output body that should remain available for compatibility.",
+          },
+        ],
+        details: {
+          outputAdapter: {
+            text: "Compact bash summary",
+          },
+        },
+      },
+    });
+
+    const task = internals.taskTracker.getCurrentTask() as
+      | (Record<string, unknown> & {
+          toolExecutions?: Array<Record<string, unknown>>;
+        })
+      | null;
+
+    expect(task?.toolExecutions?.[0]).toMatchObject({
+      resultText:
+        "Very long legacy tool output body that should remain available for compatibility.",
+      resultSummary: "Compact bash summary",
+    });
+
+    const sessionId = runtime.getState().currentSession?.id;
+    expect(sessionId).toBeTruthy();
+    await internals.taskTracker.persist(sessionId!);
+
+    const persisted = await getLatestTaskRecord(sessionId!);
+    expect(persisted?.task.toolExecutions?.[0]).toMatchObject({
+      resultText:
+        "Very long legacy tool output body that should remain available for compatibility.",
+      resultSummary: "Compact bash summary",
+    });
+    runtime.dispose();
+  });
+
+  it("prefers execution summaries during verification compaction and falls back to legacy text", () => {
+    const runtime = new AgentRuntime(createAdapter());
+    const compacted = (
+      runtime as unknown as {
+        contextManager: {
+          compactToolExecutions: (
+            executions: Array<Record<string, unknown>>,
+            keepLast?: number,
+          ) => { kept: Array<Record<string, unknown>>; summary: string[] };
+        };
+      }
+    ).contextManager.compactToolExecutions(
+      [
+        {
+          toolCallId: "tc-summary",
+          toolName: "bash",
+          isError: false,
+          resultText:
+            "Legacy bash output that is much longer than the compact summary and should not drive compaction.",
+          resultSummary: "Compact bash summary",
+          timestamp: 1,
+        },
+        {
+          toolCallId: "tc-fallback",
+          toolName: "read",
+          isError: false,
+          resultText: "Legacy read fallback",
+          timestamp: 2,
+        },
+        {
+          toolCallId: "tc-keep",
+          toolName: "execute_office_js",
+          isError: false,
+          resultText: "Latest write remains in kept executions",
+          timestamp: 3,
+        },
+      ] as Array<Record<string, unknown>>,
+      1,
+    );
+
+    expect(compacted.summary).toEqual([
+      "bash: ok (Compact bash summary)",
+      "read: ok (Legacy read fallback)",
+    ]);
+    runtime.dispose();
+  });
+
   it("surfaces retryable verification follow-up as blocked instead of waiting-on-user", async () => {
     const runtime = new AgentRuntime(
       createAdapter({
@@ -1188,7 +1472,7 @@ describe("AgentRuntime", () => {
     expect(verification?.status).toBe("retryable");
     expect(slice.mode).toBe("blocked");
     expect(slice.taskPhase).toBe("blocked");
-    expect(slice.waitingState).toBeNull();
+    expect(slice.waitingState).toBe("retry_exhausted");
     expect(slice.lastVerification).toEqual({
       status: "retryable",
       retryable: true,
@@ -1254,6 +1538,55 @@ describe("AgentRuntime", () => {
     expect(runtime.getState().degradedGuardrails).toContain(
       "Verification failed after 2 resume attempts; completing with degraded guardrails.",
     );
+    runtime.dispose();
+  });
+
+  it("does not persist a completed durable task status when verification blocks completion", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        getVerificationSuites: () => [
+          {
+            id: "retryable-suite",
+            label: "Retryable suite",
+            appliesTo: () => true,
+            verify: () => ({
+              suiteId: "retryable-suite",
+              label: "Retryable suite",
+              expectedEffect: "Latest write is reread.",
+              observedEffect: "Write happened but reread is missing.",
+              status: "retryable",
+              evidence: ["Missing reread"],
+              retryable: true,
+            }),
+          },
+        ],
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtime as unknown as {
+      taskTracker: {
+        beginTask: (
+          request: string,
+          classification: ReturnType<typeof inferTaskClassification>,
+          options?: Record<string, unknown>,
+        ) => unknown;
+      };
+      onStreamingEnd: () => Promise<void>;
+    };
+
+    internals.taskTracker.beginTask(
+      "Rewrite the selected paragraph.",
+      inferTaskClassification("Rewrite the selected paragraph."),
+      { mode: "execute" },
+    );
+
+    await internals.onStreamingEnd();
+
+    const persisted = await getLatestTaskRecord(
+      runtime.getState().currentSession!.id,
+    );
+    expect(persisted?.task.status).not.toBe("completed");
     runtime.dispose();
   });
 
@@ -1438,6 +1771,71 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("switchSession preserves compact tool summaries when rehydrating tool results", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+
+    const firstId = runtime.getState().currentSession!.id;
+    await saveSession(firstId, [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            id: "tc-rehydrate",
+            name: "bash",
+            arguments: { command: "echo hi" },
+          },
+        ],
+        timestamp: 1,
+        stopReason: "tool-calls",
+        api: "openai-responses",
+        provider: "openai",
+        model: "gpt-4o-mini",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0,
+          },
+        },
+      } as any,
+      {
+        role: "toolResult",
+        toolCallId: "tc-rehydrate",
+        content: [{ type: "text", text: "very long raw text body" }],
+        details: {
+          outputAdapter: {
+            text: "Compacted bash summary",
+          },
+        },
+        isError: false,
+        timestamp: 2,
+      } as any,
+    ]);
+
+    await runtime.newSession();
+    const secondId = runtime.getState().currentSession!.id;
+
+    await runtime.switchSession(firstId);
+    expect(runtime.getState().currentSession!.id).toBe(firstId);
+    expect(runtime.getState().messages[0]?.parts[0]).toMatchObject({
+      type: "toolCall",
+      result: "Compacted bash summary",
+      status: "complete",
+    });
+
+    await runtime.switchSession(secondId);
+    runtime.dispose();
+  });
+
   it("deleteCurrentSession switches to another session", async () => {
     const runtime = new AgentRuntime(createAdapter());
     await runtime.init();
@@ -1470,6 +1868,85 @@ describe("AgentRuntime", () => {
     expect(states[states.length - 1].providerConfig).not.toBeNull();
 
     unsub();
+    runtime.dispose();
+  });
+
+  it("derives waiting state from blocked handoffs even without approval requests", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    internals.update({
+      mode: "blocked",
+      approvalRequest: null,
+      handoff: {
+        taskId: "task-blocked",
+        mode: "blocked",
+        currentIntent: "Rewrite the introduction",
+        summary: "Verification follow-up is blocked on a missing reread.",
+        constraints: [],
+        incompleteVerifications: ["word:write-progress"],
+        nextRecommendedAction: "Resume after rereading the edited paragraph.",
+        updatedAt: 123,
+      } as any,
+    });
+
+    expect(runtime.getState().waitingState).toEqual(
+      expect.objectContaining({
+        kind: "retry_exhausted",
+        reason: "Verification follow-up is blocked on a missing reread.",
+        resumeMessage: "Resume after rereading the edited paragraph.",
+      }),
+    );
+    runtime.dispose();
+  });
+
+  it("emits bridge lifecycle events for plan, approval, blocker, and verification changes", async () => {
+    const events: string[] = [];
+    const runtime = new AgentRuntime(
+      createAdapter({
+        bridgeEventSink: (event) => {
+          events.push(event);
+        },
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    internals.update({
+      mode: "blocked",
+      activePlan: createPlan({ id: "plan-events" }) as any,
+      approvalRequest: {
+        level: "high",
+        destructive: false,
+        reason: "Approval required",
+        requestedAt: 10,
+      } as any,
+      handoff: {
+        taskId: "task-events",
+        mode: "blocked",
+        currentIntent: "Rewrite the introduction",
+        summary: "Task is blocked pending verification follow-up.",
+        constraints: [],
+        incompleteVerifications: ["word:write-progress"],
+        nextRecommendedAction: "Resume after rereading the edited paragraph.",
+        updatedAt: 20,
+      } as any,
+      lastVerification: {
+        status: "retryable",
+        retryable: true,
+        results: [],
+      },
+    });
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        "state:plan_changed",
+        "state:approval_changed",
+        "state:blocker_changed",
+        "state:verification_changed",
+      ]),
+    );
     runtime.dispose();
   });
 
@@ -1744,7 +2221,7 @@ describe("AgentRuntime", () => {
     expect(interrupted).toBe(true);
     expect(slice.mode).toBe("blocked");
     expect(slice.taskPhase).toBe("blocked");
-    expect(slice.waitingState).toBeNull();
+    expect(slice.waitingState).toBe("retry_exhausted");
     runtime.dispose();
   });
 
@@ -2380,6 +2857,243 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("counts read-only execute_office_js inspections as Word reads", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime) as ReturnType<
+      typeof runtimeInternals
+    > & {
+      handleAgentEvent: (event: Record<string, unknown>) => Promise<void>;
+    };
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.update({
+      messages: [
+        {
+          id: "assistant-officejs-read",
+          role: "assistant",
+          parts: [
+            {
+              type: "toolCall",
+              id: "tc_officejs_read",
+              name: "execute_office_js",
+              args: {
+                code: "const body = context.document.body; body.load('text'); await context.sync(); return { text: body.text };",
+              },
+              status: "running",
+            },
+          ],
+          timestamp: 1,
+        },
+      ] as any,
+    });
+
+    await internals.handleAgentEvent({
+      type: "tool_execution_end",
+      toolCallId: "tc_officejs_read",
+      toolName: "execute_office_js",
+      isError: false,
+      result: "Read-only inspection",
+    });
+
+    const diagnostics = internals.deriveExecutionDiagnostics(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    expect(diagnostics.preWriteReadCount).toBe(1);
+    expect(diagnostics.scopeReadCount).toBe(1);
+    expect(diagnostics.writeCount).toBe(0);
+    runtime.dispose();
+  });
+
+  it("counts a read-only execute_office_js follow-up as a post-write reread", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime) as ReturnType<
+      typeof runtimeInternals
+    > & {
+      handleAgentEvent: (event: Record<string, unknown>) => Promise<void>;
+    };
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.update({
+      messages: [
+        {
+          id: "assistant-officejs-reread",
+          role: "assistant",
+          parts: [
+            {
+              type: "toolCall",
+              id: "tc_officejs_write",
+              name: "execute_office_js",
+              args: {
+                code: "const range = context.document.getSelection(); range.insertText('Updated', Word.InsertLocation.replace); await context.sync(); return { ok: true };",
+              },
+              status: "completed",
+            },
+            {
+              type: "toolCall",
+              id: "tc_officejs_reread",
+              name: "execute_office_js",
+              args: {
+                code: "const range = context.document.getSelection(); range.load('text'); await context.sync(); return { text: range.text };",
+              },
+              status: "running",
+            },
+          ],
+          timestamp: 1,
+        },
+      ] as any,
+    });
+
+    await internals.handleAgentEvent({
+      type: "tool_execution_end",
+      toolCallId: "tc_officejs_write",
+      toolName: "execute_office_js",
+      isError: false,
+      result: "Write completed",
+    });
+    await internals.handleAgentEvent({
+      type: "tool_execution_end",
+      toolCallId: "tc_officejs_reread",
+      toolName: "execute_office_js",
+      isError: false,
+      result: "Read-only reread",
+    });
+
+    const diagnostics = internals.deriveExecutionDiagnostics(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+    expect(diagnostics.writeCount).toBe(1);
+    expect(diagnostics.postWriteRereadCount).toBe(1);
+    runtime.dispose();
+  });
+
+  it("keeps the latest successful write available to verification even when it falls outside the compacted tail", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+        getVerificationSuites: () => [
+          {
+            id: "write-anchor-suite",
+            label: "Write anchor suite",
+            appliesTo: () => true,
+            verify: (context) => ({
+              suiteId: "write-anchor-suite",
+              label: "Write anchor suite",
+              expectedEffect:
+                "Latest successful write remains visible to verification.",
+              observedEffect: context.toolExecutions.some(
+                (entry) => entry.toolName === "execute_office_js" && !entry.isError,
+              )
+                ? "Write anchor preserved."
+                : "Latest successful write fell out of the verification window.",
+              status: context.toolExecutions.some(
+                (entry) => entry.toolName === "execute_office_js" && !entry.isError,
+              )
+                ? "passed"
+                : "failed",
+              evidence: context.toolExecutions.map((entry) => entry.toolName),
+              retryable: false,
+            }),
+          },
+        ],
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime) as ReturnType<
+      typeof runtimeInternals
+    > & {
+      handleAgentEvent: (event: Record<string, unknown>) => Promise<void>;
+      runVerificationPhase: () => Promise<{ status: string }>;
+    };
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.update({
+      messages: [
+        {
+          id: "assistant-write-anchor",
+          role: "assistant",
+          parts: [
+            {
+              type: "toolCall",
+              id: "tc_anchor_write",
+              name: "execute_office_js",
+              args: {
+                code: "const range = context.document.getSelection(); range.insertText('Updated', Word.InsertLocation.replace); await context.sync(); return { ok: true };",
+              },
+              status: "completed",
+            },
+            ...Array.from({ length: 7 }, (_, index) => ({
+              type: "toolCall",
+              id: `tc_tail_${index}`,
+              name: "get_document_text",
+              args: { maxChars: 200 },
+              status: "completed",
+            })),
+          ],
+          timestamp: 1,
+        },
+      ] as any,
+    });
+
+    await internals.handleAgentEvent({
+      type: "tool_execution_end",
+      toolCallId: "tc_anchor_write",
+      toolName: "execute_office_js",
+      isError: false,
+      result: "Write completed",
+    });
+    for (let index = 0; index < 7; index += 1) {
+      await internals.handleAgentEvent({
+        type: "tool_execution_end",
+        toolCallId: `tc_tail_${index}`,
+        toolName: "get_document_text",
+        isError: false,
+        result: `Tail reread ${index}`,
+      });
+    }
+
+    await expect(internals.runVerificationPhase()).resolves.toMatchObject({
+      status: "passed",
+    });
+    runtime.dispose();
+  });
+
   it("marks completed plans as done in the runtime summary", async () => {
     const runtime = new AgentRuntime(
       createAdapter({
@@ -2433,6 +3147,496 @@ describe("AgentRuntime", () => {
     expect(
       runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
     ).toBe(-1);
+    runtime.dispose();
+  });
+
+  it("does not complete a plan only because the task says completed while verification remains incomplete", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    internals.planManager.replacePlan(
+      buildDefaultPlan(
+        "Rewrite the introduction and preserve formatting.",
+        classification,
+      ),
+    );
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.taskTracker.setExecutionDiagnostics({
+      preWriteReadCount: 1,
+      preWriteInspectionCount: 1,
+      scopeReadCount: 1,
+      writeCount: 1,
+      failedWriteCount: 0,
+      postWriteRereadCount: 0,
+      firstReadAt: 1,
+      firstWriteAt: 2,
+      planAdvancedBeyondInspection: true,
+    });
+    internals.taskTracker.completeTask("done");
+
+    const plan = internals.planManager.syncWithExecution(
+      internals.taskTracker.getCurrentTask() as any,
+    );
+
+    expect(plan?.status).not.toBe("completed");
+    expect(plan?.activeStepId).toBeTruthy();
+    expect(plan?.steps.map((step) => step.status)).toEqual([
+      "completed",
+      "completed",
+      "completed",
+      "active",
+    ]);
+    runtime.dispose();
+  });
+
+  it("keeps the runtime active step summary anchored until controller reconciliation runs", async () => {
+    const runtime = new AgentRuntime(
+      createAdapter({
+        hostApp: "word",
+      }),
+    );
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    const classification = inferTaskClassification(
+      "Rewrite the introduction and preserve formatting.",
+    );
+    const plan = buildDefaultPlan(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+    );
+    plan.activeStepId = "step-verify";
+    plan.steps = plan.steps.map((step) =>
+      step.id === "step-write" || step.id === "step-verify"
+        ? { ...step, status: "completed", completedAt: 2 }
+        : step,
+    );
+
+    internals.planManager.replacePlan(plan);
+    internals.taskTracker.beginTask(
+      "Rewrite the introduction and preserve formatting.",
+      classification,
+      {
+        mode: "execute",
+      },
+    );
+    internals.update({
+      activePlan: internals.planManager.getActivePlan(),
+      activeTask: internals.taskTracker.getCurrentTask() as any,
+      mode: "execute",
+    });
+
+    expect(
+      runtime.getRuntimeStateSlice().activePlanSummary?.activeStepIndex,
+    ).toBe(0);
+    runtime.dispose();
+  });
+
+  it("does not restore an unrelated latest task and latest plan as an active pair", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+
+    const sessionId = runtime.getState().currentSession!.id;
+    const matchingPlan = createPlan({
+      id: "plan-match",
+      userRequest: "Rewrite the introduction",
+      classification: inferTaskClassification("Rewrite the introduction"),
+    });
+    const unrelatedLatestPlan = createPlan({
+      id: "plan-latest",
+      userRequest: "Summarize the appendix",
+      classification: inferTaskClassification("Summarize the appendix"),
+    });
+
+    await savePlanRecord(sessionId, {
+      ...matchingPlan,
+      updatedAt: 100,
+    } as any);
+    await saveTaskRecord(sessionId, {
+      id: "task-match",
+      userRequest: "Rewrite the introduction",
+      status: "in_progress",
+      mode: "execute",
+      planId: "plan-match",
+      toolCallIds: [],
+      createdAt: 100,
+      updatedAt: 100,
+    } as any);
+    await savePlanRecord(sessionId, {
+      ...unrelatedLatestPlan,
+      updatedAt: 300,
+    } as any);
+    await saveTaskRecord(sessionId, {
+      id: "task-latest",
+      userRequest: "Refresh the summary",
+      status: "in_progress",
+      mode: "execute",
+      planId: "plan-other",
+      toolCallIds: [],
+      createdAt: 200,
+      updatedAt: 400,
+    } as any);
+
+    await runtime.newSession();
+    await runtime.switchSession(sessionId);
+
+    const state = runtime.getState();
+    expect(state.activeTask?.planId ?? null).toBe(state.activePlan?.id ?? null);
+    runtime.dispose();
+  });
+
+  it("prefers the manifest task's linked plan when the manifest plan id is stale", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+
+    const sessionId = runtime.getState().currentSession!.id;
+    const matchingPlan = createPlan({
+      id: "plan-match",
+      userRequest: "Rewrite the introduction",
+      classification: inferTaskClassification("Rewrite the introduction"),
+    });
+    const staleManifestPlan = createPlan({
+      id: "plan-stale",
+      userRequest: "Summarize the appendix",
+      classification: inferTaskClassification("Summarize the appendix"),
+    });
+
+    await savePlanRecord(sessionId, {
+      ...matchingPlan,
+      updatedAt: 100,
+    } as any);
+    await savePlanRecord(sessionId, {
+      ...staleManifestPlan,
+      updatedAt: 300,
+    } as any);
+    await saveTaskRecord(sessionId, {
+      id: "task-match",
+      userRequest: "Rewrite the introduction",
+      status: "blocked",
+      mode: "blocked",
+      planId: "plan-match",
+      toolCallIds: [],
+      createdAt: 100,
+      updatedAt: 100,
+    } as any);
+    await saveExecutionManifest(sessionId, {
+      taskId: "task-match",
+      planId: "plan-stale",
+      lastVerification: null,
+      updatedAt: 400,
+    });
+
+    await runtime.newSession();
+    await runtime.switchSession(sessionId);
+
+    const state = runtime.getState();
+    expect(state.activeTask?.id).toBe("task-match");
+    expect(state.activePlan?.id).toBe("plan-match");
+    runtime.dispose();
+  });
+
+  it("restores last verification truth from the persisted task record", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+
+    const sessionId = runtime.getState().currentSession!.id;
+    await saveSession(sessionId, [
+      {
+        role: "user",
+        content: "Rewrite the introduction",
+        timestamp: 1,
+      },
+    ]);
+    await saveTaskRecord(sessionId, {
+      id: "task-verify",
+      userRequest: "Rewrite the introduction",
+      status: "in_progress",
+      mode: "blocked",
+      toolCallIds: [],
+      verificationSummary: {
+        status: "retryable",
+        retryable: true,
+        lastVerifiedAt: 123,
+      },
+      createdAt: 100,
+      updatedAt: 200,
+    } as any);
+
+    await runtime.newSession();
+    await runtime.switchSession(sessionId);
+
+    expect(runtime.getRuntimeStateSlice().lastVerification).toEqual({
+      status: "retryable",
+      retryable: true,
+    });
+    runtime.dispose();
+  });
+
+  it("merges a same-scope follow-up into the unresolved active execution", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(
+      runtime,
+    ) as typeof runtimeInternals extends (runtime: AgentRuntime) => infer R
+      ? R & {
+          buildHandoff: (
+            task: Record<string, unknown>,
+            resumeMessage: string,
+          ) => Promise<Record<string, unknown>>;
+        }
+      : never;
+
+    const classification = inferTaskClassification("Rewrite the introduction");
+    internals.taskClassifier.classify = async () => classification;
+    internals.estimateScopeRisk = async () => ({
+      level: "high",
+      destructive: false,
+      requiresApproval: true,
+      reasons: ["Approval required"],
+      scopeSummary: "document scope",
+      constraints: ["Preserve formatting."],
+      expectedEffects: ["Content changes only in requested scope."],
+    });
+    internals.buildHandoff = async (task, resumeMessage) => ({
+      kind: "approval",
+      resumeMessage,
+      taskId: String(task.id),
+    });
+
+    await runtime.sendMessage("Rewrite the introduction");
+    const firstTaskId = runtime.getState().activeTask?.id ?? null;
+    const firstPlanId = runtime.getState().activePlan?.id ?? null;
+
+    await runtime.sendMessage("Also rewrite the conclusion");
+
+    expect(runtime.getState().activeTask?.id ?? null).toBe(firstTaskId);
+    expect(runtime.getState().activePlan?.id ?? null).toBe(firstPlanId);
+    expect(runtime.getState().activeTask?.userRequest).toContain(
+      "Also rewrite the conclusion",
+    );
+    expect(runtime.getState().activePlan?.requirements).toContain(
+      "Also rewrite the conclusion",
+    );
+    expect(runtime.getState().error).toBeNull();
+    runtime.dispose();
+  });
+
+  it("blocks unrelated new requests until the active execution is resumed or superseded", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(
+      runtime,
+    ) as typeof runtimeInternals extends (runtime: AgentRuntime) => infer R
+      ? R & {
+          buildHandoff: (
+            task: Record<string, unknown>,
+            resumeMessage: string,
+          ) => Promise<Record<string, unknown>>;
+        }
+      : never;
+
+    const classification = inferTaskClassification("Rewrite the introduction");
+    internals.taskClassifier.classify = async () => classification;
+    internals.estimateScopeRisk = async () => ({
+      level: "high",
+      destructive: false,
+      requiresApproval: true,
+      reasons: ["Approval required"],
+      scopeSummary: "document scope",
+      constraints: ["Preserve formatting."],
+      expectedEffects: ["Content changes only in requested scope."],
+    });
+    internals.buildHandoff = async (task, resumeMessage) => ({
+      kind: "approval",
+      resumeMessage,
+      taskId: String(task.id),
+    });
+
+    await runtime.sendMessage("Rewrite the introduction");
+    const firstTaskId = runtime.getState().activeTask?.id ?? null;
+    const firstPlanId = runtime.getState().activePlan?.id ?? null;
+    const firstRequest = runtime.getState().activeTask?.userRequest;
+
+    await runtime.sendMessage("Summarize the appendix from scratch");
+
+    expect(runtime.getState().activeTask?.id ?? null).toBe(firstTaskId);
+    expect(runtime.getState().activePlan?.id ?? null).toBe(firstPlanId);
+    expect(runtime.getState().activeTask?.userRequest).toBe(firstRequest);
+    expect(runtime.getState().error).toContain("active task is still unresolved");
+    runtime.dispose();
+  });
+
+  it("does not merge a continuation-shaped request before its own approval check runs", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+
+    const activePlan = createPlan({ approvalRequired: false });
+    internals.planManager.replacePlan(activePlan);
+    const activeTask = internals.taskTracker.beginTask(
+      "Rewrite the introduction",
+      inferTaskClassification("Rewrite the introduction"),
+      {
+        planId: activePlan.id,
+        mode: "execute",
+        approvalPending: false,
+      },
+    );
+    internals.update({
+      activePlan,
+      activeTask: activeTask as any,
+      mode: "execute",
+      handoff: null,
+      approvalRequest: null,
+      error: null,
+    });
+
+    let mergeCalls = 0;
+    let blocked = false;
+    (runtime as any).mergeFollowUpIntoActiveExecution = async () => {
+      mergeCalls += 1;
+      return true;
+    };
+    (runtime as any).blockNewRequestWhileExecutionUnresolved = async () => {
+      blocked = true;
+      return true;
+    };
+
+    internals.taskClassifier.classify = async () =>
+      inferTaskClassification("Rewrite the introduction");
+    internals.estimateScopeRisk = async (message) =>
+      /delete/i.test(message)
+        ? {
+            level: "high",
+            destructive: true,
+            requiresApproval: true,
+            reasons: ["Destructive rewrite requires approval"],
+            scopeSummary: "appendix scope",
+            constraints: ["Do not delete unrelated content."],
+            expectedEffects: ["Only the requested appendix content changes."],
+          }
+        : {
+            level: "low",
+            destructive: false,
+            requiresApproval: false,
+            reasons: ["Safe edit"],
+            scopeSummary: "document scope",
+            constraints: ["Preserve formatting."],
+            expectedEffects: ["Content changes only in requested scope."],
+          };
+
+    await runtime.sendMessage("Also delete the appendix");
+
+    expect(mergeCalls).toBe(0);
+    expect(blocked).toBe(true);
+    runtime.dispose();
+  });
+
+  it("supersedes the unresolved execution before starting a replacement request", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(
+      runtime,
+    ) as typeof runtimeInternals extends (runtime: AgentRuntime) => infer R
+      ? R & {
+          buildHandoff: (
+            task: Record<string, unknown>,
+            resumeMessage: string,
+          ) => Promise<Record<string, unknown>>;
+        }
+      : never;
+
+    const classification = inferTaskClassification("Rewrite the introduction");
+    internals.taskClassifier.classify = async () => classification;
+    internals.estimateScopeRisk = async () => ({
+      level: "high",
+      destructive: false,
+      requiresApproval: true,
+      reasons: ["Approval required"],
+      scopeSummary: "document scope",
+      constraints: ["Preserve formatting."],
+      expectedEffects: ["Content changes only in requested scope."],
+    });
+    internals.buildHandoff = async (task, resumeMessage) => ({
+      kind: "approval",
+      resumeMessage,
+      taskId: String(task.id),
+    });
+
+    await runtime.sendMessage("Rewrite the introduction");
+    const sessionId = runtime.getState().currentSession!.id;
+    const firstTaskId = runtime.getState().activeTask?.id ?? null;
+    const firstPlanId = runtime.getState().activePlan?.id ?? null;
+
+    await runtime.supersedeActiveExecution("Rewrite only the conclusion");
+
+    expect(runtime.getState().activeTask?.id).not.toBe(firstTaskId);
+    expect(runtime.getState().activePlan?.id).not.toBe(firstPlanId);
+    await expect(getTaskRecord(firstTaskId!)).resolves.toMatchObject({
+      task: expect.objectContaining({ status: "superseded" }),
+    });
+    await expect(getPlanRecord(firstPlanId!)).resolves.toMatchObject({
+      plan: expect.objectContaining({ status: "abandoned" }),
+    });
+    expect(runtime.getState().currentSession?.id).toBe(sessionId);
     runtime.dispose();
   });
 });

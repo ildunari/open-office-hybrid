@@ -91,8 +91,13 @@ describe("bashTool", () => {
       command: 'for i in $(seq 1 5000); do echo "line $i"; done',
     });
     const parsed = JSON.parse(getText(result));
-    expect(parsed.output).toContain("[Showing last");
+    expect(parsed.output).toContain("line 1");
+    expect(parsed.output).toContain("line 5000");
+    expect(parsed.output).toContain("head and tail preview");
     expect(parsed.output).toContain("Output truncated.]");
+    expect((result.details as { outputAdapter?: { text?: string } })?.outputAdapter?.text).toContain(
+      "bash output preview",
+    );
   });
 
   it("supports text processing commands", async () => {

@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { normalizeParagraphBounds } from "../tool-helpers";
+import { buildDocumentTextPayload } from "./output-shaping";
 import { defineTool, toolError, toolSuccess } from "./types";
 
 /* global Word */
@@ -83,11 +84,11 @@ export const getDocumentTextTool = defineTool({
           results.push(entry);
         }
 
-        return {
-          totalParagraphs: paragraphs.items.length,
-          showing: { start, end },
-          paragraphs: results,
-        };
+        return buildDocumentTextPayload(
+          paragraphs.items.length,
+          start,
+          results,
+        );
       });
 
       return toolSuccess(result);

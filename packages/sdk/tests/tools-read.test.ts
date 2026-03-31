@@ -105,6 +105,9 @@ describe("readTool", () => {
     const text = getText(result);
     expect(text).toContain("Use offset=");
     expect(text).toContain("to continue");
+    expect((result.details as { outputAdapter?: { text?: string } })?.outputAdapter?.text).toContain(
+      "read preview big.txt:",
+    );
   });
 
   it("reads an image file and returns image content", async () => {

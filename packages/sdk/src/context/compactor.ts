@@ -12,7 +12,10 @@ import type { CompactionLedgerEntry, CompactionSummary } from "./types";
 const TOOL_RESULT_TRUNCATE_THRESHOLD = 2048;
 const TOOL_RESULT_KEEP_HEAD = 200;
 
-const IMAGE_PLACEHOLDER: TextContent = { type: "text", text: "[image omitted]" };
+const IMAGE_PLACEHOLDER: TextContent = {
+  type: "text",
+  text: "[image omitted]",
+};
 
 /**
  * Handles pre-filtering, summarizer prompt construction, response parsing,
@@ -51,7 +54,7 @@ export class ContextCompactor {
             ) {
               return {
                 type: "text" as const,
-                text: block.text.slice(0, TOOL_RESULT_KEEP_HEAD) + "...[truncated]",
+                text: `${block.text.slice(0, TOOL_RESULT_KEEP_HEAD)}...[truncated]`,
               };
             }
             return block;
@@ -138,7 +141,7 @@ export class ContextCompactor {
                 `  [tool_call: ${(b as { type: string; name?: string }).name ?? "unknown"}]`,
             )
             .join("\n");
-          return `[ASSISTANT]: ${text.slice(0, 800)}${toolCalls ? "\n" + toolCalls : ""}`;
+          return `[ASSISTANT]: ${text.slice(0, 800)}${toolCalls ? `\n${toolCalls}` : ""}`;
         }
         if (msg.role === "toolResult") {
           const toolMsg = msg as ToolResultMessage;
@@ -167,7 +170,7 @@ export class ContextCompactor {
       "CONVERSATION:",
       serializedMessages,
       "",
-      'Respond with ONLY valid JSON:',
+      "Respond with ONLY valid JSON:",
       '{"decisions": [...], "constraints": [...], "progress": [...], "currentState": "...", "nextSteps": [...]}',
     ]
       .filter((line) => line !== null)
@@ -179,7 +182,10 @@ export class ContextCompactor {
    * Handles JSON-in-markdown fences and raw JSON.
    * Falls back to a minimal summary on parse failure.
    */
-  parseSummary(response: string, sourceMessageCount: number): CompactionSummary {
+  parseSummary(
+    response: string,
+    sourceMessageCount: number,
+  ): CompactionSummary {
     const base = {
       sourceMessageCount,
       timestamp: Date.now(),
@@ -287,22 +293,30 @@ export class ContextCompactor {
 
     if (summary.decisions.length > 0) {
       lines.push("", "Decisions made:");
-      summary.decisions.forEach((d) => lines.push(`- ${d}`));
+      summary.decisions.forEach((d) => {
+        lines.push(`- ${d}`);
+      });
     }
 
     if (summary.constraints.length > 0) {
       lines.push("", "Constraints discovered:");
-      summary.constraints.forEach((c) => lines.push(`- ${c}`));
+      summary.constraints.forEach((c) => {
+        lines.push(`- ${c}`);
+      });
     }
 
     if (summary.progress.length > 0) {
       lines.push("", "Progress:");
-      summary.progress.forEach((p) => lines.push(`- ${p}`));
+      summary.progress.forEach((p) => {
+        lines.push(`- ${p}`);
+      });
     }
 
     if (summary.nextSteps.length > 0) {
       lines.push("", "Next steps:");
-      summary.nextSteps.forEach((s) => lines.push(`- ${s}`));
+      summary.nextSteps.forEach((s) => {
+        lines.push(`- ${s}`);
+      });
     }
 
     if (diskState.plan) {

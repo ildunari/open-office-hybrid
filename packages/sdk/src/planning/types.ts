@@ -96,7 +96,14 @@ export interface ExecutionPlan {
   revisionNotes: PlanRevisionNote[];
 }
 
-export type TaskStatus = "pending" | "in_progress" | "completed" | "failed";
+export type TaskStatus =
+  | "pending"
+  | "in_progress"
+  | "blocked"
+  | "completed"
+  | "failed"
+  | "superseded"
+  | "abandoned";
 
 export type ThreadStatus =
   | "active"
@@ -173,6 +180,7 @@ export interface TaskRecord {
     toolName: string;
     isError: boolean;
     resultText: string;
+    resultSummary?: string;
     timestamp: number;
   }>;
   executionDiagnostics?: {

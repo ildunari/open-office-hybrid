@@ -1,9 +1,9 @@
 // Runtime
 
+export { appendLedger, loadLedger } from "./context/compaction-ledger";
+export { ContextCompactor } from "./context/compactor";
 // Context
 export { type ContextAction, ContextManager } from "./context/manager";
-export { ContextCompactor } from "./context/compactor";
-export { loadLedger, appendLedger } from "./context/compaction-ledger";
 export type {
   CompactionLedgerEntry,
   CompactionSummary,

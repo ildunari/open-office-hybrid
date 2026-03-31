@@ -18,6 +18,20 @@ export interface BeginTaskOptions {
   approvalRequest?: ApprovalRequest | null;
 }
 
+function mergeUniqueStrings(
+  current: string[] | undefined,
+  incoming: string[] | undefined,
+): string[] {
+  return [...new Set([...(current ?? []), ...(incoming ?? [])])];
+}
+
+function mergeTaskRequest(current: string, followUp: string): string {
+  if (current.includes(followUp)) {
+    return current;
+  }
+  return `${current}\n\nFollow-up request: ${followUp}`;
+}
+
 export class TaskTracker {
   private currentTask: TaskRecord | null = null;
   private mutations: TrackedMutation[] = [];
@@ -118,6 +132,19 @@ export class TaskTracker {
     };
   }
 
+  setStatus(status: TaskRecord["status"], summary?: string): TaskRecord | null {
+    if (!this.currentTask) return null;
+    this.currentTask = {
+      ...this.currentTask,
+      status,
+      undoNarrative: summary
+        ? `${buildUndoNarrative(this.mutations)}\nSummary: ${summary}`
+        : buildUndoNarrative(this.mutations),
+      updatedAt: Date.now(),
+    };
+    return this.currentTask;
+  }
+
   setApprovalPending(approvalPending: boolean): void {
     if (!this.currentTask) return;
     this.currentTask = {
@@ -172,17 +199,44 @@ export class TaskTracker {
     return buildUndoNarrative(this.mutations);
   }
 
-  completeTask(summary?: string): TaskRecord | null {
+  mergeContinuation(
+    followUpRequest: string,
+    options: Pick<
+      BeginTaskOptions,
+      "attachments" | "scopeSummary" | "constraints" | "expectedEffects"
+    > = {},
+  ): TaskRecord | null {
     if (!this.currentTask) return null;
     this.currentTask = {
       ...this.currentTask,
-      status: "completed",
-      undoNarrative: summary
-        ? `${buildUndoNarrative(this.mutations)}\nSummary: ${summary}`
-        : buildUndoNarrative(this.mutations),
+      userRequest: mergeTaskRequest(
+        this.currentTask.userRequest,
+        followUpRequest,
+      ),
+      attachments: mergeUniqueStrings(
+        this.currentTask.attachments,
+        options.attachments,
+      ),
+      scopeSummary: options.scopeSummary ?? this.currentTask.scopeSummary,
+      constraints: mergeUniqueStrings(
+        this.currentTask.constraints,
+        options.constraints,
+      ),
+      expectedEffects: mergeUniqueStrings(
+        this.currentTask.expectedEffects,
+        options.expectedEffects,
+      ),
       updatedAt: Date.now(),
     };
     return this.currentTask;
+  }
+
+  completeTask(summary?: string): TaskRecord | null {
+    return this.setStatus("completed", summary);
+  }
+
+  supersedeTask(summary: string): TaskRecord | null {
+    return this.setStatus("superseded", summary);
   }
 
   failTask(error: string): TaskRecord | null {

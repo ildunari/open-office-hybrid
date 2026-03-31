@@ -1,4 +1,5 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import { adaptToolResultForConsumers } from "../tool-output/adapter";
 import { classifyTool } from "./classifier";
 import type { HookRegistry } from "./registry";
 import type { PostHookContext, PreHookContext } from "./types";
@@ -80,7 +81,7 @@ export function wrapTool(tool: AgentTool, registry: HookRegistry): AgentTool {
         registry.addPromptNotes(postResult.promptNotes);
       }
 
-      return postResult.modifiedResult ?? result;
+      return adaptToolResultForConsumers(postResult.modifiedResult ?? result);
     },
   };
 }

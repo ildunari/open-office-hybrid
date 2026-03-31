@@ -1,6 +1,6 @@
 import { loadPdfDocument, toBase64 } from "@office-agents/core";
 import { Type } from "@sinclair/typebox";
-import { defineTool, toolError, toolImage, toolText } from "./types";
+import { defineTool, toolError, toolImage } from "./types";
 
 /* global Office */
 
@@ -77,13 +77,9 @@ export const screenshotDocumentTool = defineTool({
   execute: async (_toolCallId, params) => {
     const platform = Office.context.platform;
     if (platform === Office.PlatformType.OfficeOnline) {
-      return toolText(
-        JSON.stringify({
-          success: false,
-          error:
-            "screenshot_document is not supported in Word on the web. " +
-            "Use get_document_text or get_document_structure to inspect the document instead.",
-        }),
+      return toolError(
+        "screenshot_document is not supported in Word on the web. " +
+          "Use get_document_text or get_document_structure to inspect the document instead.",
       );
     }
 

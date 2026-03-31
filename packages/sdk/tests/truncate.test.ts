@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { truncateHead, truncateTail } from "../src/truncate";
+import { truncateHead, truncateHeadTail, truncateTail } from "../src/truncate";
 
 describe("truncateHead", () => {
   it("returns content unchanged when within both limits", () => {
@@ -94,5 +94,20 @@ describe("truncateTail", () => {
     const result = truncateTail(content, { maxLines: 5 });
     expect(result.truncated).toBe(false);
     expect(result.content).toBe(content);
+  });
+});
+
+describe("truncateHeadTail", () => {
+  it("keeps output within the byte budget for a single long line", () => {
+    const longLine = "X".repeat(500);
+    const result = truncateHeadTail(longLine, {
+      maxBytes: 80,
+      maxLines: 10,
+    });
+
+    expect(result.truncated).toBe(true);
+    expect(result.truncatedBy).toBe("bytes");
+    expect(result.outputBytes).toBeLessThanOrEqual(80);
+    expect(result.content.length).toBeGreaterThan(0);
   });
 });

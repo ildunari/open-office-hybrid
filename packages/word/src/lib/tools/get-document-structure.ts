@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { buildDocumentStructurePayload } from "./output-shaping";
 import { defineTool, toolError, toolSuccess } from "./types";
 
 /* global Word */
@@ -71,15 +72,13 @@ export const getDocumentStructureTool = defineTool({
           type: cc.type,
         }));
 
-        return {
-          paragraphCount: paragraphs.items.length,
-          sectionCount: sections.items.length,
-          tableCount: tables.items.length,
-          contentControlCount: contentControls.items.length,
+        return buildDocumentStructurePayload(
+          paragraphs.items.length,
+          sections.items.length,
           headings,
-          tables: tableInfo,
-          contentControls: ccInfo,
-        };
+          tableInfo,
+          ccInfo,
+        );
       });
 
       return toolSuccess(result);

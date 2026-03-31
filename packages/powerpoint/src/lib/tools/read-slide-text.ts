@@ -1,6 +1,8 @@
+import { writeFile } from "@office-agents/core";
 import { Type } from "@sinclair/typebox";
 import { safeRun, withSlideZip } from "../pptx/slide-zip";
 import { findShapeById } from "../pptx/xml-utils";
+import { buildSlideTextPayload } from "./output-shaping";
 import { defineTool, toolError, toolSuccess } from "./types";
 
 /* global PowerPoint */
@@ -31,7 +33,7 @@ export const readSlideTextTool = defineTool({
       }),
     ),
   }),
-  execute: async (_toolCallId, params) => {
+  execute: async (toolCallId, params) => {
     try {
       const result = await safeRun(async (context) =>
         withSlideZip(context, params.slide_index, async ({ zip }) => {
@@ -72,7 +74,15 @@ export const readSlideTextTool = defineTool({
         }),
       );
 
-      return toolSuccess({ success: true, result });
+      return toolSuccess(
+        await buildSlideTextPayload(
+          toolCallId,
+          result,
+          params.slide_index,
+          params.shape_id,
+          writeFile,
+        ),
+      );
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to read slide text";
