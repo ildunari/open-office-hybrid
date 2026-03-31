@@ -26,8 +26,15 @@ vi.mock("../src/chat/chat-controller", async () => {
         currentSession: { id: "session-1", name: "New Chat" },
         sessions: [{ id: "session-1", name: "New Chat" }],
         isStreaming: false,
+        isUploading: false,
         messageCount: 0,
-        providerConfig: null,
+        providerConfig: {
+          provider: "openai",
+          model: "gpt-5.4",
+          thinking: "none",
+        },
+        uploads: [],
+        error: null,
         sessionStats: {
           inputTokens: 0,
           outputTokens: 0,
@@ -50,6 +57,11 @@ vi.mock("../src/chat/chat-controller", async () => {
       }
 
       dispose() {}
+      sendMessage() {
+        return Promise.resolve();
+      }
+      abort() {}
+      removeUpload() {}
       toggleFollowMode() {}
       clearMessages() {
         return Promise.resolve();
@@ -107,7 +119,7 @@ vi.mock("../src/chat/diagnostics-panel.svelte", async () => ({
 }));
 
 vi.mock("../src/chat/chat-input.svelte", async () => ({
-  default: (await import("./fixtures/chat-root-probe.svelte")).default,
+  default: (await vi.importActual("../src/chat/chat-input.svelte")).default,
 }));
 
 vi.mock("../src/chat/resize-handle.svelte", async () => ({
@@ -187,6 +199,14 @@ function getProbe(target: HTMLElement, testId: string) {
   return target.querySelector(`[data-testid="${testId}"]`);
 }
 
+function getChatTextarea(target: HTMLElement) {
+  const textarea = target.querySelector<HTMLTextAreaElement>(
+    "textarea[data-live-review-textarea]",
+  );
+  expect(textarea, "chat textarea should exist").toBeTruthy();
+  return textarea!;
+}
+
 describe("ChatInterface tab mounting", () => {
   let mounted:
     | {
@@ -217,7 +237,7 @@ describe("ChatInterface tab mounting", () => {
     expect(getProbe(mounted.target, "files-root-probe")).toBeFalsy();
     expect(getProbe(mounted.target, "settings-root-probe")).toBeTruthy();
     expect(getProbeCounts()).toEqual({
-      chat: { mounted: 9, unmounted: 0 },
+      chat: { mounted: 8, unmounted: 0 },
       files: { mounted: 0, unmounted: 0 },
       settings: { mounted: 1, unmounted: 0 },
     });
@@ -226,7 +246,7 @@ describe("ChatInterface tab mounting", () => {
 
     expect(getProbe(mounted.target, "files-root-probe")).toBeTruthy();
     expect(getProbeCounts()).toEqual({
-      chat: { mounted: 9, unmounted: 8 },
+      chat: { mounted: 8, unmounted: 8 },
       files: { mounted: 1, unmounted: 0 },
       settings: { mounted: 1, unmounted: 0 },
     });
@@ -236,7 +256,7 @@ describe("ChatInterface tab mounting", () => {
     expect(getProbe(mounted.target, "files-root-probe")).toBeFalsy();
     expect(getProbe(mounted.target, "settings-root-probe")).toBeTruthy();
     expect(getProbeCounts()).toEqual({
-      chat: { mounted: 9, unmounted: 8 },
+      chat: { mounted: 8, unmounted: 8 },
       files: { mounted: 1, unmounted: 1 },
       settings: { mounted: 1, unmounted: 0 },
     });
@@ -247,9 +267,23 @@ describe("ChatInterface tab mounting", () => {
     expect(getProbe(mounted.target, "files-root-probe")).toBeFalsy();
     expect(getProbe(mounted.target, "settings-root-probe")).toBeTruthy();
     expect(getProbeCounts()).toEqual({
-      chat: { mounted: 17, unmounted: 8 },
+      chat: { mounted: 16, unmounted: 8 },
       files: { mounted: 1, unmounted: 1 },
       settings: { mounted: 1, unmounted: 0 },
     });
+  });
+
+  it("preserves the draft input when switching away from and back to the chat tab", () => {
+    mounted = renderChatInterface();
+
+    const textarea = getChatTextarea(mounted.target);
+    textarea.value = "Keep this draft";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+
+    clickTab(mounted.target, "Files");
+    clickTab(mounted.target, "Chat");
+
+    expect(getChatTextarea(mounted.target).value).toBe("Keep this draft");
   });
 });
