@@ -2,6 +2,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type {
   Disposable,
   GatewayCapability,
+  GatewayDocumentMetadata,
   GatewayHostAdapter,
   GatewayLiveContext,
   HookRegistry,
@@ -76,6 +77,11 @@ export interface AppAdapter extends GatewayHostAdapter {
   hostApp?: HostApp;
   tools: AgentTool[];
   buildSystemPrompt: (skills: SkillMeta[]) => string;
+  metadataTag?: string;
+  getDocumentId: () => Promise<string>;
+  getDocumentMetadata?: () => Promise<GatewayDocumentMetadata | null>;
+  onToolResult?: (toolCallId: string, result: string, isError: boolean) => void;
+  bridgeEventSink?: (event: string, payload: Record<string, unknown>) => void;
   storageNamespace?: StorageNamespace;
   appVersion?: string;
   appName?: string;

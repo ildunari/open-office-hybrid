@@ -12,6 +12,8 @@ import type {
 import type { ReflectionResult } from "../reflection/types";
 import { getNamespace } from "./namespace";
 
+declare const Office: any;
+
 export interface ChatSession {
   id: string;
   workbookId: string;

@@ -1,7 +1,4 @@
-import type {
-  GatewayCapability,
-  GatewayLiveContext,
-} from "@office-agents/sdk";
+import type { GatewayCapability, GatewayLiveContext } from "@office-agents/sdk";
 
 export const BRIDGE_PROTOCOL_VERSION = 1;
 export const DEFAULT_BRIDGE_HOST = "localhost";

@@ -1,5 +1,5 @@
-import type { GatewayLiveContext } from "@office-agents/core";
 import type { OfficeBridgeController } from "@office-agents/bridge";
+import type { GatewayLiveContext } from "@office-agents/core";
 import { bindOfficeDocumentHandler } from "./components/office-document-events";
 
 /* global Office, Word */
@@ -53,7 +53,9 @@ export function buildWordLiveContext(
             trimmedSelection.length > maxSelectionLength
               ? `${trimmedSelection.slice(0, maxSelectionLength)}…`
               : trimmedSelection,
-          ...(options.selectedStyle ? { selectedStyle: options.selectedStyle } : {}),
+          ...(options.selectedStyle
+            ? { selectedStyle: options.selectedStyle }
+            : {}),
         }
       : { hasSelection: false };
 
@@ -106,7 +108,7 @@ export async function readWordSelectionPreview(
   const liveContext = await readWordLiveContext(maxSelectionLength);
   return {
     selectedText: liveContext.selection?.hasSelection
-      ? liveContext.selection.selectedText ?? ""
+      ? (liveContext.selection.selectedText ?? "")
       : "",
   };
 }
@@ -120,7 +122,8 @@ export function attachWordLiveContextBridge(
 ): () => void {
   if (!controller?.enabled) return () => undefined;
 
-  const readLiveContext = options.readLiveContext ?? (() => readWordLiveContext());
+  const readLiveContext =
+    options.readLiveContext ?? (() => readWordLiveContext());
   const officeDocument =
     options.officeDocument ??
     (typeof Office === "undefined" ? undefined : Office?.context?.document);
@@ -130,9 +133,7 @@ export function attachWordLiveContextBridge(
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   const scheduleUpdate = (
-    event:
-      | "word:selection_changed"
-      | "word:context_changed",
+    event: "word:selection_changed" | "word:context_changed",
     reason?: string,
   ) => {
     if (refreshTimer) {
@@ -142,13 +143,14 @@ export function attachWordLiveContextBridge(
       refreshTimer = null;
       void readLiveContext()
         .then((liveContext) => {
-          if (!liveContext) return;
+          if (!liveContext) return undefined;
           if (event === "word:selection_changed") {
             controller.emitEvent(event, { liveContext });
           } else {
             controller.emitEvent(event, { liveContext, reason });
           }
-          return Promise.resolve(controller.refresh()).catch(() => undefined);
+          void Promise.resolve(controller.refresh()).catch(() => undefined);
+          return undefined;
         })
         .catch(() => undefined);
     }, debounceMs);
@@ -158,7 +160,8 @@ export function attachWordLiveContextBridge(
     officeDocument,
     typeof Office === "undefined"
       ? "DocumentSelectionChanged"
-      : (Office?.EventType?.DocumentSelectionChanged ?? "DocumentSelectionChanged"),
+      : (Office?.EventType?.DocumentSelectionChanged ??
+          "DocumentSelectionChanged"),
     () => scheduleUpdate("word:selection_changed"),
   );
   const handleWindowFocus = () =>
@@ -191,7 +194,10 @@ export function attachWordLiveContextBridge(
 }
 
 function getFocusTarget(): string {
-  if (typeof document === "undefined" || typeof document.hasFocus !== "function") {
+  if (
+    typeof document === "undefined" ||
+    typeof document.hasFocus !== "function"
+  ) {
     return "unknown";
   }
   return document.hasFocus() ? "document" : "unknown";

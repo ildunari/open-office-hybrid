@@ -1,12 +1,19 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { type BridgeToolExecutionResult, serializeForJson } from "./protocol.js";
-import { requestJson, type BridgeRequestOptions } from "./http-client.js";
-import { findMatchingSession, type BridgeSessionRecord } from "./server.js";
 import { z } from "zod";
+import { type BridgeRequestOptions, requestJson } from "./http-client.js";
+import {
+  type BridgeToolExecutionResult,
+  serializeForJson,
+} from "./protocol.js";
+import { type BridgeSessionRecord, findMatchingSession } from "./server.js";
 
 function toStructuredRecord(value: unknown): Record<string, unknown> {
   const serialized = serializeForJson(value);
-  if (serialized && typeof serialized === "object" && !Array.isArray(serialized)) {
+  if (
+    serialized &&
+    typeof serialized === "object" &&
+    !Array.isArray(serialized)
+  ) {
     return serialized as Record<string, unknown>;
   }
   return { value: serialized };
@@ -84,7 +91,9 @@ export async function createOfficeBridgeMcpServer(
     }
     if (!selector) {
       if (sessions.length === 1) return sessions[0];
-      throw new Error("Multiple bridge sessions available. Pass a session selector.");
+      throw new Error(
+        "Multiple bridge sessions available. Pass a session selector.",
+      );
     }
     const matches = findMatchingSession(sessions, selector);
     if (matches.length === 1) return matches[0];

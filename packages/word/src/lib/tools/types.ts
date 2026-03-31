@@ -1,5 +1,5 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { resizeImage } from "@office-agents/core";
+import { type GatewayCapability, resizeImage } from "@office-agents/core";
 import type { Static, TObject } from "@sinclair/typebox";
 
 export type ToolResult = AgentToolResult<undefined>;
@@ -9,6 +9,7 @@ interface ToolConfig<T extends TObject> {
   label: string;
   description: string;
   parameters: T;
+  requiredCapability?: GatewayCapability;
   execute: (
     toolCallId: string,
     params: Static<T>,
