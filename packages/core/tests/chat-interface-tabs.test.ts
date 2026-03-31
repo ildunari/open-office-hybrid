@@ -2,7 +2,10 @@
 
 import { flushSync, mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getProbeCounts, resetProbeCounts } from "./fixtures/tab-mount-probe-state";
+import {
+  getProbeCounts,
+  resetProbeCounts,
+} from "./fixtures/tab-mount-probe-state";
 
 vi.mock("@office-agents/sdk", () => ({
   getSessionMessageCount: () => 0,
