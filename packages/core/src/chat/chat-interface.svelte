@@ -460,107 +460,113 @@
     </div>
   </div>
 
-  <div class="flex flex-col flex-1 min-h-0 {activeTab !== 'chat' ? 'hidden' : ''}">
-    <StatusStrip
-      phase={$runtimeState.taskPhase}
-      permissionMode={$runtimeState.permissionMode}
-      pressure={contextPressure}
-      taskTitle={activeTaskTitle}
-      waiting={Boolean($runtimeState.waitingState)}
-    />
+  <div class:hidden={activeTab !== "chat"} class="flex flex-col flex-1 min-h-0">
+    {#if activeTab === "chat"}
+      <StatusStrip
+        phase={$runtimeState.taskPhase}
+        permissionMode={$runtimeState.permissionMode}
+        pressure={contextPressure}
+        taskTitle={activeTaskTitle}
+        waiting={Boolean($runtimeState.waitingState)}
+      />
 
-    <ResumeTaskBanner message={resumeMessage} canResume={canResume} />
+      <ResumeTaskBanner message={resumeMessage} canResume={canResume} />
 
-    <ApprovalDrawer
-      approval={$runtimeState.approvalRequest}
-      permissionMode={$runtimeState.permissionMode}
-    />
+      <ApprovalDrawer
+        approval={$runtimeState.approvalRequest}
+        permissionMode={$runtimeState.permissionMode}
+      />
 
-    <ControlPanelsWrapper>
-      {#snippet children()}
-        <PlanPanel
-          plan={$runtimeState.planState}
-          approvalMessage={$runtimeState.approvalRequest?.uiMessage ?? null}
-        />
-        <div bind:this={diagnosticsWrapperRef} class="shrink-0 overflow-hidden">
-          <DiagnosticsPanel runtimeState={$runtimeState} />
+      <ControlPanelsWrapper>
+        {#snippet children()}
+          <PlanPanel
+            plan={$runtimeState.planState}
+            approvalMessage={$runtimeState.approvalRequest?.uiMessage ?? null}
+          />
+          <div bind:this={diagnosticsWrapperRef} class="shrink-0 overflow-hidden">
+            <DiagnosticsPanel runtimeState={$runtimeState} />
+          </div>
+          <ResizeHandle target={() => diagnosticsWrapperRef} direction="above" min={32} max={500} />
+        {/snippet}
+      </ControlPanelsWrapper>
+
+      <MessageList />
+      {#if SelectionIndicator}
+        <SelectionIndicator />
+      {/if}
+      {#if $runtimeState.providerConfig}
+        <div
+          class="flex items-center justify-between px-3 py-1.5 text-[10px] border-t border-(--chat-border) bg-(--chat-bg-secondary) text-(--chat-text-muted)"
+          style="font-family: var(--chat-font-mono)"
+        >
+          <div class="flex items-center gap-3">
+            <span title="Input tokens">
+              ↑{formatTokens($runtimeState.sessionStats.inputTokens)}
+            </span>
+            <span title="Output tokens">
+              ↓{formatTokens($runtimeState.sessionStats.outputTokens)}
+            </span>
+            {#if $runtimeState.sessionStats.cacheRead > 0}
+              <span title="Cache read tokens">
+                R{formatTokens($runtimeState.sessionStats.cacheRead)}
+              </span>
+            {/if}
+            {#if $runtimeState.sessionStats.cacheWrite > 0}
+              <span title="Cache write tokens">
+                W{formatTokens($runtimeState.sessionStats.cacheWrite)}
+              </span>
+            {/if}
+            <span title="Total cost">
+              {formatCost($runtimeState.sessionStats.totalCost)}
+            </span>
+            {#if $runtimeState.sessionStats.contextWindow > 0}
+              <span title="Context usage">
+                {formatTokens(
+                  $runtimeState.sessionStats.lastInputTokens || 0,
+                )}/{formatTokens(
+                  $runtimeState.sessionStats.contextWindow,
+                )}
+              </span>
+              {#if ($runtimeState.sessionStats.lastInputTokens / $runtimeState.sessionStats.contextWindow) > 0.5}
+                <button
+                  type="button"
+                  onclick={() => controller.compactContext()}
+                  disabled={$runtimeState.isStreaming}
+                  class="text-(--chat-text-muted) hover:text-(--chat-accent) disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title="Compact context"
+                >
+                  <Minimize2 size={10} />
+                </button>
+              {/if}
+            {/if}
+          </div>
+          <div class="flex items-center gap-1">
+            <span>{$runtimeState.providerConfig.provider}</span>
+            <span class="text-(--chat-text-secondary)">
+              {$runtimeState.providerConfig.model}
+            </span>
+            {#if $runtimeState.providerConfig.thinking !== "none"}
+              <span class="text-(--chat-accent)">
+                • {$runtimeState.providerConfig.thinking}
+              </span>
+            {/if}
+          </div>
         </div>
-        <ResizeHandle target={() => diagnosticsWrapperRef} direction="above" min={32} max={500} />
-      {/snippet}
-    </ControlPanelsWrapper>
-
-    <MessageList />
-    {#if SelectionIndicator}
-      <SelectionIndicator />
+      {/if}
+      <ResizeHandle target={() => inputWrapperRef} direction="below" min={48} max={300} />
     {/if}
-    <ResizeHandle target={() => inputWrapperRef} direction="below" min={48} max={300} />
-    <div bind:this={inputWrapperRef} class="shrink-0 flex flex-col">
+    <div bind:this={inputWrapperRef} class:hidden={activeTab !== "chat"} class="shrink-0 flex flex-col">
       <ChatInput />
     </div>
-    {#if $runtimeState.providerConfig}
-      <div
-        class="flex items-center justify-between px-3 py-1.5 text-[10px] border-t border-(--chat-border) bg-(--chat-bg-secondary) text-(--chat-text-muted)"
-        style="font-family: var(--chat-font-mono)"
-      >
-        <div class="flex items-center gap-3">
-          <span title="Input tokens">
-            ↑{formatTokens($runtimeState.sessionStats.inputTokens)}
-          </span>
-          <span title="Output tokens">
-            ↓{formatTokens($runtimeState.sessionStats.outputTokens)}
-          </span>
-          {#if $runtimeState.sessionStats.cacheRead > 0}
-            <span title="Cache read tokens">
-              R{formatTokens($runtimeState.sessionStats.cacheRead)}
-            </span>
-          {/if}
-          {#if $runtimeState.sessionStats.cacheWrite > 0}
-            <span title="Cache write tokens">
-              W{formatTokens($runtimeState.sessionStats.cacheWrite)}
-            </span>
-          {/if}
-          <span title="Total cost">
-            {formatCost($runtimeState.sessionStats.totalCost)}
-          </span>
-          {#if $runtimeState.sessionStats.contextWindow > 0}
-            <span title="Context usage">
-              {formatTokens(
-                $runtimeState.sessionStats.lastInputTokens || 0,
-              )}/{formatTokens(
-                $runtimeState.sessionStats.contextWindow,
-              )}
-            </span>
-            {#if ($runtimeState.sessionStats.lastInputTokens / $runtimeState.sessionStats.contextWindow) > 0.5}
-              <button
-                type="button"
-                onclick={() => controller.compactContext()}
-                disabled={$runtimeState.isStreaming}
-                class="text-(--chat-text-muted) hover:text-(--chat-accent) disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                title="Compact context"
-              >
-                <Minimize2 size={10} />
-              </button>
-            {/if}
-          {/if}
-        </div>
-        <div class="flex items-center gap-1">
-          <span>{$runtimeState.providerConfig.provider}</span>
-          <span class="text-(--chat-text-secondary)">
-            {$runtimeState.providerConfig.model}
-          </span>
-          {#if $runtimeState.providerConfig.thinking !== "none"}
-            <span class="text-(--chat-accent)">
-              • {$runtimeState.providerConfig.thinking}
-            </span>
-          {/if}
-        </div>
-      </div>
-    {/if}
   </div>
-  <div class="{activeTab !== 'files' ? 'hidden' : ''}">
-    <FilesPanel />
-  </div>
-  <div class="{activeTab !== 'settings' ? 'hidden' : ''}">
+
+  {#if activeTab === "files"}
+    <div>
+      <FilesPanel />
+    </div>
+  {/if}
+
+  <div class:hidden={activeTab !== "settings"}>
     <SettingsPanel />
   </div>
 

@@ -1,3 +1,9 @@
+<script module lang="ts">
+  const MAX_SETTLED_RENDER_CACHE_SIZE = 50;
+
+  const settledHtmlCache = new Map<string, string>();
+</script>
+
 <script lang="ts">
   import type {
     LinkClickContext,
@@ -20,9 +26,25 @@
 
   let html = $state("");
 
+  function cacheSettledHtml(text: string, rendered: string) {
+    if (settledHtmlCache.has(text)) {
+      settledHtmlCache.delete(text);
+    } else if (settledHtmlCache.size >= MAX_SETTLED_RENDER_CACHE_SIZE) {
+      const oldestKey = settledHtmlCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        settledHtmlCache.delete(oldestKey);
+      }
+    }
+
+    settledHtmlCache.set(text, rendered);
+  }
+
   $effect(() => {
     const currentText = text;
     const currentStreaming = isStreaming;
+    const cachedSettledHtml = currentStreaming
+      ? undefined
+      : settledHtmlCache.get(currentText);
     let cancelled = false;
     let plainRenderTimeout: number | undefined;
     let highlightTimeout: number | undefined;
@@ -31,14 +53,33 @@
     };
 
     const renderPlain = () => {
+      const rendered = renderMarkdownSync(currentText, renderOptions);
       if (
         !cancelled &&
         text === currentText &&
         isStreaming === currentStreaming
       ) {
-        html = renderMarkdownSync(currentText, renderOptions);
+        html = rendered;
+        return rendered;
+      }
+
+      return undefined;
+    };
+
+    const cleanup = () => {
+      cancelled = true;
+      if (plainRenderTimeout !== undefined) {
+        clearTimeout(plainRenderTimeout);
+      }
+      if (highlightTimeout !== undefined) {
+        clearTimeout(highlightTimeout);
       }
     };
+
+    if (cachedSettledHtml !== undefined) {
+      html = cachedSettledHtml;
+      return cleanup;
+    }
 
     if (
       currentStreaming &&
@@ -53,12 +94,7 @@
     }
 
     if (currentStreaming) {
-      return () => {
-        cancelled = true;
-        if (plainRenderTimeout !== undefined) {
-          clearTimeout(plainRenderTimeout);
-        }
-      };
+      return cleanup;
     }
 
     highlightTimeout = window.setTimeout(() => {
@@ -70,22 +106,18 @@
             isStreaming === currentStreaming
           ) {
             html = rendered;
+            cacheSettledHtml(currentText, rendered);
           }
         })
         .catch(() => {
-          renderPlain();
+          const rendered = renderPlain();
+          if (rendered !== undefined) {
+            cacheSettledHtml(currentText, rendered);
+          }
         });
     }, HIGHLIGHT_DELAY_MS);
 
-    return () => {
-      cancelled = true;
-      if (plainRenderTimeout !== undefined) {
-        clearTimeout(plainRenderTimeout);
-      }
-      if (highlightTimeout !== undefined) {
-        clearTimeout(highlightTimeout);
-      }
-    };
+    return cleanup;
   });
 
   async function handleClick(event: MouseEvent) {
