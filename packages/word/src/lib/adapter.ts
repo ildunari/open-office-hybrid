@@ -10,6 +10,10 @@ import TrackChangesIndicator from "./components/track-changes-indicator.svelte";
 import wordApiFullDts from "./docs/word-officejs-api.d.ts?raw";
 import wordApiOnlineDts from "./docs/word-officejs-api-online.d.ts?raw";
 import {
+  readWordLiveContext,
+  WORD_TRACKING_MODE_CHANGED_EVENT,
+} from "./live-context";
+import {
   buildRunFormattingSample,
   buildStyleInfoFromLoadedStyles,
 } from "./metadata-helpers";
@@ -24,8 +28,6 @@ import {
 import { getCustomCommands } from "./vfs/custom-commands";
 
 /* global Word */
-
-const TRACKING_MODE_CHANGED_EVENT = "word-tracking-mode-maybe-changed";
 
 export function createWordAdapter(): AppAdapter {
   return {
@@ -75,9 +77,23 @@ export function createWordAdapter(): AppAdapter {
         return null;
       }
     },
+    getLiveContext: async () => {
+      try {
+        return await readWordLiveContext();
+      } catch {
+        return null;
+      }
+    },
+    getCapabilities: () => [
+      "observe",
+      "tool_call",
+      "document_edit",
+      "unsafe_office_js",
+      "vfs_access",
+    ],
 
     onToolResult: () => {
-      window.dispatchEvent(new Event(TRACKING_MODE_CHANGED_EVENT));
+      window.dispatchEvent(new Event(WORD_TRACKING_MODE_CHANGED_EVENT));
     },
   };
 }

@@ -1,3 +1,8 @@
+import type {
+  GatewayCapability,
+  GatewayLiveContext,
+} from "@office-agents/sdk";
+
 export const BRIDGE_PROTOCOL_VERSION = 1;
 export const DEFAULT_BRIDGE_HOST = "localhost";
 export const DEFAULT_BRIDGE_PORT = 4017;
@@ -14,6 +19,7 @@ export interface BridgeToolDefinition {
   label?: string;
   description?: string;
   parameters?: unknown;
+  requiredCapability?: BridgeCapability;
 }
 
 export interface BridgeHostInfo {
@@ -37,8 +43,17 @@ export interface BridgeSessionSnapshot {
   tools: BridgeToolDefinition[];
   host: BridgeHostInfo;
   runtimeState?: BridgeRuntimeStateSlice;
+  gateway?: BridgeGatewayState;
   connectedAt: number;
   updatedAt: number;
+}
+
+export type BridgeCapability = GatewayCapability;
+export type BridgeLiveContext = GatewayLiveContext;
+
+export interface BridgeGatewayState {
+  capabilities: BridgeCapability[];
+  liveContext?: BridgeLiveContext | null;
 }
 
 export interface BridgeError {
@@ -220,6 +235,13 @@ export interface BridgeEventPayloads {
   "ui:approval_responded": { actionClass: string; approved: boolean };
   "ui:session_switched": { fromSessionId?: string; toSessionId: string };
   "ui:resize": { target: string; height: number };
+
+  // Word live context
+  "word:selection_changed": { liveContext: BridgeLiveContext };
+  "word:context_changed": {
+    liveContext: BridgeLiveContext;
+    reason?: string;
+  };
 
   // Session lifecycle
   "session:hmr_reload": { previousSessionId?: string };
@@ -443,6 +465,29 @@ export function normalizeBridgeUrl(
     url.pathname = DEFAULT_BRIDGE_WS_PATH;
   }
   return url.toString().replace(/\/$/, "");
+}
+
+const VALID_BRIDGE_CAPABILITIES = new Set<BridgeCapability>([
+  "observe",
+  "tool_call",
+  "document_edit",
+  "unsafe_office_js",
+  "vfs_access",
+]);
+
+export function normalizeBridgeCapabilities(
+  capabilities?: Iterable<string> | null,
+): BridgeCapability[] {
+  const normalized: BridgeCapability[] = [];
+  for (const capability of capabilities ?? []) {
+    if (
+      VALID_BRIDGE_CAPABILITIES.has(capability as BridgeCapability) &&
+      !normalized.includes(capability as BridgeCapability)
+    ) {
+      normalized.push(capability as BridgeCapability);
+    }
+  }
+  return normalized.length > 0 ? normalized : ["observe"];
 }
 
 export function serializeForJson(value: unknown): unknown {

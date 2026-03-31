@@ -2,6 +2,7 @@
   import { FileText } from "lucide-svelte";
   import { onMount } from "svelte";
   import { bindOfficeDocumentHandler } from "./office-document-events";
+  import { readWordSelectionPreview } from "../live-context";
 
   /* global Word, Office */
 
@@ -12,24 +13,9 @@
   let selection = $state<SelectionState | null>(null);
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function getSelectionState(): Promise<SelectionState> {
-    return Word.run(async (context) => {
-      const selectionRange = context.document.getSelection();
-      selectionRange.load("text");
-      await context.sync();
-
-      return {
-        selectedText:
-          selectionRange.text.length > 60
-            ? `${selectionRange.text.substring(0, 60)}…`
-            : selectionRange.text,
-      };
-    });
-  }
-
   async function refresh() {
     try {
-      selection = await getSelectionState();
+      selection = await readWordSelectionPreview();
     } catch {
       // ignore selection refresh errors
     }
@@ -51,12 +37,21 @@
     const handleSelectionChanged = () => {
       scheduleRefresh();
     };
+    const officeDocument =
+      typeof Office === "undefined" ? undefined : Office?.context?.document;
+    const selectionEventType =
+      typeof Office === "undefined"
+        ? undefined
+        : Office?.EventType?.DocumentSelectionChanged;
 
-    const detach = bindOfficeDocumentHandler(
-      Office?.context?.document,
-      Office.EventType.DocumentSelectionChanged,
-      handleSelectionChanged,
-    );
+    const detach =
+      officeDocument && selectionEventType
+        ? bindOfficeDocumentHandler(
+            officeDocument,
+            selectionEventType,
+            handleSelectionChanged,
+          )
+        : () => undefined;
 
     return () => {
       if (refreshTimer) {

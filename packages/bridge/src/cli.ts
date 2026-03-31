@@ -118,12 +118,15 @@ function printUsage() {
 Commands:
   serve [--host HOST] [--port PORT]
   stop [--url URL]
+  mcp-serve [--url URL]
   list [--json]
   wait [selector] [--app APP] [--document DOCUMENT] [--timeout MS] [--json]
   inspect [session] [--compact] [--fields KEY1,KEY2]
+  snapshot [session] [--compact] [--fields KEY1,KEY2]
   metadata [session] [--compact] [--fields KEY1,KEY2]
   events [session] [--limit N] [--compact] [--fields KEY1,KEY2] [--max-tokens N]
   tool [session] <toolName> [--input JSON | --file PATH | --stdin]
+  call [session] <toolName> [--input JSON | --file PATH | --stdin]
   exec [session] [--code JS | --file PATH | --stdin] [--sandbox | --unsafe]
   rpc [session] <method> [--input JSON | --file PATH | --stdin]
   screenshot [session] [--pages PAGES | --sheet-id ID --range A1:B2 | --slide-index N] [--out PATH]
@@ -133,6 +136,8 @@ Commands:
   vfs rm [session] <remotePath>
   state [session] [--compact]
   poll [session] [--interval MS] [--events TYPE1,TYPE2]
+  watch-selection [session]
+  watch-context [session]
   assert [session] [--mode X] [--phase Y] [--streaming true|false]
   bench [session] <toolName> [--runs N]
   summary [session]
@@ -150,9 +155,12 @@ Global flags:
 
 Examples:
   office-bridge serve
+  office-bridge mcp-serve
   office-bridge stop
   office-bridge list
   office-bridge inspect word
+  office-bridge snapshot word --compact
+  office-bridge call word get_document_text
   office-bridge inspect word --compact --fields app,documentId
   office-bridge exec word --unsafe --code "return { href: window.location.href, title: document.title }"
   office-bridge exec word --sandbox --code "const body = context.document.body; body.load('text'); await context.sync(); return body.text;"
@@ -162,6 +170,8 @@ Examples:
   office-bridge vfs pull word /home/user/uploads/report.docx ./report.docx
   office-bridge state word --compact
   office-bridge poll word --interval 1000 --events session_updated,tool_executed
+  office-bridge watch-selection word
+  office-bridge watch-context word
   office-bridge assert word --mode agent --streaming true
   office-bridge bench word get_document_text --runs 10
   office-bridge summary word
@@ -997,6 +1007,21 @@ async function commandState(cli: Cli) {
   printFormattedJson(rs, cli);
 }
 
+async function commandSnapshot(cli: Cli) {
+  const session = await resolveSession(cli, cli.positionals[1]);
+  const response = await requestJson<{ ok: true; result: unknown }>(
+    "POST",
+    "/rpc",
+    {
+      sessionId: session.snapshot.sessionId,
+      method: "refresh_session",
+      timeoutMs: int(cli, "timeout", DEFAULT_REQUEST_TIMEOUT_MS),
+    },
+    reqOpts(cli),
+  );
+  printFormattedJson(response.result, cli);
+}
+
 async function commandPoll(cli: Cli) {
   const session = await resolveSession(cli, cli.positionals[1]);
   const intervalMs = int(cli, "interval", 2000);
@@ -1097,6 +1122,26 @@ async function commandPoll(cli: Cli) {
   }
 }
 
+async function commandWatchSelection(cli: Cli) {
+  await commandPoll({
+    ...cli,
+    values: {
+      ...cli.values,
+      events: "word:selection_changed",
+    },
+  });
+}
+
+async function commandWatchContext(cli: Cli) {
+  await commandPoll({
+    ...cli,
+    values: {
+      ...cli.values,
+      events: "word:selection_changed,word:context_changed",
+    },
+  });
+}
+
 async function commandAssert(cli: Cli) {
   const session = await resolveSession(cli, cli.positionals[1]);
   const rs = session.snapshot.runtimeState;
@@ -1182,6 +1227,10 @@ async function commandBench(cli: Cli) {
   });
 }
 
+async function commandCall(cli: Cli) {
+  await commandTool(cli);
+}
+
 async function commandSummary(cli: Cli) {
   const session = await resolveSession(cli, cli.positionals[1]);
   console.log(buildSessionSummaryLine(session.snapshot));
@@ -1214,6 +1263,18 @@ async function commandDiag(cli: Cli) {
     },
     cli,
   );
+}
+
+async function commandMcpServe(cli: Cli) {
+  const [{ StdioServerTransport }, { createOfficeBridgeMcpServer }] =
+    await Promise.all([
+      import("@modelcontextprotocol/sdk/server/stdio.js"),
+      import("./mcp.js"),
+    ]);
+
+  const server = await createOfficeBridgeMcpServer(reqOpts(cli));
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
 }
 
 async function commandDom(cli: Cli) {
@@ -1330,18 +1391,23 @@ async function commandScreenshotDiff(cli: Cli) {
 const COMMANDS: Record<string, (cli: Cli) => Promise<void>> = {
   serve: commandServe,
   stop: commandStop,
+  "mcp-serve": commandMcpServe,
   list: commandList,
   wait: commandWait,
   inspect: commandInspect,
+  snapshot: commandSnapshot,
   metadata: commandMetadata,
   events: commandEvents,
   tool: commandTool,
+  call: commandCall,
   exec: commandExec,
   rpc: commandRpc,
   screenshot: commandScreenshot,
   vfs: commandVfs,
   state: commandState,
   poll: commandPoll,
+  "watch-selection": commandWatchSelection,
+  "watch-context": commandWatchContext,
   assert: commandAssert,
   bench: commandBench,
   summary: commandSummary,

@@ -276,6 +276,8 @@ describe("CLI command registration", () => {
   const NEW_COMMANDS = [
     "state",
     "poll",
+    "watch-selection",
+    "watch-context",
     "assert",
     "bench",
     "summary",
@@ -283,6 +285,9 @@ describe("CLI command registration", () => {
     "dom",
     "reset",
     "screenshot-diff",
+    "snapshot",
+    "call",
+    "mcp-serve",
   ];
 
   for (const cmd of NEW_COMMANDS) {

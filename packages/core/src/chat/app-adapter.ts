@@ -1,6 +1,9 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type {
   Disposable,
+  GatewayCapability,
+  GatewayHostAdapter,
+  GatewayLiveContext,
   HookRegistry,
   HostApp,
   ReasoningPattern,
@@ -69,18 +72,10 @@ export interface BridgeRuntimeStateLike {
   } | null;
 }
 
-export interface AppAdapter {
+export interface AppAdapter extends GatewayHostAdapter {
   hostApp?: HostApp;
   tools: AgentTool[];
-  bridgeEventSink?: (event: string, payload: Record<string, unknown>) => void;
   buildSystemPrompt: (skills: SkillMeta[]) => string;
-  getDocumentId: () => Promise<string>;
-  getDocumentMetadata?: () => Promise<{
-    metadata: object;
-    nameMap?: Record<number, string>;
-  } | null>;
-  onToolResult?: (toolCallId: string, result: string, isError: boolean) => void;
-  metadataTag?: string;
   storageNamespace?: StorageNamespace;
   appVersion?: string;
   appName?: string;
@@ -100,6 +95,12 @@ export interface AppAdapter {
     classification: import("@office-agents/sdk").TaskClassification,
   ) => MaybePromise<ScopeRiskEstimate>;
   getRuntimeState?: () => BridgeRuntimeStateLike | null;
+  getLiveContext?:
+    | (() => Promise<GatewayLiveContext | null>)
+    | (() => GatewayLiveContext | null);
+  getCapabilities?:
+    | (() => Promise<GatewayCapability[] | readonly GatewayCapability[]>)
+    | (() => GatewayCapability[] | readonly GatewayCapability[]);
   hasImageSearch?: boolean;
   showFollowModeToggle?: boolean;
   handleLinkClick?: (

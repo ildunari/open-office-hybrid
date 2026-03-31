@@ -13,6 +13,7 @@ import { defineTool, toolError, toolSuccess } from "./types";
 export const executeOfficeJsTool = defineTool({
   name: "execute_office_js",
   label: "Execute Office.js Code",
+  requiredCapability: "document_edit",
   description:
     "Execute Office.js JavaScript code to interact with the Word document. " +
     "The code receives a context parameter and runs inside Word.run(). " +

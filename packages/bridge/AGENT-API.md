@@ -60,8 +60,17 @@ curl -sk https://localhost:4017/sessions
         "app": "word",
         "appName": "OpenWord Hybrid",
         "documentId": "doc-hash",
-        "tools": [{ "name": "get_document_text", "description": "..." }],
+        "tools": [{ "name": "get_document_text", "description": "...", "requiredCapability": "tool_call" }],
         "host": { "href": "https://localhost:3003", "userAgent": "..." },
+        "gateway": {
+          "capabilities": ["observe", "tool_call", "document_edit", "unsafe_office_js", "vfs_access"],
+          "liveContext": {
+            "selection": { "hasSelection": true, "selectedText": "Clause 9" },
+            "trackingMode": "TrackMineOnly",
+            "focusTarget": "document",
+            "updatedAt": 1700000001000
+          }
+        },
         "runtimeState": { "mode": "discuss", "taskPhase": "idle", "isStreaming": false, ... },
         "connectedAt": 1700000000000,
         "updatedAt": 1700000001000
@@ -87,14 +96,14 @@ curl -sk https://localhost:4017/sessions/bridge_abc123
 }
 ```
 
-### POST /sessions/{id}/invoke
+### POST /rpc
 
 Invoke an RPC method on a connected session. The add-in processes the request via WebSocket.
 
 ```bash
-curl -sk -X POST https://localhost:4017/sessions/bridge_abc123/invoke \
+curl -sk -X POST https://localhost:4017/rpc \
   -H 'Content-Type: application/json' \
-  -d '{"method":"execute_tool","params":{"toolName":"get_document_text","args":{}}}'
+  -d '{"sessionId":"bridge_abc123","method":"execute_tool","params":{"toolName":"get_document_text","args":{}}}'
 ```
 
 **Methods:**
@@ -110,6 +119,12 @@ curl -sk -X POST https://localhost:4017/sessions/bridge_abc123/invoke \
 | `vfs_read` | `{ path, encoding? }` | Read a VFS file |
 | `vfs_write` | `{ path, text?, dataBase64? }` | Write a VFS file |
 | `vfs_delete` | `{ path }` | Delete a VFS file |
+
+Capability notes:
+
+- `execute_tool` respects the target tool's `requiredCapability`
+- `execute_unsafe_office_js` requires `unsafe_office_js`
+- VFS methods require `vfs_access`
 
 ### POST /sessions/{id}/tools/{toolName}
 
@@ -224,6 +239,7 @@ All commands accept `--url URL` to override the bridge address.
 ```bash
 office-bridge serve [--host HOST] [--port PORT]    # Start bridge server
 office-bridge stop [--url URL]                      # Stop bridge server
+office-bridge mcp-serve [--url URL]                 # Start stdio MCP server over the bridge
 ```
 
 ### Session Discovery
@@ -237,6 +253,7 @@ office-bridge wait [selector] [--app APP] [--document DOCUMENT] [--timeout MS] [
 
 ```bash
 office-bridge inspect [session] [--compact] [--fields KEY1,KEY2]    # Full session snapshot
+office-bridge snapshot [session] [--compact] [--fields KEY1,KEY2]   # Force-refresh session snapshot
 office-bridge metadata [session] [--compact]                         # Document metadata
 office-bridge events [session] [--limit N] [--compact] [--max-tokens N]  # Recent events
 office-bridge state [session] [--compact]                            # Runtime state slice
@@ -248,6 +265,7 @@ office-bridge diag [session]                                         # Full diag
 
 ```bash
 office-bridge tool [session] <toolName> [--input JSON | --file PATH | --stdin] [--out PATH]
+office-bridge call [session] <toolName> [--input JSON | --file PATH | --stdin] [--out PATH]
 office-bridge exec [session] [--code JS | --file PATH | --stdin] [--sandbox | --unsafe] [--out PATH]
 office-bridge rpc [session] <method> [--input JSON | --file PATH | --stdin]
 ```
@@ -272,6 +290,8 @@ office-bridge vfs rm [session] <remotePath>
 
 ```bash
 office-bridge poll [session] [--interval MS] [--events TYPE1,TYPE2]     # Stream events as NDJSON (SSE preferred, falls back to polling)
+office-bridge watch-selection [session]                                  # Stream Word selection changes
+office-bridge watch-context [session]                                    # Stream Word selection + context changes
 office-bridge assert [session] [--mode X] [--phase Y] [--streaming true|false]  # Assert runtime state (exit 1 on mismatch)
 office-bridge bench [session] <toolName> [--runs N]                     # Benchmark a tool (min/avg/max ms)
 office-bridge dom [session] <query>                                     # Run a pre-built DOM query
@@ -375,6 +395,13 @@ Error classes: `office_js`, `tool_execution`, `network`, `timeout`, `rate_limit`
 | `ui:session_switched` | `{ fromSessionId?, toSessionId }` |
 | `ui:resize` | `{ target, height }` |
 
+### Word Live Context
+
+| Event | Payload |
+|-------|---------|
+| `word:selection_changed` | `{ liveContext }` |
+| `word:context_changed` | `{ liveContext, reason? }` |
+
 ### Session Lifecycle
 
 | Event | Payload |
@@ -410,6 +437,28 @@ Available via `inspect`, `state`, and `diag` commands. Shape (`BridgeRuntimeStat
   degradedGuardrails: string[];
 }
 ```
+
+## MCP Server
+
+The bridge can now act as a stdio MCP server:
+
+```bash
+office-bridge mcp-serve
+office-bridge mcp-serve --url https://localhost:4018
+```
+
+Exposed MCP tools include:
+
+- `list_sessions`
+- `get_session_snapshot`
+- `get_live_context`
+- `get_recent_events`
+- `call_bridge_tool`
+- `run_unsafe_office_js`
+- `vfs_list`
+- `vfs_read`
+- `vfs_write`
+- `vfs_delete`
 
 ## Shell Scripts
 

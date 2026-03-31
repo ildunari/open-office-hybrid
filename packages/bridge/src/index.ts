@@ -5,6 +5,10 @@ export {
 } from "./client.js";
 export { DOM_QUERIES } from "./dom-queries.js";
 export {
+  bridgeToolExecutionResultToMcpResult,
+  createOfficeBridgeMcpServer,
+} from "./mcp.js";
+export {
   BRIDGE_PROTOCOL_VERSION,
   type BridgeApp,
   type BridgeClassifiedError,
