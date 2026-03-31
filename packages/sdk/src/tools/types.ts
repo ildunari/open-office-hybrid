@@ -1,5 +1,6 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { Static, TObject } from "@sinclair/typebox";
+import type { GatewayCapability } from "../gateway";
 
 export type ToolResult = AgentToolResult<unknown>;
 
@@ -8,6 +9,7 @@ interface ToolConfig<T extends TObject> {
   label: string;
   description: string;
   parameters: T;
+  requiredCapability?: GatewayCapability;
   execute: (
     toolCallId: string,
     params: Static<T>,

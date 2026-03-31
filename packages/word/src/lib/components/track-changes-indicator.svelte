@@ -2,12 +2,11 @@
   import { Pencil } from "lucide-svelte";
   import { onMount } from "svelte";
   import { bindOfficeDocumentHandler } from "./office-document-events";
+  import { WORD_TRACKING_MODE_CHANGED_EVENT } from "../live-context";
 
   /* global Word, Office */
 
   type ChangeTrackingMode = "Off" | "TrackAll" | "TrackMineOnly" | "Unknown";
-
-  const TRACKING_MODE_CHANGED_EVENT = "word-tracking-mode-maybe-changed";
 
   let mode = $state<ChangeTrackingMode | null>(null);
   let isUpdating = $state(false);
@@ -111,12 +110,21 @@
 
     window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleFocus);
-    window.addEventListener(TRACKING_MODE_CHANGED_EVENT, handleFocus);
-    const detachOfficeHandler = bindOfficeDocumentHandler(
-      Office?.context?.document,
-      Office.EventType.DocumentSelectionChanged,
-      handleSelectionChanged,
-    );
+    window.addEventListener(WORD_TRACKING_MODE_CHANGED_EVENT, handleFocus);
+    const officeDocument =
+      typeof Office === "undefined" ? undefined : Office?.context?.document;
+    const selectionEventType =
+      typeof Office === "undefined"
+        ? undefined
+        : Office?.EventType?.DocumentSelectionChanged;
+    const detachOfficeHandler =
+      officeDocument && selectionEventType
+        ? bindOfficeDocumentHandler(
+            officeDocument,
+            selectionEventType,
+            handleSelectionChanged,
+          )
+        : () => undefined;
 
     return () => {
       if (refreshTimer) {
@@ -125,7 +133,7 @@
       }
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleFocus);
-      window.removeEventListener(TRACKING_MODE_CHANGED_EVENT, handleFocus);
+      window.removeEventListener(WORD_TRACKING_MODE_CHANGED_EVENT, handleFocus);
       detachOfficeHandler();
     };
   });

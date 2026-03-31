@@ -8,6 +8,7 @@ It lets a running add-in connect back to a local HTTPS/WebSocket server so exter
 
 - keeps a live registry of connected add-in sessions
 - exposes session metadata and recent bridge events
+- exposes gateway capabilities and live Word context in session snapshots
 - lets you invoke any registered add-in tool remotely
 - supports raw Office.js execution through each app's escape-hatch tool
 - forwards console messages, window errors, and unhandled promise rejections
@@ -53,6 +54,11 @@ Override with:
 ```bash
 office-bridge list
 office-bridge inspect word
+office-bridge snapshot word
+office-bridge watch-selection word
+office-bridge watch-context word
+office-bridge call word get_document_text
+office-bridge mcp-serve
 office-bridge metadata excel
 office-bridge events word --limit 20
 office-bridge exec word --unsafe --code "return { href: window.location.href, title: document.title }"
@@ -81,6 +87,38 @@ pnpm bridge:stop
 `office-bridge exec` now uses sandbox mode by default so the CLI routes through the app's existing raw Office.js tool.
 
 Use `--unsafe` only when you explicitly want direct taskpane/runtime evaluation, and `--sandbox` when you want to force the existing raw Office.js tool (`eval_officejs` / `execute_office_js`).
+
+## Gateway snapshot fields
+
+Bridge session snapshots now expose a `gateway` block that is intended for external agents and MCP clients:
+
+- `gateway.capabilities`: explicit session capabilities such as `observe`, `tool_call`, `document_edit`, `unsafe_office_js`, and `vfs_access`
+- `gateway.liveContext`: current live Word context when the app provides it, including selection, tracking mode, focus target, and update timestamp
+
+For Word, live context updates are also emitted as typed events:
+
+- `word:selection_changed`
+- `word:context_changed`
+
+Each registered bridge tool also exposes its `requiredCapability`, so external clients can distinguish read-style tools from mutation-capable document actions.
+
+## MCP usage
+
+Use the built-in stdio MCP bridge to connect Claude Desktop or other MCP clients to a running Office bridge server:
+
+```bash
+office-bridge mcp-serve
+office-bridge mcp-serve --url https://localhost:4018
+```
+
+The MCP server exposes tools for:
+
+- listing sessions
+- fetching fresh session snapshots
+- reading live context
+- calling registered bridge tools
+- running privileged unsafe Office.js when the target session allows it
+- reading and mutating the bridge VFS
 
 ## Auth and origin checks
 

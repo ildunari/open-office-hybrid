@@ -11,6 +11,7 @@
   } from "@office-agents/core";
   import { onMount } from "svelte";
   import { createWordAdapter } from "../../lib/adapter";
+  import { attachWordLiveContextBridge } from "../../lib/live-context";
 
   const adapter = createWordAdapter();
 
@@ -19,6 +20,7 @@
 
     let stopped = false;
     let stopBridge: (() => void) | undefined;
+    let detachLiveContextBridge: (() => void) | undefined;
 
     void import("@office-agents/bridge/client").then(({ startOfficeBridge }) => {
       if (stopped) return;
@@ -36,7 +38,9 @@
         },
       });
       setBridgeController(bridge);
+      detachLiveContextBridge = attachWordLiveContextBridge(bridge);
       stopBridge = () => {
+        detachLiveContextBridge?.();
         setBridgeController(null);
         bridge.stop();
       };
@@ -44,6 +48,7 @@
 
     return () => {
       stopped = true;
+      detachLiveContextBridge?.();
       stopBridge?.();
     };
   });

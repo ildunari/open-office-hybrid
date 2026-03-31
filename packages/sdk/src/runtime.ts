@@ -19,6 +19,7 @@ import { appendLedger, loadLedger } from "./context/compaction-ledger";
 import { ContextCompactor } from "./context/compactor";
 import { ContextManager } from "./context/manager";
 import type { CompactionLedgerEntry, CompactionSummary } from "./context/types";
+import type { GatewayHostAdapter } from "./gateway";
 import {
   type Disposable,
   HookRegistry,
@@ -174,17 +175,10 @@ export interface PromptProvenance {
   updatedAt: number;
 }
 
-export interface RuntimeAdapter {
+export interface RuntimeAdapter extends GatewayHostAdapter {
   hostApp?: HostApp;
   tools: AgentTool[];
   buildSystemPrompt: (skills: SkillMeta[]) => string;
-  getDocumentId: () => Promise<string>;
-  getDocumentMetadata?: () => Promise<{
-    metadata: object;
-    nameMap?: Record<number, string>;
-  } | null>;
-  onToolResult?: (toolCallId: string, result: string, isError: boolean) => void;
-  metadataTag?: string;
   staticFiles?: Record<string, string>;
   customCommands?: () => CustomCommand[];
   registerHooks?: (
@@ -197,7 +191,6 @@ export interface RuntimeAdapter {
     request: string,
     classification: Awaited<ReturnType<TaskClassifier["classify"]>>,
   ) => Promise<ScopeRiskEstimate> | ScopeRiskEstimate;
-  bridgeEventSink?: (event: string, payload: Record<string, unknown>) => void;
 }
 
 export interface UploadedFile {

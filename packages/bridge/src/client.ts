@@ -1,8 +1,11 @@
+import type { GatewayHostAdapter } from "@office-agents/sdk";
 import {
+  type BridgeCapability,
   BRIDGE_PROTOCOL_VERSION,
   type BridgeEventMessage,
   type BridgeEventName,
   type BridgeEventPayloads,
+  type BridgeGatewayState,
   type BridgeHostInfo,
   type BridgeRuntimeStateSlice,
   type BridgeSessionSnapshot,
@@ -20,6 +23,7 @@ import {
   extractToolImages,
   extractToolText,
   isBridgeInvokeMessage,
+  normalizeBridgeCapabilities,
   normalizeBridgeUrl,
   serializeForJson,
   toBridgeError,
@@ -36,6 +40,7 @@ interface BridgeExecutableTool {
   label?: string;
   description?: string;
   parameters?: unknown;
+  requiredCapability?: BridgeCapability;
   execute: (
     toolCallId: string,
     params: unknown,
@@ -43,18 +48,10 @@ interface BridgeExecutableTool {
   ) => Promise<unknown>;
 }
 
-interface BridgeAdapter {
+interface BridgeAdapter extends GatewayHostAdapter {
   tools: BridgeExecutableTool[];
   appName?: string;
   appVersion?: string;
-  metadataTag?: string;
-  bridgeEventSink?: (event: string, payload: Record<string, unknown>) => void;
-  getDocumentId: () => Promise<string>;
-  getDocumentMetadata?: () => Promise<{
-    metadata: object;
-    nameMap?: Record<number, string>;
-  } | null>;
-  onToolResult?: (toolCallId: string, result: string, isError: boolean) => void;
   getRuntimeState?: () => BridgeRuntimeStateSlice | null;
 }
 
@@ -156,25 +153,47 @@ function getToolDefinitions(adapter: BridgeAdapter): BridgeToolDefinition[] {
     label: tool.label,
     description: tool.description,
     parameters: serializeForJson(tool.parameters),
+    requiredCapability: tool.requiredCapability ?? "tool_call",
   }));
+}
+
+async function getAdapterCapabilities(
+  adapter: BridgeAdapter,
+  vfsEnabled: boolean,
+): Promise<BridgeCapability[]> {
+  const declaredCapabilities = adapter.getCapabilities
+    ? await Promise.resolve(adapter.getCapabilities()).catch(() => [])
+    : [];
+  return normalizeBridgeCapabilities([
+    "observe",
+    ...(adapter.tools.length > 0 ? ["tool_call"] : []),
+    ...(vfsEnabled ? ["vfs_access"] : []),
+    ...declaredCapabilities,
+  ]);
 }
 
 async function captureSessionSnapshot(
   app: string,
   adapter: BridgeAdapter,
   instanceId: string,
+  vfsEnabled: boolean,
   previous?: BridgeSessionSnapshot | null,
 ): Promise<BridgeSessionSnapshot> {
   const documentId = await adapter.getDocumentId();
   const meta = adapter.getDocumentMetadata
-    ? await adapter.getDocumentMetadata().catch(() => null)
+    ? await Promise.resolve(adapter.getDocumentMetadata()).catch(() => null)
+    : null;
+  const liveContext = adapter.getLiveContext
+    ? await Promise.resolve(adapter.getLiveContext()).catch(() => null)
     : null;
 
-  const diagnostics = Office?.context?.diagnostics;
+  const officeContext =
+    typeof Office === "undefined" ? undefined : Office?.context;
+  const diagnostics = officeContext?.diagnostics;
   const hostInfo: BridgeHostInfo = {
-    host: Office?.context?.host ? String(Office.context.host) : undefined,
-    platform: Office?.context?.platform
-      ? String(Office.context.platform)
+    host: officeContext?.host ? String(officeContext.host) : undefined,
+    platform: officeContext?.platform
+      ? String(officeContext.platform)
       : undefined,
     officeVersion: diagnostics?.version,
     userAgent: navigator.userAgent,
@@ -184,6 +203,11 @@ async function captureSessionSnapshot(
 
   const now = Date.now();
   const runtimeState = adapter.getRuntimeState?.() ?? undefined;
+  const capabilities = await getAdapterCapabilities(adapter, vfsEnabled);
+  const gateway: BridgeGatewayState = {
+    capabilities,
+    liveContext: liveContext ?? undefined,
+  };
 
   return {
     sessionId: `${app}:${instanceId}`,
@@ -197,6 +221,7 @@ async function captureSessionSnapshot(
     tools: getToolDefinitions(adapter),
     host: hostInfo,
     runtimeState,
+    gateway,
     connectedAt: previous?.connectedAt ?? now,
     updatedAt: now,
   };
@@ -253,7 +278,9 @@ export function startOfficeBridge(
     } satisfies BridgeEventMessage);
   };
 
+  const previousBridgeEventSink = options.adapter.bridgeEventSink;
   const bridgeEventSink = (event: string, payload: Record<string, unknown>) => {
+    previousBridgeEventSink?.(event, payload);
     sendEvent(event, payload);
     if (
       event.startsWith("state:") ||
@@ -268,11 +295,24 @@ export function startOfficeBridge(
 
   options.adapter.bridgeEventSink = bridgeEventSink;
 
+  const requireCapability = async (capability: BridgeCapability) => {
+    const capabilities = await getAdapterCapabilities(
+      options.adapter,
+      Boolean(options.vfs),
+    );
+    if (!capabilities.includes(capability)) {
+      throw new Error(
+        `Bridge capability '${capability}' is not enabled for this session`,
+      );
+    }
+  };
+
   const refresh = async () => {
     const snapshot = await captureSessionSnapshot(
       options.app,
       options.adapter,
       instanceId,
+      Boolean(options.vfs),
       state.snapshot,
     );
     state.snapshot = snapshot;
@@ -290,6 +330,8 @@ export function startOfficeBridge(
     if (!tool) {
       throw new Error(`Tool not found: ${toolName}`);
     }
+
+    await requireCapability(tool.requiredCapability ?? "tool_call");
 
     const toolCallId = createBridgeId(toolName);
     const result = await tool.execute(toolCallId, args);
@@ -342,6 +384,7 @@ export function startOfficeBridge(
   };
 
   const listVfs = async (params: BridgeVfsListParams | undefined) => {
+    await requireCapability("vfs_access");
     const files = await requireVfs().snapshot();
     const prefix = params?.prefix?.trim();
     const entries: BridgeVfsEntry[] = files
@@ -358,6 +401,7 @@ export function startOfficeBridge(
   const readVfs = async (
     params: BridgeVfsReadParams,
   ): Promise<BridgeVfsReadResult> => {
+    await requireCapability("vfs_access");
     const vfs = requireVfs();
     if (!params?.path) {
       throw new Error("Missing path for vfs_read");
@@ -397,6 +441,7 @@ export function startOfficeBridge(
   };
 
   const writeVfs = async (params: BridgeVfsWriteParams) => {
+    await requireCapability("vfs_access");
     const vfs = requireVfs();
     if (!params?.path) {
       throw new Error("Missing path for vfs_write");
@@ -427,6 +472,7 @@ export function startOfficeBridge(
   };
 
   const deleteVfs = async (params: BridgeVfsDeleteParams) => {
+    await requireCapability("vfs_access");
     if (!params?.path) {
       throw new Error("Missing path for vfs_delete");
     }
@@ -442,6 +488,7 @@ export function startOfficeBridge(
     code?: string;
     explanation?: string;
   }) => {
+    await requireCapability("unsafe_office_js");
     const code = params.code?.trim();
     if (!code) {
       throw new Error("Missing code for execute_unsafe_office_js");

@@ -8,6 +8,7 @@ import {
   extractToolImages,
   extractToolText,
   getDefaultRawExecutionTool,
+  normalizeBridgeCapabilities,
   normalizeBridgeUrl,
   serializeForJson,
   toBridgeClassifiedError,
@@ -107,6 +108,33 @@ describe("normalizeBridgeUrl", () => {
   it("handles whitespace in the input by trimming", () => {
     const result = normalizeBridgeUrl("  https://localhost:4017  ", "http");
     expect(result).toBe("https://localhost:4017");
+  });
+});
+
+describe("normalizeBridgeCapabilities", () => {
+  it("falls back to observe when no capabilities are provided", () => {
+    expect(normalizeBridgeCapabilities()).toEqual(["observe"]);
+  });
+
+  it("deduplicates capabilities and preserves valid values", () => {
+    expect(
+      normalizeBridgeCapabilities([
+        "observe",
+        "tool_call",
+        "observe",
+        "unsafe_office_js",
+      ]),
+    ).toEqual(["observe", "tool_call", "unsafe_office_js"]);
+  });
+
+  it("ignores unknown capability values", () => {
+    expect(
+      normalizeBridgeCapabilities([
+        "observe",
+        "not_real",
+        "vfs_access",
+      ] as Array<string>),
+    ).toEqual(["observe", "vfs_access"]);
   });
 });
 

@@ -11,6 +11,13 @@ export type {
   DocumentMap,
 } from "./context/types";
 export type {
+  GatewayCapability,
+  GatewayDocumentMetadata,
+  GatewayHostAdapter,
+  GatewayLiveContext,
+  GatewaySelectionContext,
+} from "./gateway";
+export type {
   Disposable,
   DocumentScope,
   ExcelScope,
