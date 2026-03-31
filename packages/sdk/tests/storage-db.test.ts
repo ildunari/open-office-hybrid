@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createCompletionArtifact,
   createSession,
+  getExecutionManifest,
   getSession,
   listCompletionArtifacts,
   listSessions,
@@ -12,6 +13,7 @@ import {
   getLatestTaskRecord,
   loadVfsFiles,
   renameSession,
+  saveExecutionManifest,
   saveTaskRecord,
   saveThreadSummary,
   saveSession,
@@ -55,7 +57,7 @@ describe("storage/db", () => {
     const ns = getNamespace();
     configureNamespace({
       dbName: "OfficeAgentsDB",
-      dbVersion: 1,
+      dbVersion: 3,
       localStoragePrefix: "office-agents",
       documentSettingsPrefix: "office-agents",
       documentIdSettingsKey: `${ns.documentSettingsPrefix}-document-id`,
@@ -258,6 +260,99 @@ describe("storage/db", () => {
         verificationStatus: "passed",
       }),
     );
+  });
+
+  it("migrates existing databases to add execution manifest storage", async () => {
+    await deleteCurrentDb();
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open(currentDbName, 2);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains("sessions")) {
+          const sessions = db.createObjectStore("sessions", { keyPath: "id" });
+          sessions.createIndex("workbookId", "workbookId");
+          sessions.createIndex("updatedAt", "updatedAt");
+        }
+        if (!db.objectStoreNames.contains("vfsFiles")) {
+          const vfsFiles = db.createObjectStore("vfsFiles", { keyPath: "id" });
+          vfsFiles.createIndex("sessionId", "sessionId");
+        }
+        if (!db.objectStoreNames.contains("skillFiles")) {
+          const skillFiles = db.createObjectStore("skillFiles", {
+            keyPath: "id",
+          });
+          skillFiles.createIndex("skillName", "skillName");
+        }
+        if (!db.objectStoreNames.contains("plans")) {
+          const plans = db.createObjectStore("plans", { keyPath: "id" });
+          plans.createIndex("sessionId", "sessionId");
+        }
+        if (!db.objectStoreNames.contains("tasks")) {
+          const tasks = db.createObjectStore("tasks", { keyPath: "id" });
+          tasks.createIndex("sessionId", "sessionId");
+        }
+        if (!db.objectStoreNames.contains("reflections")) {
+          const reflections = db.createObjectStore("reflections", {
+            keyPath: "id",
+          });
+          reflections.createIndex("sessionId", "sessionId");
+        }
+        if (!db.objectStoreNames.contains("threadSummaries")) {
+          const threadSummaries = db.createObjectStore("threadSummaries", {
+            keyPath: "id",
+          });
+          threadSummaries.createIndex("sessionId", "sessionId");
+          threadSummaries.createIndex("updatedAt", "updatedAt");
+        }
+        if (!db.objectStoreNames.contains("completionArtifacts")) {
+          const completionArtifacts = db.createObjectStore(
+            "completionArtifacts",
+            {
+              keyPath: "id",
+            },
+          );
+          completionArtifacts.createIndex("sessionId", "sessionId");
+          completionArtifacts.createIndex("createdAt", "createdAt");
+        }
+        if (!db.objectStoreNames.contains("compactionArtifacts")) {
+          const compactionArtifacts = db.createObjectStore(
+            "compactionArtifacts",
+            {
+              keyPath: "id",
+            },
+          );
+          compactionArtifacts.createIndex("sessionId", "sessionId");
+          compactionArtifacts.createIndex("createdAt", "createdAt");
+        }
+      };
+      request.onsuccess = () => {
+        request.result.close();
+        resolve();
+      };
+      request.onerror = () => reject(request.error);
+    });
+
+    configureNamespace({
+      dbName: currentDbName,
+      dbVersion: 3,
+      localStoragePrefix: `office-agents-test-${namespaceCounter}`,
+      documentSettingsPrefix: `office-agents-test-${namespaceCounter}`,
+      documentIdSettingsKey: `office-agents-test-${namespaceCounter}-document-id`,
+    });
+
+    await saveExecutionManifest("session-upgrade", {
+      taskId: "task-1",
+      planId: "plan-1",
+      lastVerification: { status: "retryable", retryable: true },
+      updatedAt: 123,
+    });
+
+    await expect(getExecutionManifest("session-upgrade")).resolves.toMatchObject({
+      sessionId: "session-upgrade",
+      taskId: "task-1",
+      planId: "plan-1",
+      lastVerification: { status: "retryable", retryable: true },
+    });
   });
 
   it("round-trips additive tool execution summaries inside persisted task records", async () => {

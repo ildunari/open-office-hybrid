@@ -117,11 +117,18 @@ import {
   saveVfsFiles,
 } from "./storage";
 import {
+  deleteExecutionManifest,
   deletePlanRecords,
   deleteReflectionEntries,
   deleteTaskRecords,
-  getLatestPlanRecord,
-  getLatestTaskRecord,
+  getExecutionManifest,
+  type getLatestPlanRecord,
+  type getLatestTaskRecord,
+  getPlanRecord,
+  getTaskRecord,
+  listPlanRecords,
+  listTaskRecords,
+  saveExecutionManifest,
 } from "./storage/db";
 import {
   type ActivePatternMetadata,
@@ -308,6 +315,15 @@ function buildWaitingState(
       createdAt: state.approvalRequest.requestedAt,
     };
   }
+  if (state.handoff && state.mode === "blocked") {
+    return {
+      kind: "retry_exhausted",
+      reason: state.handoff.summary,
+      resumeMessage:
+        state.handoff.nextRecommendedAction || state.handoff.summary,
+      createdAt: state.handoff.updatedAt,
+    };
+  }
   return null;
 }
 
@@ -402,12 +418,60 @@ function summarizeAttachments(attachments: string[]): string {
   return `${attachments.length} attachments: ${attachments.slice(0, 3).join(", ")}${attachments.length > 3 ? ", ..." : ""}`;
 }
 
+function toPersistedVerificationMarker(task: TaskRecord | null): {
+  status: NonNullable<TaskRecord["verificationSummary"]>["status"];
+  retryable: boolean;
+} | null {
+  return task?.verificationSummary
+    ? {
+        status: task.verificationSummary.status,
+        retryable: task.verificationSummary.retryable ?? false,
+      }
+    : null;
+}
+
+function plansMatch(
+  planRecord: Awaited<ReturnType<typeof getPlanRecord>> | null,
+  taskPlanId: string,
+): boolean {
+  return planRecord?.id === taskPlanId;
+}
+
+function toRuntimeVerificationSummary(
+  task: TaskRecord | null,
+  fallback?: {
+    status: NonNullable<TaskRecord["verificationSummary"]>["status"];
+    retryable: boolean;
+  } | null,
+): VerificationRunSummary | null {
+  return task?.verificationSummary
+    ? {
+        status: task.verificationSummary.status,
+        retryable: task.verificationSummary.retryable ?? false,
+        results: [],
+      }
+    : fallback
+      ? {
+          status: fallback.status,
+          retryable: fallback.retryable,
+          results: [],
+        }
+      : null;
+}
+
 function inferPlanStepIndex(
   plan: ExecutionPlan | null,
   task: TaskRecord | null,
 ): number {
   if (!plan) return -1;
-  if (task?.status === "completed" || task?.mode === "completed") return -1;
+  if (
+    task?.status === "completed" ||
+    task?.status === "abandoned" ||
+    task?.status === "superseded" ||
+    task?.mode === "completed"
+  ) {
+    return -1;
+  }
   if (task?.mode === "verify") {
     return plan.steps.findIndex((step) => step.kind === "verify");
   }
@@ -430,9 +494,45 @@ function inferPlanStepIndex(
     return analyzeIndex >= 0 ? analyzeIndex : 0;
   }
 
+  if (task) {
+    const controllerIndex = plan.steps.findIndex(
+      (step) => step.status === "active",
+    );
+    if (controllerIndex >= 0) return controllerIndex;
+
+    const pendingIndex = plan.steps.findIndex(
+      (step) => step.status === "pending",
+    );
+    return pendingIndex;
+  }
+
   return plan.activeStepId
     ? plan.steps.findIndex((step) => step.id === plan.activeStepId)
     : -1;
+}
+
+function isTaskTerminal(task: TaskRecord | null): boolean {
+  return (
+    !task ||
+    task.status === "completed" ||
+    task.status === "failed" ||
+    task.status === "abandoned" ||
+    task.status === "superseded"
+  );
+}
+
+function isConservativeContinuationRequest(content: string): boolean {
+  return /^(also|and|then|next|continue|follow[- ]?up|plus|now)\b/i.test(
+    content.trim(),
+  );
+}
+
+function isReadOnlyOfficeJsCode(code: string): boolean {
+  return !(
+    /\b(insertText|insertOoxml|insertHtml|insertFileFromBase64|delete|clear|replaceText|trackRevisions|untrack|addComment|removeComment)\b/i.test(
+      code,
+    ) || /\.\w+\s*=\s*[^=]/.test(code)
+  );
 }
 
 export class AgentRuntime {
@@ -679,6 +779,10 @@ export class AgentRuntime {
   }
 
   private update(partial: Partial<RuntimeState>) {
+    const prevPlan = this.state.activePlan;
+    const prevApproval = this.state.approvalRequest;
+    const prevHandoff = this.state.handoff;
+    const prevVerification = this.state.lastVerification;
     const prevMode = this.state.mode;
     const prevPhase = this.state.taskPhase;
     this.state = this.syncHybridState({ ...this.state, ...partial });
@@ -692,6 +796,86 @@ export class AgentRuntime {
       this.emitBridgeEvent("state:phase_changed", {
         from: prevPhase,
         to: this.state.taskPhase,
+      });
+    }
+    if (
+      prevPlan?.id !== this.state.activePlan?.id ||
+      prevPlan?.status !== this.state.activePlan?.status ||
+      prevPlan?.activeStepId !== this.state.activePlan?.activeStepId
+    ) {
+      this.emitBridgeEvent("state:plan_changed", {
+        from: prevPlan
+          ? {
+              id: prevPlan.id,
+              status: prevPlan.status,
+              activeStepId: prevPlan.activeStepId ?? null,
+            }
+          : null,
+        to: this.state.activePlan
+          ? {
+              id: this.state.activePlan.id,
+              status: this.state.activePlan.status,
+              activeStepId: this.state.activePlan.activeStepId ?? null,
+            }
+          : null,
+      });
+    }
+    if (
+      prevApproval?.requestedAt !== this.state.approvalRequest?.requestedAt ||
+      prevApproval?.reason !== this.state.approvalRequest?.reason
+    ) {
+      this.emitBridgeEvent("state:approval_changed", {
+        from: prevApproval
+          ? {
+              requestedAt: prevApproval.requestedAt,
+              reason: prevApproval.reason,
+            }
+          : null,
+        to: this.state.approvalRequest
+          ? {
+              requestedAt: this.state.approvalRequest.requestedAt,
+              reason: this.state.approvalRequest.reason,
+            }
+          : null,
+      });
+    }
+    if (
+      prevHandoff?.taskId !== this.state.handoff?.taskId ||
+      prevHandoff?.updatedAt !== this.state.handoff?.updatedAt ||
+      prevHandoff?.summary !== this.state.handoff?.summary
+    ) {
+      this.emitBridgeEvent("state:blocker_changed", {
+        from: prevHandoff
+          ? {
+              taskId: prevHandoff.taskId,
+              updatedAt: prevHandoff.updatedAt,
+            }
+          : null,
+        to: this.state.handoff
+          ? {
+              taskId: this.state.handoff.taskId,
+              updatedAt: this.state.handoff.updatedAt,
+            }
+          : null,
+      });
+    }
+    if (
+      prevVerification?.status !== this.state.lastVerification?.status ||
+      prevVerification?.retryable !== this.state.lastVerification?.retryable
+    ) {
+      this.emitBridgeEvent("state:verification_changed", {
+        from: prevVerification
+          ? {
+              status: prevVerification.status,
+              retryable: prevVerification.retryable,
+            }
+          : null,
+        to: this.state.lastVerification
+          ? {
+              status: this.state.lastVerification.status,
+              retryable: this.state.lastVerification.retryable,
+            }
+          : null,
       });
     }
     this.emit();
@@ -1262,6 +1446,12 @@ export class AgentRuntime {
       saveVfsFiles(sessionId, vfsFiles),
       this.planManager.persist(sessionId),
       this.taskTracker.persist(sessionId),
+      saveExecutionManifest(sessionId, {
+        taskId: activeTask?.id ?? null,
+        planId: activePlan?.id ?? null,
+        lastVerification: toPersistedVerificationMarker(activeTask),
+        updatedAt: Date.now(),
+      }),
     ]);
 
     const activeThreadId =
@@ -1280,6 +1470,59 @@ export class AgentRuntime {
       });
       await this.loadThreadState(sessionId, activeTask, activePlan);
     }
+  }
+
+  private async resolvePersistedExecutionState(sessionId: string): Promise<{
+    planRecord: Awaited<ReturnType<typeof getLatestPlanRecord>> | null;
+    taskRecord: Awaited<ReturnType<typeof getLatestTaskRecord>> | null;
+    lastVerification: {
+      status: NonNullable<TaskRecord["verificationSummary"]>["status"];
+      retryable: boolean;
+    } | null;
+  }> {
+    const manifest = await getExecutionManifest(sessionId);
+    if (manifest) {
+      const [taskRecord, planRecord] = await Promise.all([
+        manifest.taskId
+          ? getTaskRecord(manifest.taskId)
+          : Promise.resolve(null),
+        manifest.planId
+          ? getPlanRecord(manifest.planId)
+          : Promise.resolve(null),
+      ]);
+      const taskPlanId = taskRecord?.task.planId ?? null;
+      const coherentPair =
+        taskRecord && taskPlanId ? plansMatch(planRecord, taskPlanId) : false;
+      const coherentPlanOnly = !taskRecord && !!planRecord;
+      if (coherentPair || coherentPlanOnly) {
+        return {
+          taskRecord: taskRecord ?? null,
+          planRecord: coherentPair ? planRecord : (planRecord ?? null),
+          lastVerification: manifest.lastVerification,
+        };
+      }
+    }
+
+    const [taskRecords, planRecords] = await Promise.all([
+      listTaskRecords(sessionId),
+      listPlanRecords(sessionId),
+    ]);
+    const plansById = new Map(planRecords.map((record) => [record.id, record]));
+    const taskRecord =
+      taskRecords.find((record) => {
+        const planId = record.task.planId ?? null;
+        return planId === null || plansById.has(planId);
+      }) ?? null;
+
+    return {
+      taskRecord,
+      planRecord: taskRecord?.task.planId
+        ? (plansById.get(taskRecord.task.planId) ?? null)
+        : (planRecords[0] ?? null) && !taskRecord
+          ? (planRecords[0] ?? null)
+          : null,
+      lastVerification: null,
+    };
   }
 
   private applyApprovalPolicy(
@@ -1326,19 +1569,15 @@ export class AgentRuntime {
     const noWriteRecoveryAttemptCount = task?.noWriteRecoveryCount ?? 0;
     const latestSuccessfulWrite = [...executions]
       .reverse()
-      .find(
-        (execution) =>
-          WORD_WRITE_TOOL_NAMES.has(execution.toolName) && !execution.isError,
-      );
+      .find((execution) => this.isWordWriteExecution(execution));
     const latestSuccessfulWriteScope = latestSuccessfulWrite
       ? this.getExecutionScopeKey(latestSuccessfulWrite)
       : null;
-    const firstRead = executions.find(
-      (execution) =>
-        WORD_READ_TOOL_NAMES.has(execution.toolName) && !execution.isError,
+    const firstRead = executions.find((execution) =>
+      this.isWordReadExecution(execution),
     );
     const preWriteReadCount = executions.filter((execution) => {
-      if (execution.isError || !WORD_READ_TOOL_NAMES.has(execution.toolName)) {
+      if (!this.isWordReadExecution(execution)) {
         return false;
       }
       return latestSuccessfulWrite
@@ -1348,7 +1587,7 @@ export class AgentRuntime {
     const preWriteInspectionCount = executions.filter((execution) => {
       if (execution.isError) return false;
       if (
-        !WORD_READ_TOOL_NAMES.has(execution.toolName) &&
+        !this.isWordReadExecution(execution) &&
         !GENERIC_INSPECTION_TOOL_NAMES.has(execution.toolName)
       ) {
         return false;
@@ -1358,26 +1597,23 @@ export class AgentRuntime {
         : true;
     }).length;
     const scopeReadCount = executions.filter((execution) => {
-      if (execution.isError || !WORD_READ_TOOL_NAMES.has(execution.toolName)) {
+      if (!this.isWordReadExecution(execution)) {
         return false;
       }
       return latestSuccessfulWrite
         ? execution.timestamp < latestSuccessfulWrite.timestamp
         : true;
     }).length;
-    const writeCount = executions.filter(
-      (execution) =>
-        WORD_WRITE_TOOL_NAMES.has(execution.toolName) && !execution.isError,
+    const writeCount = executions.filter((execution) =>
+      this.isWordWriteExecution(execution),
     ).length;
-    const failedWriteCount = executions.filter(
-      (execution) =>
-        WORD_WRITE_TOOL_NAMES.has(execution.toolName) && execution.isError,
+    const failedWriteCount = executions.filter((execution) =>
+      this.isFailedWordWriteExecution(execution),
     ).length;
     const postWriteRereadCount = latestSuccessfulWrite
       ? executions.filter(
           (execution) =>
-            !execution.isError &&
-            WORD_READ_TOOL_NAMES.has(execution.toolName) &&
+            this.isWordReadExecution(execution) &&
             execution.timestamp >= latestSuccessfulWrite.timestamp &&
             this.isRelevantPostWriteReread(
               execution,
@@ -1477,6 +1713,152 @@ export class AgentRuntime {
       this.planManager.getActivePlan()?.classification ??
       inferTaskClassification(task.userRequest);
     return classification.risk !== "none" || classification.needsPlan;
+  }
+
+  private isReadOnlyOfficeJsExecution(
+    execution: NonNullable<TaskRecord["toolExecutions"]>[number],
+  ): boolean {
+    if (execution.toolName !== "execute_office_js" || execution.isError) {
+      return false;
+    }
+    const args = this.getToolCallArgs(execution.toolCallId, execution.toolName);
+    const code = typeof args?.code === "string" ? args.code : "";
+    return code.length > 0 && isReadOnlyOfficeJsCode(code);
+  }
+
+  private isWordReadExecution(
+    execution: NonNullable<TaskRecord["toolExecutions"]>[number],
+  ): boolean {
+    return (
+      !execution.isError &&
+      (WORD_READ_TOOL_NAMES.has(execution.toolName) ||
+        this.isReadOnlyOfficeJsExecution(execution))
+    );
+  }
+
+  private isWordWriteExecution(
+    execution: NonNullable<TaskRecord["toolExecutions"]>[number],
+  ): boolean {
+    return (
+      !execution.isError &&
+      WORD_WRITE_TOOL_NAMES.has(execution.toolName) &&
+      !this.isReadOnlyOfficeJsExecution(execution)
+    );
+  }
+
+  private isFailedWordWriteExecution(
+    execution: NonNullable<TaskRecord["toolExecutions"]>[number],
+  ): boolean {
+    return execution.isError && WORD_WRITE_TOOL_NAMES.has(execution.toolName);
+  }
+
+  private async mergeFollowUpIntoActiveExecution(
+    content: string,
+    attachments?: string[],
+  ) {
+    const activeTask = this.taskTracker.getCurrentTask();
+    const activePlan = this.planManager.getActivePlan();
+    if (isTaskTerminal(activeTask) || !activeTask || !activePlan) {
+      return false;
+    }
+
+    const mergedTask = this.taskTracker.mergeContinuation(content, {
+      attachments: attachments?.map((name) => `/home/user/uploads/${name}`),
+    });
+    const mergedPlan = this.planManager.mergeContinuation(content);
+    this.appendPolicyTrace({
+      event: "task_resumed",
+      outcome: "allowed",
+      reason: "Merged a same-scope follow-up into the active execution.",
+    });
+    this.isStreaming = false;
+    this.update({
+      isStreaming: false,
+      mode: activeTask.approvalPending ? "awaiting_approval" : this.state.mode,
+      activePlan: mergedPlan,
+      activeTask: mergedTask,
+      error: null,
+    });
+    await this.persistSessionState();
+    return true;
+  }
+
+  private async blockNewRequestWhileExecutionUnresolved() {
+    const activeTask = this.taskTracker.getCurrentTask();
+    const activePlan = this.planManager.getActivePlan();
+    if (isTaskTerminal(activeTask) || !activeTask) {
+      return false;
+    }
+
+    const resumeMessage =
+      activeTask.approvalPending || activeTask.status === "blocked"
+        ? "Resume or explicitly supersede the current task before starting a new request."
+        : "Finish, pause, or explicitly supersede the current task before starting a new request.";
+    const handoff =
+      activeTask.handoff ??
+      (await this.buildHandoff(activeTask, resumeMessage));
+    const nextMode: RuntimeState["mode"] =
+      activeTask.approvalPending || activeTask.mode === "awaiting_approval"
+        ? "awaiting_approval"
+        : activeTask.status === "blocked" || activeTask.mode === "blocked"
+          ? "blocked"
+          : activeTask.mode === "plan"
+            ? "plan"
+            : activeTask.mode === "discuss"
+              ? "discuss"
+              : "execute";
+
+    this.appendPolicyTrace({
+      event: "task_paused",
+      outcome: "blocked",
+      reason:
+        "Ignored a new request because the current execution is still unresolved.",
+    });
+    this.taskTracker.setHandoff(handoff);
+    this.taskTracker.setMode(nextMode);
+    this.isStreaming = false;
+    this.update({
+      isStreaming: false,
+      mode: nextMode,
+      handoff,
+      activePlan,
+      activeTask: this.taskTracker.getCurrentTask(),
+      error:
+        "An active task is still unresolved. Resume it or explicitly supersede it before starting a new request.",
+    });
+    await this.persistSessionState();
+    return true;
+  }
+
+  async supersedeActiveExecution(content: string, attachments?: string[]) {
+    const activeTask = this.taskTracker.getCurrentTask();
+    const activePlan = this.planManager.getActivePlan();
+    if (activeTask && !isTaskTerminal(activeTask)) {
+      this.taskTracker.supersedeTask("Superseded by a newer request.");
+      this.taskTracker.setApprovalPending(false);
+      this.taskTracker.setApprovalRequest(null);
+      this.taskTracker.setHandoff(null);
+      if (activePlan) {
+        this.planManager.finalize(
+          "abandoned",
+          "Superseded by a newer request.",
+        );
+      }
+      await this.persistSessionState();
+    }
+
+    this.taskTracker.reset();
+    this.planManager.hydrate(null);
+    this.patternRegistry.deactivateAll();
+    this.update({
+      activeTask: null,
+      activePlan: null,
+      approvalRequest: null,
+      handoff: null,
+      error: null,
+      mode: "discuss",
+    });
+    await this.sendMessage(content, attachments);
   }
 
   private async maybeInterruptNoWriteLoop() {
@@ -2056,6 +2438,23 @@ export class AgentRuntime {
         classification,
         rawRiskEstimate,
       );
+      const unresolvedTask = this.taskTracker.getCurrentTask();
+      if (!isTaskTerminal(unresolvedTask)) {
+        const canMergeContinuation =
+          isConservativeContinuationRequest(content) &&
+          !permissionBlocked &&
+          (unresolvedTask?.approvalPending || !riskEstimate.requiresApproval);
+        if (canMergeContinuation) {
+          if (
+            await this.mergeFollowUpIntoActiveExecution(content, attachments)
+          ) {
+            return;
+          }
+        }
+        if (await this.blockNewRequestWhileExecutionUnresolved()) {
+          return;
+        }
+      }
       this.appendPolicyTrace({
         event: "policy_check",
         outcome: permissionBlocked
@@ -2433,17 +2832,16 @@ export class AgentRuntime {
     this.hookRegistry.resetSessionState();
     this.patternRegistry.deactivateAll();
     try {
-      const [session, vfsFiles, latestPlan, latestTask] = await Promise.all([
+      const [session, vfsFiles, persisted] = await Promise.all([
         getSession(sessionId),
         loadVfsFiles(sessionId),
-        getLatestPlanRecord(sessionId),
-        getLatestTaskRecord(sessionId),
+        this.resolvePersistedExecutionState(sessionId),
       ]);
       if (!session) return;
       await restoreVfs(vfsFiles);
       this.currentSessionId = session.id;
-      const activePlan = this.planManager.hydrate(latestPlan);
-      const activeTask = this.taskTracker.hydrate(latestTask);
+      const activePlan = this.planManager.hydrate(persisted.planRecord);
+      const activeTask = this.taskTracker.hydrate(persisted.taskRecord);
       this.activateRestoredPatterns(activePlan);
 
       if (session.agentMessages.length > 0 && this.agent) {
@@ -2470,7 +2868,10 @@ export class AgentRuntime {
           ? (activeTask.approvalRequest ?? null)
           : null,
         handoff: activeTask?.handoff ?? null,
-        lastVerification: null,
+        lastVerification: toRuntimeVerificationSummary(
+          activeTask,
+          persisted.lastVerification,
+        ),
         degradedGuardrails: [],
         activePatternMetadata: this.patternRegistry.getActivePatternMetadata(),
         activeHookNames: this.hookRegistry.getRegisteredHookNames(),
@@ -2500,6 +2901,7 @@ export class AgentRuntime {
     await Promise.all([
       deleteSession(deletedId),
       saveVfsFiles(deletedId, []),
+      deleteExecutionManifest(deletedId),
       deletePlanRecords(deletedId),
       deleteTaskRecords(deletedId),
       deleteReflectionEntries(deletedId),
@@ -2509,14 +2911,13 @@ export class AgentRuntime {
     ]);
     const session = await getOrCreateCurrentSession(this.documentId);
     this.currentSessionId = session.id;
-    const [vfsFiles, latestPlan, latestTask] = await Promise.all([
+    const [vfsFiles, persisted] = await Promise.all([
       loadVfsFiles(session.id),
-      getLatestPlanRecord(session.id),
-      getLatestTaskRecord(session.id),
+      this.resolvePersistedExecutionState(session.id),
     ]);
     await restoreVfs(vfsFiles);
-    const activePlan = this.planManager.hydrate(latestPlan);
-    const activeTask = this.taskTracker.hydrate(latestTask);
+    const activePlan = this.planManager.hydrate(persisted.planRecord);
+    const activeTask = this.taskTracker.hydrate(persisted.taskRecord);
     this.activateRestoredPatterns(activePlan);
 
     if (session.agentMessages.length > 0 && this.agent) {
@@ -2544,7 +2945,10 @@ export class AgentRuntime {
         ? (activeTask.approvalRequest ?? null)
         : null,
       handoff: activeTask?.handoff ?? null,
-      lastVerification: null,
+      lastVerification: toRuntimeVerificationSummary(
+        activeTask,
+        persisted.lastVerification,
+      ),
       degradedGuardrails: [],
       activePatternMetadata: this.patternRegistry.getActivePatternMetadata(),
       activeHookNames: this.hookRegistry.getRegisteredHookNames(),
@@ -2565,10 +2969,13 @@ export class AgentRuntime {
       const taskSummary = this.state.error
         ? this.state.error
         : "Agent execution completed.";
-      const activeTask = this.state.error
-        ? this.taskTracker.failTask(taskSummary)
-        : this.taskTracker.completeTask(taskSummary);
-      const verification = await this.runVerificationPhase();
+      if (this.state.error) {
+        this.taskTracker.failTask(taskSummary);
+      }
+      const verification = await this.runVerificationPhase(
+        this.state.error ? undefined : taskSummary,
+      );
+      const activeTask = this.taskTracker.getCurrentTask();
       if (activeTask) {
         await this.reflectionEngine.taskReflect({
           taskId: activeTask.id,
@@ -2689,17 +3096,16 @@ export class AgentRuntime {
 
       const session = await getOrCreateCurrentSession(id);
       this.currentSessionId = session.id;
-      const [sessions, vfsFiles, latestPlan, latestTask] = await Promise.all([
+      const [sessions, vfsFiles, persisted] = await Promise.all([
         listSessions(id),
         loadVfsFiles(session.id),
-        getLatestPlanRecord(session.id),
-        getLatestTaskRecord(session.id),
+        this.resolvePersistedExecutionState(session.id),
       ]);
       if (vfsFiles.length > 0) {
         await restoreVfs(vfsFiles);
       }
-      const activePlan = this.planManager.hydrate(latestPlan);
-      const activeTask = this.taskTracker.hydrate(latestTask);
+      const activePlan = this.planManager.hydrate(persisted.planRecord);
+      const activeTask = this.taskTracker.hydrate(persisted.taskRecord);
       this.activateRestoredPatterns(activePlan);
 
       if (session.agentMessages.length > 0 && this.agent) {
@@ -2727,7 +3133,10 @@ export class AgentRuntime {
           ? (activeTask.approvalRequest ?? null)
           : null,
         handoff: activeTask?.handoff ?? null,
-        lastVerification: null,
+        lastVerification: toRuntimeVerificationSummary(
+          activeTask,
+          persisted.lastVerification,
+        ),
         degradedGuardrails: [],
         activePatternMetadata: this.patternRegistry.getActivePatternMetadata(),
         activeHookNames: this.hookRegistry.getRegisteredHookNames(),
@@ -3214,13 +3623,37 @@ export class AgentRuntime {
     return handoff;
   }
 
-  async runVerificationPhase() {
+  async runVerificationPhase(completionSummary?: string) {
     const task = this.taskTracker.getCurrentTask();
     if (!task) return null;
 
     this.update({ mode: "verify" });
+    const latestSuccessfulWrite = [...(task.toolExecutions ?? [])]
+      .reverse()
+      .find((execution) => this.isWordWriteExecution(execution));
+    const latestSuccessfulWriteScope = latestSuccessfulWrite
+      ? this.getExecutionScopeKey(latestSuccessfulWrite)
+      : null;
+    const latestRelevantReread = latestSuccessfulWrite
+      ? [...(task.toolExecutions ?? [])]
+          .reverse()
+          .find(
+            (execution) =>
+              this.isWordReadExecution(execution) &&
+              execution.timestamp >= latestSuccessfulWrite.timestamp &&
+              this.isRelevantPostWriteReread(
+                execution,
+                latestSuccessfulWriteScope,
+              ),
+          )
+      : null;
     const compacted = this.contextManager.compactToolExecutions(
       task.toolExecutions ?? [],
+      6,
+      [
+        latestSuccessfulWrite?.toolCallId ?? "",
+        latestRelevantReread?.toolCallId ?? "",
+      ].filter(Boolean),
     );
     const degradedGuardrails = [...this.state.degradedGuardrails];
     if (compacted.summary.length > 0) {
@@ -3304,6 +3737,12 @@ export class AgentRuntime {
     }
 
     this.taskTracker.setHandoff(handoff);
+    if (task.status !== "failed") {
+      this.taskTracker.setStatus(
+        finalMode === "blocked" ? "blocked" : "completed",
+        completionSummary,
+      );
+    }
     this.taskTracker.setMode(finalMode === "blocked" ? "blocked" : "completed");
 
     this.update({

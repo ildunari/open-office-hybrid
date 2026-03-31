@@ -22,6 +22,30 @@ export interface StepUpdateResult {
   error?: string;
 }
 
+export interface StepActionProposal {
+  ok: true;
+  step: PlanStep;
+  plan: ExecutionPlan;
+}
+
+export interface StepActionRejection {
+  ok: false;
+  error: string;
+}
+
+export type StepActionDecision = StepActionProposal | StepActionRejection;
+
+function mergeUniqueStrings(current: string[], incoming: string[]): string[] {
+  return [...new Set([...current, ...incoming])];
+}
+
+function mergePlanRequest(current: string, followUp: string): string {
+  if (current.includes(followUp)) {
+    return current;
+  }
+  return `${current}\n\nFollow-up request: ${followUp}`;
+}
+
 export class PlanManager {
   private activePlan: ExecutionPlan | null = null;
 
@@ -45,6 +69,47 @@ export class PlanManager {
   replacePlan(plan: ExecutionPlan): ExecutionPlan {
     this.activePlan = clonePlan(plan);
     return this.activePlan;
+  }
+
+  proposeStepUpdate(stepId: string, status: StepStatus): StepActionDecision {
+    if (!this.activePlan) {
+      return {
+        ok: false,
+        error: "No active plan.",
+      };
+    }
+
+    const step = this.activePlan.steps.find(
+      (candidate) => candidate.id === stepId,
+    );
+    if (!step) {
+      return {
+        ok: false,
+        error: `Unknown plan step "${stepId}".`,
+      };
+    }
+
+    const blockedDependencies = (step.after ?? []).filter((dependencyId) => {
+      const dependency = this.activePlan?.steps.find(
+        (candidate) => candidate.id === dependencyId,
+      );
+      return dependency?.status !== "completed";
+    });
+    if (
+      blockedDependencies.length > 0 &&
+      (status === "completed" || status === "failed" || status === "skipped")
+    ) {
+      return {
+        ok: false,
+        error: `Cannot ${stepStatusToVerb(status)} "${stepId}" before its dependencies: ${blockedDependencies.join(", ")}.`,
+      };
+    }
+
+    return {
+      ok: true,
+      step,
+      plan: this.activePlan,
+    };
   }
 
   updateStep(
@@ -150,10 +215,8 @@ export class PlanManager {
 
     this.activePlan = {
       ...this.activePlan,
-      status:
-        planCompleted || task?.status === "completed" ? "completed" : "active",
-      activeStepId:
-        task?.status === "completed" ? null : (activeStep?.id ?? null),
+      status: planCompleted ? "completed" : "active",
+      activeStepId: planCompleted ? null : (activeStep?.id ?? null),
       steps,
       milestones: syncMilestones(this.activePlan.milestones, steps),
       updatedAt: Date.now(),
@@ -171,6 +234,67 @@ export class PlanManager {
         ...this.activePlan.revisionNotes,
         { at: Date.now(), reason },
       ],
+    };
+    return this.activePlan;
+  }
+
+  mergeContinuation(
+    followUpRequest: string,
+    options: {
+      expectedEffects?: string[];
+      approvalRequired?: boolean;
+    } = {},
+  ): ExecutionPlan | null {
+    if (!this.activePlan) return null;
+    this.activePlan = {
+      ...this.activePlan,
+      userRequest: mergePlanRequest(
+        this.activePlan.userRequest,
+        followUpRequest,
+      ),
+      summary: this.activePlan.summary
+        ? mergePlanRequest(this.activePlan.summary, followUpRequest)
+        : followUpRequest,
+      requirements: mergeUniqueStrings(this.activePlan.requirements, [
+        followUpRequest,
+      ]),
+      expectedEffects: mergeUniqueStrings(
+        this.activePlan.expectedEffects,
+        options.expectedEffects ?? [],
+      ),
+      approvalRequired:
+        options.approvalRequired ?? this.activePlan.approvalRequired,
+      updatedAt: Date.now(),
+      revisionNotes: [
+        ...this.activePlan.revisionNotes,
+        {
+          at: Date.now(),
+          reason: `Merged follow-up request: ${followUpRequest}`,
+        },
+      ],
+    };
+    return this.activePlan;
+  }
+
+  finalize(
+    status: ExecutionPlan["status"],
+    reason?: string,
+  ): ExecutionPlan | null {
+    if (!this.activePlan) return null;
+    this.activePlan = {
+      ...this.activePlan,
+      status,
+      activeStepId: status === "active" ? this.activePlan.activeStepId : null,
+      updatedAt: Date.now(),
+      revisionNotes: reason
+        ? [
+            ...this.activePlan.revisionNotes,
+            {
+              at: Date.now(),
+              reason,
+            },
+          ]
+        : this.activePlan.revisionNotes,
     };
     return this.activePlan;
   }
@@ -312,6 +436,19 @@ export function formatPlanForPrompt(plan: ExecutionPlan): string {
 
 function clonePlan(plan: ExecutionPlan): ExecutionPlan {
   return JSON.parse(JSON.stringify(plan)) as ExecutionPlan;
+}
+
+function stepStatusToVerb(status: StepStatus): string {
+  switch (status) {
+    case "completed":
+      return "complete";
+    case "failed":
+      return "fail";
+    case "skipped":
+      return "skip";
+    default:
+      return "update";
+  }
 }
 
 function buildDefaultMilestones(steps: PlanStep[]): PlanMilestone[] {

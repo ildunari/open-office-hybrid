@@ -8,7 +8,7 @@ export interface StorageNamespace {
 
 const defaults: StorageNamespace = {
   dbName: "OfficeAgentsDB",
-  dbVersion: 2,
+  dbVersion: 3,
   localStoragePrefix: "office-agents",
   documentSettingsPrefix: "office-agents",
 };

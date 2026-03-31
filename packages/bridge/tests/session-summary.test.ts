@@ -108,6 +108,12 @@ describe("buildSessionSummaryLine", () => {
           mode: "blocked",
           taskPhase: "blocked",
           isStreaming: false,
+          activePlanSummary: {
+            id: "plan-1",
+            status: "in_progress",
+            stepCount: 3,
+            activeStepIndex: 2,
+          },
           waitingState: "retry_exhausted",
           waitingReason: "Verification follow-up required",
           handoffSummary:
@@ -128,7 +134,7 @@ describe("buildSessionSummaryLine", () => {
     expect(summary).toContain(
       "next:Resume after rereading the edited paragraph.",
     );
-    expect(summary).not.toContain("plan:step2/3");
+    expect(summary).toContain("plan:in_progress");
   });
 
   it("prefers completion truth over an old active plan step", () => {
@@ -138,6 +144,12 @@ describe("buildSessionSummaryLine", () => {
           mode: "completed",
           taskPhase: "completed",
           isStreaming: false,
+          activePlanSummary: {
+            id: "plan-1",
+            status: "completed",
+            stepCount: 3,
+            activeStepIndex: -1,
+          },
           lastVerification: { status: "passed", retryable: false },
           latestCompletion: {
             summary:
@@ -153,6 +165,6 @@ describe("buildSessionSummaryLine", () => {
       "completion:Updated the grant summary and reread the edited paragraph.",
     );
     expect(summary).toContain("verify:passed");
-    expect(summary).not.toContain("plan:step2/3");
+    expect(summary).toContain("plan:completed");
   });
 });

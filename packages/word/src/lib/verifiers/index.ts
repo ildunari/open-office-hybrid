@@ -115,14 +115,18 @@ export function getWordVerificationSuites(): VerificationSuite[] {
         );
       },
       verify: (context) => {
-        const successfulWrites = context.toolExecutions.filter(
-          (execution) =>
-            execution.toolName === "execute_office_js" && !execution.isError,
-        );
-        const failedWrites = context.toolExecutions.filter(
-          (execution) =>
-            execution.toolName === "execute_office_js" && execution.isError,
-        );
+        const successfulWriteCount =
+          context.task?.executionDiagnostics?.writeCount ??
+          context.toolExecutions.filter(
+            (execution) =>
+              execution.toolName === "execute_office_js" && !execution.isError,
+          ).length;
+        const failedWriteCount =
+          context.task?.executionDiagnostics?.failedWriteCount ??
+          context.toolExecutions.filter(
+            (execution) =>
+              execution.toolName === "execute_office_js" && execution.isError,
+          ).length;
         const hadPostWriteReread =
           (context.task?.executionDiagnostics?.postWriteRereadCount ?? 0) > 0 ||
           (context.task?.executionDiagnostics == null &&
@@ -130,7 +134,7 @@ export function getWordVerificationSuites(): VerificationSuite[] {
         const loopReason =
           context.task?.executionDiagnostics?.noWriteLoopReason;
 
-        if (successfulWrites.length === 0) {
+        if (successfulWriteCount === 0) {
           return {
             suiteId: "word:write-progress",
             label: "Mutation task made write progress",
@@ -138,15 +142,15 @@ export function getWordVerificationSuites(): VerificationSuite[] {
               "Mutation-capable Word tasks attempt at least one real write.",
             observedEffect: loopReason
               ? `No successful Word write detected. ${loopReason}`
-              : failedWrites.length > 0
+              : failedWriteCount > 0
                 ? "Word write was attempted but no successful write completed."
                 : "No successful Word write was detected for the mutation-capable task.",
-            status: failedWrites.length > 0 ? "failed" : "retryable",
+            status: failedWriteCount > 0 ? "failed" : "retryable",
             evidence: [
               ...context.toolExecutions.map((execution) => execution.toolName),
               ...(loopReason ? [loopReason] : []),
             ],
-            retryable: failedWrites.length === 0,
+            retryable: failedWriteCount === 0,
           };
         }
 
@@ -186,7 +190,9 @@ export function getWordVerificationSuites(): VerificationSuite[] {
       label: "Formatting preserved",
       appliesTo: (context) => WORD_FORMAT_RE.test(context.request),
       verify: (context) => {
-        const hadWrite = hasTool(context.toolExecutions, "execute_office_js");
+        const hadWrite =
+          (context.task?.executionDiagnostics?.writeCount ?? 0) > 0 ||
+          hasTool(context.toolExecutions, "execute_office_js");
         const hadPostWriteReread =
           (context.task?.executionDiagnostics?.postWriteRereadCount ?? 0) > 0 ||
           (context.task?.executionDiagnostics == null &&
@@ -224,10 +230,12 @@ export function getWordVerificationSuites(): VerificationSuite[] {
       label: "Revision-safe edit",
       appliesTo: (context) => detectRevisionSensitiveRequest(context.request),
       verify: (context) => {
-        const hadWrite = hasTool(context.toolExecutions, "execute_office_js");
-        const hadWriteError = context.toolExecutions.some(
-          (entry) => entry.isError,
-        );
+        const hadWrite =
+          (context.task?.executionDiagnostics?.writeCount ?? 0) > 0 ||
+          hasTool(context.toolExecutions, "execute_office_js");
+        const hadWriteError =
+          (context.task?.executionDiagnostics?.failedWriteCount ?? 0) > 0 ||
+          context.toolExecutions.some((entry) => entry.isError);
         const hadPostWriteReread =
           (context.task?.executionDiagnostics?.postWriteRereadCount ?? 0) > 0 ||
           (context.task?.executionDiagnostics == null &&

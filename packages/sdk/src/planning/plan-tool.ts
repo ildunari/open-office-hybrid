@@ -1,5 +1,10 @@
 import { Type } from "@sinclair/typebox";
-import { defineTool, type ToolResult, toolSuccess } from "../tools/types";
+import {
+  defineTool,
+  type ToolResult,
+  toolError,
+  toolSuccess,
+} from "../tools/types";
 import type { PlanManager } from "./manager";
 
 export function createUpdatePlanTool(planManager: PlanManager) {
@@ -30,17 +35,24 @@ export function createUpdatePlanTool(planManager: PlanManager) {
         return toolSuccess({ ok: true, action: params.action });
       }
 
-      if (params.stepId) {
-        const status =
-          params.action === "complete_step"
-            ? "completed"
-            : params.action === "fail_step"
-              ? "failed"
-              : "skipped";
-        planManager.updateStep(params.stepId, status, {
-          error: status === "failed" ? params.reason : undefined,
-        });
+      if (!params.stepId) {
+        return toolError("stepId is required for step actions.");
       }
+
+      const status =
+        params.action === "complete_step"
+          ? "completed"
+          : params.action === "fail_step"
+            ? "failed"
+            : "skipped";
+      const decision = planManager.proposeStepUpdate(params.stepId, status);
+      if (decision.ok === false) {
+        return toolError(decision.error);
+      }
+
+      planManager.updateStep(params.stepId, status, {
+        error: status === "failed" ? params.reason : undefined,
+      });
 
       return toolSuccess({
         ok: true,

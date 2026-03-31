@@ -27,19 +27,17 @@ function buildRuntimeStatus(runtimeState: BridgeRuntimeStateSlice): string[] {
   parts.push(runtimeState.isStreaming ? "streaming" : "idle");
   parts.push(runtimeState.mode);
 
-  const shouldShowPlanProgress =
-    runtimeState.mode !== "blocked" && runtimeState.mode !== "completed";
-  if (shouldShowPlanProgress) {
-    const plan = runtimeState.activePlanSummary;
-    if (plan) {
-      parts.push(
-        plan.activeStepIndex >= 0
+  const plan = runtimeState.activePlanSummary;
+  if (plan) {
+    parts.push(
+      runtimeState.mode === "blocked" || runtimeState.mode === "completed"
+        ? `plan:${plan.status}`
+        : plan.activeStepIndex >= 0
           ? `plan:step${plan.activeStepIndex + 1}/${plan.stepCount}`
           : "plan:done",
-      );
-    } else {
-      parts.push("no-plan");
-    }
+    );
+  } else {
+    parts.push("no-plan");
   }
 
   if (runtimeState.waitingState) {

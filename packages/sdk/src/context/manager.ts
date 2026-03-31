@@ -87,16 +87,32 @@ export class ContextManager {
   compactToolExecutions(
     executions: NonNullable<TaskRecord["toolExecutions"]>,
     keepLast = 6,
+    anchorToolCallIds: string[] = [],
   ) {
-    if (executions.length <= keepLast) {
+    const anchorIds = new Set(anchorToolCallIds);
+    const tail = executions.slice(-keepLast);
+    const anchored = executions.filter((entry) =>
+      anchorIds.has(entry.toolCallId),
+    );
+    const kept = [...anchored, ...tail].filter(
+      (entry, index, entries) =>
+        entries.findIndex(
+          (candidate) => candidate.toolCallId === entry.toolCallId,
+        ) === index,
+    );
+    kept.sort((left, right) => left.timestamp - right.timestamp);
+    const keptIds = new Set(kept.map((entry) => entry.toolCallId));
+    const dropped = executions.filter(
+      (entry) => !keptIds.has(entry.toolCallId),
+    );
+
+    if (dropped.length === 0) {
       return {
-        kept: executions,
+        kept,
         summary: [] as string[],
       };
     }
 
-    const dropped = executions.slice(0, executions.length - keepLast);
-    const kept = executions.slice(-keepLast);
     const summary = dropped.map(
       (entry) =>
         `${entry.toolName}: ${entry.isError ? "error" : "ok"} (${(entry.resultSummary ?? entry.resultText).slice(0, 80)})`,

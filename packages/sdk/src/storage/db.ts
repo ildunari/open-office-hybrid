@@ -66,6 +66,18 @@ export interface TaskRecordEntry {
   updatedAt: number;
 }
 
+export interface ExecutionManifestRecord {
+  id: string;
+  sessionId: string;
+  taskId: string | null;
+  planId: string | null;
+  lastVerification: {
+    status: NonNullable<TaskRecord["verificationSummary"]>["status"];
+    retryable: boolean;
+  } | null;
+  updatedAt: number;
+}
+
 export interface ReflectionEntry {
   id: string;
   sessionId: string;
@@ -119,6 +131,11 @@ interface OfficeAgentsSchema extends DBSchema {
     key: string;
     value: TaskRecordEntry;
     indexes: { sessionId: string };
+  };
+  executionManifests: {
+    key: string;
+    value: ExecutionManifestRecord;
+    indexes: { sessionId: string; updatedAt: number };
   };
   reflections: {
     key: string;
@@ -175,6 +192,13 @@ function getDb(): Promise<IDBPDatabase<OfficeAgentsSchema>> {
       if (!db.objectStoreNames.contains("tasks")) {
         const tasks = db.createObjectStore("tasks", { keyPath: "id" });
         tasks.createIndex("sessionId", "sessionId");
+      }
+      if (!db.objectStoreNames.contains("executionManifests")) {
+        const executionManifests = db.createObjectStore("executionManifests", {
+          keyPath: "id",
+        });
+        executionManifests.createIndex("sessionId", "sessionId");
+        executionManifests.createIndex("updatedAt", "updatedAt");
       }
       if (!db.objectStoreNames.contains("reflections")) {
         const reflections = db.createObjectStore("reflections", {
@@ -472,6 +496,32 @@ export async function getLatestTaskRecord(
 ): Promise<TaskRecordEntry | undefined> {
   const [latest] = await listTaskRecords(sessionId);
   return latest;
+}
+
+export async function saveExecutionManifest(
+  sessionId: string,
+  manifest: Omit<ExecutionManifestRecord, "id" | "sessionId">,
+): Promise<void> {
+  const db = await getDb();
+  await db.put("executionManifests", {
+    id: sessionId,
+    sessionId,
+    ...manifest,
+  });
+}
+
+export async function getExecutionManifest(
+  sessionId: string,
+): Promise<ExecutionManifestRecord | undefined> {
+  const db = await getDb();
+  return db.get("executionManifests", sessionId);
+}
+
+export async function deleteExecutionManifest(
+  sessionId: string,
+): Promise<void> {
+  const db = await getDb();
+  await db.delete("executionManifests", sessionId);
 }
 
 export async function deleteTaskRecords(sessionId: string): Promise<void> {
