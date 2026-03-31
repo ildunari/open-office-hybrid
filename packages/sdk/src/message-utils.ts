@@ -69,6 +69,24 @@ export function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function getOutputAdapterText(details: unknown): string | undefined {
+  if (!details || typeof details !== "object") return undefined;
+  const outputAdapter = (details as { outputAdapter?: { text?: string } })
+    .outputAdapter;
+  return typeof outputAdapter?.text === "string"
+    ? outputAdapter.text
+    : undefined;
+}
+
+function getPreferredToolResultText(
+  resultText: string,
+  resultSummary: string | undefined,
+  isError: boolean,
+): string {
+  if (isError) return resultText;
+  return resultSummary ?? resultText;
+}
+
 export function extractPartsFromAssistantMessage(
   message: AgentMessage,
   existingParts: MessagePart[] = [],
@@ -139,13 +157,20 @@ export function agentMessagesToChatMessages(
               .filter((c): c is TextContent => c.type === "text")
               .map((c) => c.text)
               .join("\n");
+            const resultSummary = getOutputAdapterText(
+              (toolResult as ToolResultMessage & { details?: unknown }).details,
+            );
             const images = toolResult.content
               .filter((c): c is ImageContent => c.type === "image")
               .map((c) => ({ data: c.data, mimeType: c.mimeType }));
             chatMsg.parts[partIdx] = {
               ...part,
               status: toolResult.isError ? "error" : "complete",
-              result: resultText,
+              result: getPreferredToolResultText(
+                resultText,
+                resultSummary,
+                toolResult.isError,
+              ),
               images: images.length > 0 ? images : undefined,
             };
           }

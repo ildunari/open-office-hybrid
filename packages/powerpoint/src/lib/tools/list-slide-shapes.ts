@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { safeRun } from "../pptx/slide-zip";
+import { buildShapeListPayload } from "./output-shaping";
 import { defineTool, toolError, toolSuccess } from "./types";
 
 /* global PowerPoint */
@@ -57,7 +58,7 @@ export const listSlideShapesTool = defineTool({
         }));
       });
 
-      return toolSuccess({ success: true, result });
+      return toolSuccess(buildShapeListPayload(result));
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to list slide shapes";

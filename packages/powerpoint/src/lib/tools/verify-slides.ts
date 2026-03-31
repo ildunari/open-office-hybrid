@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { safeRun } from "../pptx/slide-zip";
+import { buildVerifySlidesPayload } from "./output-shaping";
 import { defineTool, toolError, toolSuccess } from "./types";
 
 /* global PowerPoint */
@@ -136,7 +137,7 @@ export const verifySlidesTool = defineTool({
         return { slides: results };
       });
 
-      return toolSuccess({ success: true, result });
+      return toolSuccess(buildVerifySlidesPayload(result.slides));
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to verify slides";

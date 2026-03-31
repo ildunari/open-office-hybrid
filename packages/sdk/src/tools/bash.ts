@@ -3,7 +3,7 @@ import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
   formatSize,
-  truncateTail,
+  truncateHeadTail,
 } from "../truncate";
 import { getBash } from "../vfs";
 import { defineTool, toolError, toolSuccess } from "./types";
@@ -59,20 +59,28 @@ export const bashTool = defineTool({
 
       output = output.trim();
 
-      const truncation = truncateTail(output);
+      const truncation = truncateHeadTail(output);
       let outputText = truncation.content;
 
       if (truncation.truncated) {
-        const startLine = truncation.totalLines - truncation.outputLines + 1;
-        const endLine = truncation.totalLines;
-        if (truncation.truncatedBy === "lines") {
-          outputText += `\n\n[Showing last ${truncation.outputLines} of ${truncation.totalLines} lines. Output truncated.]`;
-        } else {
-          outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Output truncated.]`;
-        }
+        outputText += `\n\n[Showing head and tail preview of ${truncation.totalLines} lines (${formatSize(DEFAULT_MAX_BYTES)} limit). Output truncated.]`;
       }
 
-      return toolSuccess({ output: outputText, exitCode: result.exitCode });
+      return toolSuccess(
+        {
+          output: outputText,
+          exitCode: result.exitCode,
+          truncated: truncation.truncated,
+          totalLines: truncation.totalLines,
+        },
+        truncation.truncated
+          ? {
+              outputAdapter: {
+                text: `bash output preview (${truncation.totalLines} lines, exit ${result.exitCode})`,
+              },
+            }
+          : undefined,
+      );
     } catch (error) {
       const message =
         error instanceof Error

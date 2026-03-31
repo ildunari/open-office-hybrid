@@ -7,6 +7,7 @@ import {
 import { Type } from "@sinclair/typebox";
 import type { DirtyRange } from "../dirty-tracker";
 import { createTrackedContext } from "../excel/tracked-context";
+import { buildEvalOfficeJsPayload } from "./output-shaping";
 import { defineTool, toolError, toolSuccess } from "./types";
 
 /* global Excel */
@@ -49,7 +50,7 @@ export const evalOfficeJsTool = defineTool({
       }),
     ),
   }),
-  execute: async (_toolCallId, params) => {
+  execute: async (toolCallId, params) => {
     try {
       let dirtyRanges: DirtyRange[] = [];
 
@@ -73,14 +74,14 @@ export const evalOfficeJsTool = defineTool({
         dirtyRanges = [{ sheetId: -1, range: "*" }];
       }
 
-      const response: Record<string, unknown> = {
-        success: true,
-        result: result ?? null,
-      };
-      if (dirtyRanges.length > 0) {
-        response._dirtyRanges = dirtyRanges;
-      }
-      return toolSuccess(response);
+      return toolSuccess(
+        await buildEvalOfficeJsPayload(
+          toolCallId,
+          result,
+          dirtyRanges,
+          writeFile,
+        ),
+      );
     } catch (error) {
       if (error instanceof OfficeExtension.Error) {
         const parts = [error.message];

@@ -1,7 +1,7 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { Static, TObject } from "@sinclair/typebox";
 
-export type ToolResult = AgentToolResult<undefined>;
+export type ToolResult = AgentToolResult<unknown>;
 
 interface ToolConfig<T extends TObject> {
   name: string;
@@ -21,12 +21,12 @@ export function defineTool<T extends TObject>(
   return config as unknown as AgentTool;
 }
 
-export function toolSuccess(data: unknown): ToolResult {
+export function toolSuccess(data: unknown, details?: unknown): ToolResult {
   const result =
     typeof data === "object" && data !== null ? { ...data } : { result: data };
   return {
     content: [{ type: "text", text: JSON.stringify(result) }],
-    details: undefined,
+    details,
   };
 }
 
@@ -42,9 +42,9 @@ export function toolError(message: string): ToolResult {
   };
 }
 
-export function toolText(text: string): ToolResult {
+export function toolText(text: string, details?: unknown): ToolResult {
   return {
     content: [{ type: "text", text }],
-    details: undefined,
+    details,
   };
 }

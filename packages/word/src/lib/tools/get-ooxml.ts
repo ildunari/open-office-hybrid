@@ -1,6 +1,7 @@
 import { writeFile } from "@office-agents/core";
 import { Type } from "@sinclair/typebox";
 import { documentBodyHasDirectChildren } from "../tool-helpers";
+import { compactChildSummaryList } from "./output-shaping";
 import { defineTool, toolError, toolSuccess } from "./types";
 
 /* global Word */
@@ -460,12 +461,15 @@ export const getOoxmlTool = defineTool({
 
       const lines = fileContent.split("\n").length;
       const sizeKB = Math.round(fileContent.length / 1024);
+      const childSummary = compactChildSummaryList(filteredChildren);
 
       return toolSuccess({
         file: filePath,
         size: `${sizeKB}KB`,
         lines,
-        children: filteredChildren,
+        childCount: childSummary.total,
+        children: childSummary.preview,
+        childrenOmitted: childSummary.omitted,
       });
     } catch (error) {
       const message =

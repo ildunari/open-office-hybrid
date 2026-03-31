@@ -5,6 +5,7 @@ import {
   writeFile,
 } from "@office-agents/core";
 import { Type } from "@sinclair/typebox";
+import { buildExecuteOfficeJsPayload } from "./output-shaping";
 import { defineTool, toolError, toolSuccess } from "./types";
 
 /* global Word, Office */
@@ -35,7 +36,7 @@ export const executeOfficeJsTool = defineTool({
       }),
     ),
   }),
-  execute: async (_toolCallId, params) => {
+  execute: async (toolCallId, params) => {
     try {
       const result = await Word.run(async (context) => {
         return sandboxedEval(params.code, {
@@ -48,7 +49,9 @@ export const executeOfficeJsTool = defineTool({
         });
       });
 
-      return toolSuccess({ success: true, result: result ?? null });
+      return toolSuccess(
+        await buildExecuteOfficeJsPayload(toolCallId, result, writeFile),
+      );
     } catch (error) {
       if (error instanceof OfficeExtension.Error) {
         const parts = [error.message];

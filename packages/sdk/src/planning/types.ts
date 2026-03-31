@@ -173,6 +173,7 @@ export interface TaskRecord {
     toolName: string;
     isError: boolean;
     resultText: string;
+    resultSummary?: string;
     timestamp: number;
   }>;
   executionDiagnostics?: {

@@ -12,6 +12,7 @@ import {
   getLatestTaskRecord,
   listThreadSummaries,
   loadVfsFiles,
+  saveSession,
 } from "../src/storage/db";
 import { configureNamespace } from "../src/storage/namespace";
 import { resetVfs, setStaticFiles } from "../src/vfs";
@@ -1143,6 +1144,284 @@ describe("AgentRuntime", () => {
     runtime.dispose();
   });
 
+  it("uses output-adapter fallback text for follow-mode and task tracking", async () => {
+    const onToolResultCalls: Array<{
+      toolCallId: string;
+      resultText: string;
+      isError: boolean;
+    }> = [];
+    const runtime = new AgentRuntime(
+      createAdapter({
+        onToolResult: (toolCallId, resultText, isError) => {
+          onToolResultCalls.push({ toolCallId, resultText, isError });
+        },
+      }),
+    );
+
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    internals.taskTracker.beginTask(
+      "Compact tool output",
+      inferTaskClassification("Compact tool output"),
+      { mode: "execute" },
+    );
+
+    internals.update({
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [
+            {
+              type: "toolCall",
+              id: "tc_adapter",
+              name: "bash",
+              args: { command: "echo hi" },
+              status: "running",
+            },
+          ],
+          timestamp: 1,
+        },
+      ],
+    });
+
+    await (runtime as any).handleAgentEvent({
+      type: "tool_execution_end",
+      toolCallId: "tc_adapter",
+      toolName: "bash",
+      isError: false,
+      result: {
+        content: [{ type: "image", data: "abc123", mimeType: "image/png" }],
+        details: {
+          outputAdapter: {
+            text: "Compacted bash summary",
+          },
+        },
+      },
+    });
+
+    const state = runtime.getState();
+    expect(onToolResultCalls).toEqual([
+      {
+        toolCallId: "tc_adapter",
+        resultText: "Compacted bash summary",
+        isError: false,
+      },
+    ]);
+    expect(state.messages[0]?.parts[0]).toMatchObject({
+      type: "toolCall",
+      result: "Compacted bash summary",
+      status: "complete",
+    });
+    const task = internals.taskTracker.getCurrentTask();
+    expect(task?.toolExecutions?.[0]?.resultText).toBe("");
+    expect(task?.toolExecutions?.[0]?.resultSummary).toBe(
+      "Compacted bash summary",
+    );
+    runtime.dispose();
+  });
+
+  it("prefers output-adapter text over raw text when both are present", async () => {
+    const onToolResultCalls: string[] = [];
+    const runtime = new AgentRuntime(
+      createAdapter({
+        onToolResult: (_toolCallId, resultText) => {
+          onToolResultCalls.push(resultText);
+        },
+      }),
+    );
+
+    runtime.applyConfig({
+      provider: "openai",
+      apiKey: "sk-test",
+      model: "gpt-4o-mini",
+      useProxy: false,
+      proxyUrl: "",
+      thinking: "none",
+      followMode: true,
+      expandToolCalls: false,
+    });
+
+    const internals = runtimeInternals(runtime);
+    internals.taskTracker.beginTask(
+      "Compact tool output",
+      inferTaskClassification("Compact tool output"),
+      { mode: "execute" },
+    );
+    internals.update({
+      messages: [
+        {
+          id: "assistant-2",
+          role: "assistant",
+          parts: [
+            {
+              type: "toolCall",
+              id: "tc_adapter_pref",
+              name: "bash",
+              args: { command: "echo hi" },
+              status: "running",
+            },
+          ],
+          timestamp: 1,
+        },
+      ],
+    });
+
+    await (runtime as any).handleAgentEvent({
+      type: "tool_execution_end",
+      toolCallId: "tc_adapter_pref",
+      toolName: "bash",
+      isError: false,
+      result: {
+        content: [{ type: "text", text: "very long raw text body" }],
+        details: {
+          outputAdapter: {
+            text: "Compacted bash summary",
+          },
+        },
+      },
+    });
+
+    const task = internals.taskTracker.getCurrentTask();
+    expect(onToolResultCalls).toEqual(["Compacted bash summary"]);
+    expect(task?.toolExecutions?.[0]?.resultText).toBe("very long raw text body");
+    expect(task?.toolExecutions?.[0]?.resultSummary).toBe(
+      "Compacted bash summary",
+    );
+    runtime.dispose();
+  });
+
+  it("stores compact tool summaries alongside legacy result text in task history", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+
+    const internals = runtimeInternals(runtime);
+    internals.taskTracker.beginTask(
+      "Compact tool output",
+      inferTaskClassification("Compact tool output"),
+      { mode: "execute" },
+    );
+    internals.update({
+      messages: [
+        {
+          id: "assistant-summary-contract",
+          role: "assistant",
+          parts: [
+            {
+              type: "toolCall",
+              id: "tc_summary_contract",
+              name: "bash",
+              args: { command: "cat huge-file.txt" },
+              status: "running",
+            },
+          ],
+          timestamp: 1,
+        },
+      ],
+    });
+
+    await (runtime as any).handleAgentEvent({
+      type: "tool_execution_end",
+      toolCallId: "tc_summary_contract",
+      toolName: "bash",
+      isError: false,
+      result: {
+        content: [
+          {
+            type: "text",
+            text: "Very long legacy tool output body that should remain available for compatibility.",
+          },
+        ],
+        details: {
+          outputAdapter: {
+            text: "Compact bash summary",
+          },
+        },
+      },
+    });
+
+    const task = internals.taskTracker.getCurrentTask() as
+      | (Record<string, unknown> & {
+          toolExecutions?: Array<Record<string, unknown>>;
+        })
+      | null;
+
+    expect(task?.toolExecutions?.[0]).toMatchObject({
+      resultText:
+        "Very long legacy tool output body that should remain available for compatibility.",
+      resultSummary: "Compact bash summary",
+    });
+
+    const sessionId = runtime.getState().currentSession?.id;
+    expect(sessionId).toBeTruthy();
+    await internals.taskTracker.persist(sessionId!);
+
+    const persisted = await getLatestTaskRecord(sessionId!);
+    expect(persisted?.task.toolExecutions?.[0]).toMatchObject({
+      resultText:
+        "Very long legacy tool output body that should remain available for compatibility.",
+      resultSummary: "Compact bash summary",
+    });
+    runtime.dispose();
+  });
+
+  it("prefers execution summaries during verification compaction and falls back to legacy text", () => {
+    const runtime = new AgentRuntime(createAdapter());
+    const compacted = (
+      runtime as unknown as {
+        contextManager: {
+          compactToolExecutions: (
+            executions: Array<Record<string, unknown>>,
+            keepLast?: number,
+          ) => { kept: Array<Record<string, unknown>>; summary: string[] };
+        };
+      }
+    ).contextManager.compactToolExecutions(
+      [
+        {
+          toolCallId: "tc-summary",
+          toolName: "bash",
+          isError: false,
+          resultText:
+            "Legacy bash output that is much longer than the compact summary and should not drive compaction.",
+          resultSummary: "Compact bash summary",
+          timestamp: 1,
+        },
+        {
+          toolCallId: "tc-fallback",
+          toolName: "read",
+          isError: false,
+          resultText: "Legacy read fallback",
+          timestamp: 2,
+        },
+        {
+          toolCallId: "tc-keep",
+          toolName: "execute_office_js",
+          isError: false,
+          resultText: "Latest write remains in kept executions",
+          timestamp: 3,
+        },
+      ] as Array<Record<string, unknown>>,
+      1,
+    );
+
+    expect(compacted.summary).toEqual([
+      "bash: ok (Compact bash summary)",
+      "read: ok (Legacy read fallback)",
+    ]);
+    runtime.dispose();
+  });
+
   it("surfaces retryable verification follow-up as blocked instead of waiting-on-user", async () => {
     const runtime = new AgentRuntime(
       createAdapter({
@@ -1435,6 +1714,71 @@ describe("AgentRuntime", () => {
 
     await runtime.switchSession(secondId);
     expect(runtime.getState().currentSession!.id).toBe(secondId);
+    runtime.dispose();
+  });
+
+  it("switchSession preserves compact tool summaries when rehydrating tool results", async () => {
+    const runtime = new AgentRuntime(createAdapter());
+    await runtime.init();
+
+    const firstId = runtime.getState().currentSession!.id;
+    await saveSession(firstId, [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            id: "tc-rehydrate",
+            name: "bash",
+            arguments: { command: "echo hi" },
+          },
+        ],
+        timestamp: 1,
+        stopReason: "tool-calls",
+        api: "openai-responses",
+        provider: "openai",
+        model: "gpt-4o-mini",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0,
+          },
+        },
+      } as any,
+      {
+        role: "toolResult",
+        toolCallId: "tc-rehydrate",
+        content: [{ type: "text", text: "very long raw text body" }],
+        details: {
+          outputAdapter: {
+            text: "Compacted bash summary",
+          },
+        },
+        isError: false,
+        timestamp: 2,
+      } as any,
+    ]);
+
+    await runtime.newSession();
+    const secondId = runtime.getState().currentSession!.id;
+
+    await runtime.switchSession(firstId);
+    expect(runtime.getState().currentSession!.id).toBe(firstId);
+    expect(runtime.getState().messages[0]?.parts[0]).toMatchObject({
+      type: "toolCall",
+      result: "Compacted bash summary",
+      status: "complete",
+    });
+
+    await runtime.switchSession(secondId);
     runtime.dispose();
   });
 

@@ -99,7 +99,7 @@ export class ContextManager {
     const kept = executions.slice(-keepLast);
     const summary = dropped.map(
       (entry) =>
-        `${entry.toolName}: ${entry.isError ? "error" : "ok"} (${entry.resultText.slice(0, 80)})`,
+        `${entry.toolName}: ${entry.isError ? "error" : "ok"} (${(entry.resultSummary ?? entry.resultText).slice(0, 80)})`,
     );
 
     return { kept, summary };
@@ -110,7 +110,10 @@ export class ContextManager {
     return (lastInputTokens / contextWindow) * 100 >= 90;
   }
 
-  shouldEmergencyCompact(lastInputTokens: number, contextWindow: number): boolean {
+  shouldEmergencyCompact(
+    lastInputTokens: number,
+    contextWindow: number,
+  ): boolean {
     if (contextWindow <= 0) return false;
     return (lastInputTokens / contextWindow) * 100 >= 95;
   }

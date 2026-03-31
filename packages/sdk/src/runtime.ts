@@ -256,6 +256,24 @@ export interface RuntimeState {
   activeVerifierIds: string[];
 }
 
+function getOutputAdapterText(details: unknown): string | undefined {
+  if (!details || typeof details !== "object") return undefined;
+  const outputAdapter = (details as { outputAdapter?: { text?: string } })
+    .outputAdapter;
+  return typeof outputAdapter?.text === "string"
+    ? outputAdapter.text
+    : undefined;
+}
+
+function getPreferredToolResultText(
+  resultText: string,
+  resultSummary: string | undefined,
+  isError: boolean,
+): string {
+  if (isError) return resultText;
+  return resultSummary ?? resultText;
+}
+
 type StateListener = (state: RuntimeState) => void;
 
 const INITIAL_STATS: SessionStats = { ...deriveStats([]), contextWindow: 0 };
@@ -1055,7 +1073,9 @@ export class AgentRuntime {
    */
   private isCompacting = false;
 
-  async compactContext(trigger: "auto" | "manual" = "manual"): Promise<boolean> {
+  async compactContext(
+    trigger: "auto" | "manual" = "manual",
+  ): Promise<boolean> {
     if (!this.agent || !this.currentSessionId) return false;
     if (this.state.isStreaming) return false;
     if (this.isCompacting) return false; // serialization guard
@@ -1074,7 +1094,10 @@ export class AgentRuntime {
 
     const usage = this.state.sessionStats.lastInputTokens;
     const ctxWindow = this.state.sessionStats.contextWindow;
-    const isEmergency = this.contextManager.shouldEmergencyCompact(usage, ctxWindow);
+    const isEmergency = this.contextManager.shouldEmergencyCompact(
+      usage,
+      ctxWindow,
+    );
 
     try {
       let rebuiltMessages: AgentMessage[];
@@ -1141,17 +1164,20 @@ export class AgentRuntime {
 
         const assistantMsg = await stream.result();
         const responseText = assistantMsg.content
-          .filter(
-            (b): b is { type: "text"; text: string } => b.type === "text",
-          )
+          .filter((b): b is { type: "text"; text: string } => b.type === "text")
           .map((b) => b.text)
           .join("");
 
-        const summary = this.compactor.parseSummary(responseText, messages.length);
+        const summary = this.compactor.parseSummary(
+          responseText,
+          messages.length,
+        );
 
         // Abort if summarizer returned garbage — don't destroy history with empty summary
         if (!summary.currentState || summary.currentState.length < 10) {
-          console.warn("[Runtime] Summarizer returned weak summary, aborting compaction.");
+          console.warn(
+            "[Runtime] Summarizer returned weak summary, aborting compaction.",
+          );
           return false;
         }
 
@@ -1760,6 +1786,7 @@ export class AgentRuntime {
       case "tool_execution_end": {
         this.flushStreamingBuffer();
         let resultText: string;
+        let resultSummary: string | undefined;
         let resultImages: { data: string; mimeType: string }[] | undefined;
         if (typeof event.result === "string") {
           resultText = event.result;
@@ -1767,6 +1794,7 @@ export class AgentRuntime {
           event.result?.content &&
           Array.isArray(event.result.content)
         ) {
+          const outputAdapterText = getOutputAdapterText(event.result.details);
           resultText = event.result.content
             .filter((c: { type: string }) => c.type === "text")
             .map((c: { text: string }) => c.text)
@@ -1778,18 +1806,36 @@ export class AgentRuntime {
               mimeType: c.mimeType,
             }));
           if (images.length > 0) resultImages = images;
+          if (outputAdapterText) {
+            resultSummary = outputAdapterText;
+          } else if (!resultText.trim()) {
+            resultText = "";
+          }
         } else {
+          resultSummary = getOutputAdapterText(
+            (event.result as { details?: unknown }).details,
+          );
           resultText = JSON.stringify(event.result, null, 2);
         }
+        const displayResultText = getPreferredToolResultText(
+          resultText,
+          resultSummary,
+          event.isError,
+        );
 
         if (!event.isError && this.followMode) {
-          this.adapter.onToolResult?.(event.toolCallId, resultText, false);
+          this.adapter.onToolResult?.(
+            event.toolCallId,
+            displayResultText,
+            false,
+          );
         }
         this.taskTracker.recordToolExecution({
           toolCallId: event.toolCallId,
           toolName: event.toolName,
           isError: event.isError,
           resultText,
+          resultSummary,
           timestamp: Date.now(),
         });
         const diagnostics = this.deriveExecutionDiagnostics(
@@ -1806,7 +1852,7 @@ export class AgentRuntime {
           this.emitBridgeEvent("tool:failed", {
             toolCallId: event.toolCallId,
             toolName: event.toolName,
-            error: resultText,
+            error: displayResultText,
           });
         } else {
           this.emitBridgeEvent("tool:completed", {
@@ -1829,7 +1875,7 @@ export class AgentRuntime {
                 parts[partIdx] = {
                   ...part,
                   status: event.isError ? "error" : "complete",
-                  result: resultText,
+                  result: displayResultText,
                   images: resultImages,
                 };
                 messages[i] = { ...msg, parts };
@@ -2603,7 +2649,10 @@ export class AgentRuntime {
       // Auto-compact: trigger compaction when context usage reaches 90 %
       const autoUsage = this.state.sessionStats.lastInputTokens;
       const autoWindow = this.state.sessionStats.contextWindow;
-      if (autoWindow > 0 && this.contextManager.shouldCompact(autoUsage, autoWindow)) {
+      if (
+        autoWindow > 0 &&
+        this.contextManager.shouldCompact(autoUsage, autoWindow)
+      ) {
         await this.compactContext("auto");
       }
     } catch (e) {

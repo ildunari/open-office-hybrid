@@ -1,4 +1,6 @@
+import { writeFile } from "@office-agents/core";
 import { Type } from "@sinclair/typebox";
+import { buildParagraphOoxmlPayload } from "./output-shaping";
 import { defineTool, toolError, toolSuccess } from "./types";
 
 /* global Word */
@@ -178,7 +180,7 @@ export const getParagraphOoxmlTool = defineTool({
       }),
     ),
   }),
-  execute: async (_toolCallId, params) => {
+  execute: async (toolCallId, params) => {
     try {
       const result = await Word.run(async (context) => {
         const paragraphs = context.document.body.paragraphs;
@@ -223,11 +225,13 @@ export const getParagraphOoxmlTool = defineTool({
           `<!-- Paragraph${startIdx !== endIdx ? `s ${startIdx}-${endIdx}` : ` ${startIdx}`} -->\n${extracted.paragraphXml}`,
         );
 
-        return {
-          paragraphIndex: startIdx,
-          endParagraphIndex: endIdx !== startIdx ? endIdx : undefined,
-          xml: parts.join("\n\n"),
-        };
+        return buildParagraphOoxmlPayload(
+          toolCallId,
+          startIdx,
+          endIdx,
+          parts.join("\n\n"),
+          writeFile,
+        );
       });
 
       return toolSuccess(result);

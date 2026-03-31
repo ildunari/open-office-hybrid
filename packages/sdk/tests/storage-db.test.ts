@@ -9,8 +9,10 @@ import {
   listSkillNames,
   listThreadSummaries,
   loadSkillFiles,
+  getLatestTaskRecord,
   loadVfsFiles,
   renameSession,
+  saveTaskRecord,
   saveThreadSummary,
   saveSession,
   saveSkillFiles,
@@ -256,5 +258,35 @@ describe("storage/db", () => {
         verificationStatus: "passed",
       }),
     );
+  });
+
+  it("round-trips additive tool execution summaries inside persisted task records", async () => {
+    const session = await createSession("doc-task-history");
+    const task = {
+      id: "task-summary-contract",
+      userRequest: "Inspect and edit the current selection.",
+      status: "in_progress" as const,
+      toolCallIds: ["tc-1"],
+      toolExecutions: [
+        {
+          toolCallId: "tc-1",
+          toolName: "bash",
+          isError: false,
+          resultText: "Legacy tool output",
+          resultSummary: "Compact tool summary",
+          timestamp: 123,
+        },
+      ],
+      createdAt: 100,
+      updatedAt: 200,
+    } as any;
+
+    await saveTaskRecord(session.id, task);
+
+    const saved = await getLatestTaskRecord(session.id);
+    expect(saved?.task.toolExecutions?.[0]).toMatchObject({
+      resultText: "Legacy tool output",
+      resultSummary: "Compact tool summary",
+    });
   });
 });
